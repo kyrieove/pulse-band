@@ -9,7 +9,7 @@
     "dev": "vite",
     "test": "node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node --test scripts/test-diagnostics.mjs scripts/test-pc-v1.1.mjs",
     "build": "tsc && vite build",
-    "dist": "npm run build && electron-builder",
+    "dist": "npm run build && electron-builder --publish never",
     "preview": "vite preview"
   },
   "build": {
