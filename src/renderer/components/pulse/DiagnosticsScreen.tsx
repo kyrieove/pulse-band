@@ -9,8 +9,9 @@
  * 阶段 5 重点：authoritative:false 必须视觉强区分（双层虚线边框 + 斜纹底 + 琥珀徽章 + ~EST + 数值带 *）。
  */
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Server, TriangleAlert, Layers } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Server, TriangleAlert, Layers, Activity, LoaderCircle } from 'lucide-react';
 import type { PulseOronboxState, PulseErrorEntry } from '../../../main/services/oronbox-bridge';
+import type { DiagnosticReport, DiagnosticStatus } from '../../../main/services/diagnostics';
 import { fmtUptime, fmtTime } from './ui';
 
 interface QuotaView {
@@ -41,6 +42,24 @@ const ERROR_TONE: Record<string, string> = {
   settings: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30',
 };
 
+const DIAGNOSTIC_TONE: Record<DiagnosticStatus, { card: string; badge: string; label: string }> = {
+  pass: {
+    card: 'bg-emerald-500/[0.06] border-emerald-500/20',
+    badge: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400',
+    label: '通过',
+  },
+  warn: {
+    card: 'bg-amber-500/[0.06] border-amber-500/25',
+    badge: 'bg-amber-500/15 border-amber-500/30 text-amber-300',
+    label: '警告',
+  },
+  fail: {
+    card: 'bg-rose-500/[0.06] border-rose-500/25',
+    badge: 'bg-rose-500/15 border-rose-500/30 text-rose-300',
+    label: '失败',
+  },
+};
+
 const fmtCountdown = (ms: number): string => {
   const s = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(s / 60);
@@ -59,6 +78,9 @@ export const DiagnosticsScreen: React.FC<{
   const [now, setNow] = useState(Date.now());
   const [hook, setHook] = useState<{ installed: boolean; settingsPath: string; command: string | null } | null>(null);
   const [hookMsg, setHookMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [report, setReport] = useState<DiagnosticReport | null>(null);
+  const [runningDiagnostics, setRunningDiagnostics] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   useEffect(() => {
     window.pulse?.getHookStatus().then(setHook).catch(() => setHook(null));
@@ -103,9 +125,87 @@ export const DiagnosticsScreen: React.FC<{
   const meta = diag?.quotaMeta;
   const daemonActive = daemon?.rpcConnected === true;
   const daemonTone = daemonActive ? 'success' : 'danger';
+  const reportCounts = report?.checks.reduce(
+    (counts, check) => ({ ...counts, [check.status]: counts[check.status] + 1 }),
+    { pass: 0, warn: 0, fail: 0 } as Record<DiagnosticStatus, number>,
+  );
+
+  const runFullDiagnostics = async () => {
+    setRunningDiagnostics(true);
+    setReportError(null);
+    try {
+      const next = await window.pulse?.runDiagnostics();
+      if (!next) throw new Error('诊断接口不可用');
+      setReport(next);
+    } catch (err: any) {
+      setReportError(String(err?.message ?? err));
+    } finally {
+      setRunningDiagnostics(false);
+    }
+  };
 
   return (
     <main className="flex-1 bg-island-bg overflow-y-auto custom-scrollbar p-5 space-y-4">
+      <section className="p-4 rounded-xl bg-island-surface border border-white/[0.08] space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-island-accent/10 border border-island-accent/25 text-island-accent flex items-center justify-center">
+              <Activity className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-100">一键完整诊断</h2>
+              <p className="text-[11px] text-zinc-500 mt-0.5">只读取当前状态，不会修改蓝牙、设备或第三方配置</p>
+            </div>
+          </div>
+          <button
+            onClick={runFullDiagnostics}
+            disabled={runningDiagnostics}
+            className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-island-accent/15 border border-island-accent/35 text-island-accent hover:bg-island-accent/25 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-1.5 shrink-0"
+          >
+            {runningDiagnostics ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+            {runningDiagnostics ? '正在检查…' : report ? '重新诊断' : '开始完整诊断'}
+          </button>
+        </div>
+
+        {reportError && (
+          <div className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg p-2.5">
+            诊断没有完成：{reportError}。请重启 Pulse 后重试。
+          </div>
+        )}
+
+        {!report && !reportError && !runningDiagnostics && (
+          <div className="py-4 text-center text-xs text-zinc-500 border border-dashed border-white/[0.08] rounded-lg">
+            点击按钮检查 Pulse、Claude Hook、OronBox、手环应用和额度数据。
+          </div>
+        )}
+
+        {report && reportCounts && (
+          <>
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="text-zinc-500 mr-auto">完成于 {fmtTime(report.checkedAt)}</span>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">通过 {reportCounts.pass}</span>
+              <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20">警告 {reportCounts.warn}</span>
+              <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-300 border border-rose-500/20">失败 {reportCounts.fail}</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {report.checks.map((check) => {
+                const tone = DIAGNOSTIC_TONE[check.status];
+                return (
+                  <div key={check.id} className={`p-3 rounded-lg border ${tone.card}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-xs font-semibold text-zinc-200">{check.label}</div>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium shrink-0 ${tone.badge}`}>{tone.label}</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">{check.summary}</p>
+                    {check.nextStep && <p className="text-[11px] text-zinc-300 mt-1.5 leading-relaxed">下一步：{check.nextStep}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </section>
+
       {/* 诊断 1：三家额度 */}
       <section className="space-y-2.5">
         <div className="flex items-center justify-between">
