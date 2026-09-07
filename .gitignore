@@ -17,3 +17,8 @@ band-app/sign/
 
 # PULSE_SCREEN 调试截图
 debug-window-*.png
+
+# v2 native core
+core/target/
+device.json
+/STATUS.md
