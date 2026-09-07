@@ -56,18 +56,22 @@ function writeWrapper(): string {
 
 export type HookStatus = { installed: boolean; settingsPath: string; command: string | null };
 
-function status(): HookStatus {
+export function getHookStatus(): HookStatus {
   const hooks = readSettings().hooks ?? {};
   const ours = HOOK_EVENTS.map((e) => (hooks[e] ?? []).find(isOurs)).filter(Boolean);
+  const script = path.join(hookDir(), 'claude-hook.cjs');
   return {
-    installed: ours.length === HOOK_EVENTS.length,
+    installed:
+      ours.length === HOOK_EVENTS.length &&
+      fs.existsSync(wrapperPath()) &&
+      fs.existsSync(script),
     settingsPath: settingsPath(),
     command: ours[0]?.hooks?.[0]?.command ?? null,
   };
 }
 
 export function registerClaudeHookInstall() {
-  ipcMain.handle('hook:status', () => status());
+  ipcMain.handle('hook:status', () => getHookStatus());
 
   ipcMain.handle('hook:install', () => {
     try {
@@ -75,7 +79,7 @@ export function registerClaudeHookInstall() {
       const settings = readSettings();
       settings.hooks = mergeHooks(settings.hooks ?? {}, (event) => `"${cmd}" ${event}`);
       writeSettings(settings);
-      return { ok: true, ...status() };
+      return { ok: true, ...getHookStatus() };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
     }
@@ -86,7 +90,7 @@ export function registerClaudeHookInstall() {
       const settings = readSettings();
       settings.hooks = removeHooks(settings.hooks ?? {});
       writeSettings(settings);
-      return { ok: true, ...status() };
+      return { ok: true, ...getHookStatus() };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
     }

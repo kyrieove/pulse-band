@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('pulse', {
     return () => ipcRenderer.removeListener('oronbox-install-progress', subscription);
   },
   getDiagnostics: () => ipcRenderer.invoke('pulse:get-diagnostics'),
+  runDiagnostics: () => ipcRenderer.invoke('pulse:run-diagnostics'),
   getErrorLog: () => ipcRenderer.invoke('pulse:get-error-log'),
   clearErrorLog: () => ipcRenderer.invoke('pulse:clear-error-log'),
   onErrorLog: (callback: (entries: unknown[]) => void) => {

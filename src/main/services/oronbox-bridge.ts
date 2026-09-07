@@ -16,6 +16,8 @@ import path from 'node:path';
 import { OronBoxClient } from './oronbox-client';
 import { DirectFetchBridge, BAND_PACKAGE } from './fetch-bridge-direct';
 import { pushError, getRecentErrors, clearErrors, onErrorLog, PulseErrorEntry } from './error-log';
+import { getHookStatus } from './claude-hook-install';
+import { buildDiagnosticReport, probeJson } from './diagnostics';
 
 const FETCH_BRIDGE_ID = 'org.zxor.oronbox.miwear-interconnect-fetch';
 
@@ -513,6 +515,32 @@ export class OronBoxBridge {
       } catch (err: any) {
         return { ok: false, error: String(err?.message ?? err) };
       }
+    });
+
+    ipcMain.handle('pulse:run-diagnostics', async () => {
+      const [statusService, hookService] = await Promise.all([
+        probeJson('http://127.0.0.1:8765/api/status'),
+        probeJson('http://127.0.0.1:41789/health'),
+      ]);
+      const limits =
+        statusService.ok && statusService.data && typeof statusService.data === 'object'
+          ? (statusService.data as { limits?: Record<string, unknown> }).limits
+          : undefined;
+      const bundledRpk = path.join(import.meta.dirname, '../../assets/band-app.rpk');
+
+      return buildDiagnosticReport({
+        statusService,
+        hookInstalled: getHookStatus().installed,
+        hookService,
+        daemonConnected: this.state.daemon.rpcConnected,
+        daemonDegraded: this.state.daemon.degraded,
+        bridgeMode: this.state.bridge.mode,
+        bridgeInstalled: this.state.bridge.installed,
+        bridgeRunning: this.state.bridge.running,
+        bandConnected: this.state.connection.state === 'connected',
+        bundledRpkExists: fs.existsSync(bundledRpk),
+        usableQuotaCount: Object.values(limits ?? {}).filter(Boolean).length,
+      });
     });
 
     ipcMain.handle('pulse:get-error-log', () => getRecentErrors(20));

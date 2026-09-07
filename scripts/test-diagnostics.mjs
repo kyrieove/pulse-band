@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDiagnosticReport } from '../src/main/services/diagnostics.ts';
+import { buildDiagnosticReport, probeJson } from '../src/main/services/diagnostics.ts';
 
 const healthy = (patch = {}) => ({
   statusService: { ok: true },
@@ -67,4 +67,18 @@ test('reports unavailable quota sources as a warning', () => {
   const check = find(buildDiagnosticReport(healthy({ usableQuotaCount: 0 })), 'quota');
   assert.equal(check.status, 'warn');
   assert.match(check.nextStep, /登录/);
+});
+
+test('JSON probe returns parsed data for a healthy endpoint', async () => {
+  const result = await probeJson('http://local.test', async () => ({
+    ok: true,
+    json: async () => ({ status: 'ok' }),
+  }));
+  assert.deepEqual(result, { ok: true, data: { status: 'ok' } });
+});
+
+test('JSON probe keeps an HTTP failure readable', async () => {
+  const result = await probeJson('http://local.test', async () => ({ ok: false, status: 503 }));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /503/);
 });

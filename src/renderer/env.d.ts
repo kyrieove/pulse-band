@@ -7,6 +7,7 @@ declare module '*.css' {
 
 import type { AgentSession, MinibarState } from '../common/types';
 import type { PulseOronboxState, PulseErrorEntry } from '../main/services/oronbox-bridge';
+import type { DiagnosticReport } from '../main/services/diagnostics';
 
 /** 旧悬浮岛残留 API（仅剩仍有后端支撑的通道）与迷你悬浮窗 API */
 export interface CodeislandBridge {
@@ -70,6 +71,7 @@ export interface PulseBridge {
   ) => Promise<{ ok: boolean; result?: unknown; error?: string }>;
   onInstallProgress: (cb: (p: { fileName: string; progress: number; done: boolean }) => void) => () => void;
   getDiagnostics: () => Promise<{ ok: boolean; error?: string; data?: any }>;
+  runDiagnostics: () => Promise<DiagnosticReport>;
   getErrorLog: () => Promise<PulseErrorEntry[]>;
   clearErrorLog: () => Promise<{ ok: boolean }>;
   onErrorLog: (cb: (entries: PulseErrorEntry[]) => void) => () => void;

@@ -18,6 +18,23 @@ export interface ProbeResult {
   error?: string;
 }
 
+export interface JsonProbeResult extends ProbeResult {
+  data?: unknown;
+}
+
+export async function probeJson(
+  url: string,
+  fetcher: typeof fetch = fetch,
+): Promise<JsonProbeResult> {
+  try {
+    const response = await fetcher(url, { signal: AbortSignal.timeout(3_000) });
+    if (!response.ok) throw new Error(`${url} 返回 ${response.status}`);
+    return { ok: true, data: await response.json() };
+  } catch (err: any) {
+    return { ok: false, error: String(err?.message ?? err) };
+  }
+}
+
 export interface DiagnosticObservation {
   statusService: ProbeResult;
   hookInstalled: boolean;
