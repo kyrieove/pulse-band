@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldConnectBand } from '../src/main/services/oronbox-policy.ts';
+import { canConnectBand, shouldConnectBand } from '../src/main/services/oronbox-policy.ts';
 import {
   formatDiagnosticReport,
   formatErrorLog,
@@ -14,6 +14,15 @@ test('only an explicit connect action may connect the band', () => {
   assert.equal(shouldConnectBand('poll'), false);
   assert.equal(shouldConnectBand('diagnostics'), false);
   assert.equal(shouldConnectBand('manual-connect'), true);
+});
+
+test('a failed connection stays retryable', () => {
+  assert.equal(canConnectBand('disconnected', false), true);
+  // 回归：连接失败后状态是 error，按钮曾经被永久置灰，没有任何重试入口
+  assert.equal(canConnectBand('error', false), true);
+  assert.equal(canConnectBand('connected', false), false);
+  assert.equal(canConnectBand('connecting', false), false);
+  assert.equal(canConnectBand('error', true), false);
 });
 
 test('support text removes credentials, complete MACs, and user paths', () => {

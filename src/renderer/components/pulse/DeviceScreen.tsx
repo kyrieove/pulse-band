@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ArrowRight, Link2, Wifi } from 'lucide-react';
 import type { PulseOronboxState } from '../../../main/services/oronbox-bridge';
+import { canConnectBand } from '../../../main/services/oronbox-policy';
 import { Card, StatusBadge, maskMac } from './ui';
 
 type ConnTone = 'success' | 'warning' | 'danger';
@@ -32,7 +33,10 @@ export const DeviceScreen: React.FC<{
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [showMac, setShowMac] = useState(false);
 
-  const connState = pendingConnect && connection.state === 'disconnected' ? 'connecting' : connection.state;
+  const connState =
+    pendingConnect && (connection.state === 'disconnected' || connection.state === 'error')
+      ? 'connecting'
+      : connection.state;
   const tone: ConnTone = connState === 'connected' ? 'success' : connState === 'connecting' ? 'warning' : 'danger';
 
   const handleConnect = async () => {
@@ -101,7 +105,7 @@ export const DeviceScreen: React.FC<{
           <div className="flex gap-2 select-none">
             <button
               onClick={handleConnect}
-              disabled={connState !== 'disconnected' || busy !== null}
+              disabled={!canConnectBand(connState, busy !== null)}
               className="flex-1 px-3 py-2 rounded-lg bg-island-accent text-zinc-950 disabled:bg-zinc-800 disabled:text-zinc-500 text-xs font-semibold flex items-center justify-center gap-1.5"
             >
               <ArrowRight className="w-3.5 h-3.5" />{connState === 'connecting' ? '连接中…' : '连接手环（将断开手机）'}
