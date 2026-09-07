@@ -158,18 +158,20 @@ function createWindow() {
     win.show();
     win.focus();
     console.log('[CodeIsland] Window ready-to-show fired, visible at', win.getBounds());
-    // 供阶段 4/5 回执截图（等 React 首帧完成再抓）
-    setTimeout(async () => {
-      try {
-        if (!win) return;
-        const image = await win.capturePage();
-        const savePath = path.resolve(import.meta.dirname, `../../debug-window-${INITIAL_SCREEN}.png`);
-        fs.writeFileSync(savePath, image.toPNG());
-        console.log('[CodeIsland] Saved window screenshot to', savePath, 'size:', image.getSize());
-      } catch (err) {
-        console.error('[CodeIsland] Screenshot capture error:', err);
-      }
-    }, 1200);
+    if (process.env.PULSE_SCREEN) {
+      // 供界面调试截图（等 React 首帧完成再抓）；正式版不写 app.asar。
+      setTimeout(async () => {
+        try {
+          if (!win) return;
+          const image = await win.capturePage();
+          const savePath = path.resolve(import.meta.dirname, `../../debug-window-${INITIAL_SCREEN}.png`);
+          fs.writeFileSync(savePath, image.toPNG());
+          console.log('[CodeIsland] Saved window screenshot to', savePath, 'size:', image.getSize());
+        } catch (err) {
+          console.error('[CodeIsland] Screenshot capture error:', err);
+        }
+      }, 1200);
+    }
   });
 
   win.webContents.on('did-fail-load', (_, errorCode, errorDescription) => {

@@ -14,6 +14,7 @@
   "build": {
     "appId": "com.codeisland.windows",
     "productName": "Pulse",
+    "artifactName": "Pulse-Setup-${version}.${ext}",
     "directories": {
       "output": "release"
     },
