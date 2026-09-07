@@ -14,3 +14,6 @@ band-app/sign/
 # 发布用的手环安装包是有意入库的，不要被 *.rpk 规则吃掉
 *.rpk
 !assets/band-app.rpk
+
+# PULSE_SCREEN 调试截图
+debug-window-*.png
