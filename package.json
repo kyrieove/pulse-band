@@ -1,6 +1,6 @@
 {
   "name": "pulse-band",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Real-time AI Coding Agent Status Island for Windows",
   "type": "module",
   "main": "dist-electron/main/index.js",
