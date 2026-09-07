@@ -186,27 +186,27 @@ Xiaomi Smart Band 10 在 Gadgetbridge 支持列表内 —— 协议行为可查�
 
 ## 阶段 0：建独立私有仓库
 
-**必须第一件事做完。改 remote 之前不许 push。**
+**✅ 已完成（2026-09-08），zcode 从阶段 1 开始。** 仓库 <https://github.com/kyrieove/pulse-band-v2>（private），首个提交 54c51ae。
 
-- [ ] `cd C:\dev\pulse-band2`
-- [ ] `git remote -v` —— 确认当前 origin 是 `kyrieove/pulse-band`（就是要改掉的那个）
-- [ ] `gh auth status`；未登录就写 `STATUS.md` 停下
-- [ ] 建仓库（**private**，不要加 `--source` / `--push`，remote 下一步手动接）：
+- [x] `cd C:\dev\pulse-band2`
+- [x] `git remote -v` —— 确认当前 origin 是 `kyrieove/pulse-band`（就是要改掉的那个）
+- [x] `gh auth status`；未登录就写 `STATUS.md` 停下
+- [x] 建仓库（**private**，不要加 `--source` / `--push`，remote 下一步手动接）：
 
 ```bash
 gh repo create kyrieove/pulse-band-v2 --private --description "Pulse v2: native Rust device core, replacing OronBox"
 ```
 
-- [ ] 改 remote：
+- [x] 改 remote：
 
 ```bash
 git remote set-url origin https://github.com/kyrieove/pulse-band-v2.git
 ```
 
-- [ ] `git remote -v` —— **两行都必须是 `pulse-band-v2`**。只要还看得到 `pulse-band.git`，立刻停下。
-- [ ] `.gitignore` 追加 `core/target/` 和 `device.json`；确认已覆盖 `node_modules/`、`dist/`、`dist-electron/`、`release/`、`.cache/`
-- [ ] `git add -A && git commit`（`future_version/` 里 ChatGPT 原始方案和本计划一起进第一个 commit）
-- [ ] `git push -u origin main`
+- [x] `git remote -v` —— **两行都必须是 `pulse-band-v2`**。只要还看得到 `pulse-band.git`，立刻停下。
+- [x] `.gitignore` 追加 `core/target/` 和 `device.json`；确认已覆盖 `node_modules/`、`dist/`、`dist-electron/`、`release/`、`.cache/`
+- [x] `git add -A && git commit`（`future_version/` 里 ChatGPT 原始方案和本计划一起进第一个 commit）
+- [x] `git push -u origin main`
 
 **验证**：
 
