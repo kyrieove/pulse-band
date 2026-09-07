@@ -106,7 +106,15 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
         },
   );
   checks.push(
-    input.daemonDegraded
+    !input.daemonConnected
+      ? {
+          id: 'protocol',
+          label: 'OronBox 协议',
+          status: 'warn',
+          summary: 'daemon 未连接，暂时无法确认协议版本。',
+          nextStep: '请先恢复 OronBox 后台连接。',
+        }
+      : input.daemonDegraded
       ? {
           id: 'protocol',
           label: 'OronBox 协议',
@@ -117,7 +125,15 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
       : pass('protocol', 'OronBox 协议', '协议版本兼容。'),
   );
 
-  if (input.bridgeMode === 'direct') {
+  if (!input.daemonConnected) {
+    checks.push({
+      id: 'bridge',
+      label: '手环联网桥接',
+      status: 'warn',
+      summary: 'daemon 未连接，暂时无法确认桥接状态。',
+      nextStep: '请先恢复 OronBox 后台连接。',
+    });
+  } else if (input.bridgeMode === 'direct') {
     checks.push(pass('bridge', '手环联网桥接', 'Pulse 直连模式已启用。'));
   } else if (!input.bridgeInstalled) {
     checks.push({

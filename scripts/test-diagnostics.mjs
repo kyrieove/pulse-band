@@ -47,6 +47,12 @@ test('treats a degraded daemon protocol as a warning', () => {
   assert.match(check.summary, /兼容模式/);
 });
 
+test('does not claim protocol or bridge health while daemon is offline', () => {
+  const report = buildDiagnosticReport(healthy({ daemonConnected: false }));
+  assert.equal(find(report, 'protocol').status, 'warn');
+  assert.equal(find(report, 'bridge').status, 'warn');
+});
+
 test('requires FetchBridge only in plugin mode', () => {
   const pluginCheck = find(
     buildDiagnosticReport(healthy({ bridgeMode: 'plugin', bridgeInstalled: false })),
