@@ -1,5 +1,6 @@
 import type { SessionManager } from './session-manager';
 import { agRpc } from './quota-collector';
+import { IDLE_GRACE_MIN_MS, nextIdleGrace } from './antigravity-policy';
 
 /**
  * Antigravity 会话状态轮询：调 language_server 的 GetAllCascadeTrajectories，
@@ -7,17 +8,15 @@ import { agRpc } from './quota-collector';
  * annotations.title, ... }>。端口/token 复用 quota 侧的动态发现（agRpc），
  * Antigravity 重启换了端口也能自己跟上。
  *
- * RPC 只给会话级状态，拿不到当前工具名 —— GetCascadeTrajectory /
- * GetCascadeTrajectorySteps 换 trajectoryId / conversationId 三种入参都报
- * trajectory not found，所以 currentTool 恒 null，lastMessage 用会话标题顶着。
+ * 这里只用会话级状态，所以 currentTool 恒 null，lastMessage 用会话标题顶着。
+ * 步级数据其实拿得到：GetCascadeTrajectorySteps 的入参是 { cascadeId: <会话 id> }
+ * （不是 trajectoryId，之前一直传错才报 trajectory not found），能拿到每步的
+ * RUN_COMMAND / VIEW_FILE / PLANNER_RESPONSE 和状态。代价是响应没有分页，
+ * 三百多步就有 1.2MB，不适合按轮询节奏拉，要用得挑时机。
  */
 const ACTIVE_MS = 5_000; // Antigravity 可达时的轮询间隔
 const ABSENT_MS = 30_000; // 不可达（Antigravity 没开）时的退避
-// cascade 步与步之间会出现秒级 IDLE，立刻报完成会让手环动词行抖动、每步震一次；
-// IDLE 持续超过这个宽限期才认定真的跑完了。4s（< 轮询间隔）配合「到点即查」的
-// 快速复查，完成感知压进 ~4s（用户要求 5s 内）；4s 以上的步间停顿会误报一次
-// Done（下一轮 RUNNING 会接回来），换取实时性是用户点头的取舍
-const IDLE_GRACE_MS = 4_000;
+// 完成判定的宽限期策略见 antigravity-policy.ts
 
 export class AntigravitySessionPoller {
   private timer: NodeJS.Timeout | null = null;
@@ -27,6 +26,12 @@ export class AntigravitySessionPoller {
   /** 当前跟踪的会话：只认 lastModifiedTime 最新的一个，历史会话不进面板 */
   private currentId: string | null = null;
   private lastStatus: string | null = null;
+  /** 本会话当前的完成判定宽限期，见 nextIdleGrace */
+  private graceMs = IDLE_GRACE_MIN_MS;
+  /** 本段 IDLE 是什么时候开始的（0 = 不在计量中），用来量步间空档有多长 */
+  private idleSince = 0;
+  /** 上一轮看到的原始状态，用来判断这段 IDLE 前面是不是真的在跑 */
+  private prevRaw: string | null = null;
 
   constructor(private sessionManager: SessionManager) {}
 
@@ -67,6 +72,9 @@ export class AntigravitySessionPoller {
       this.finishActive('Antigravity 不可达');
       this.currentId = null;
       this.lastStatus = null;
+      this.graceMs = IDLE_GRACE_MIN_MS;
+      this.idleSince = 0;
+      this.prevRaw = null;
       return false;
     }
     const entries: [string, any][] = Object.entries(data.trajectorySummaries ?? {});
@@ -74,6 +82,9 @@ export class AntigravitySessionPoller {
       this.finishActive('没有会话');
       this.currentId = null;
       this.lastStatus = null;
+      this.graceMs = IDLE_GRACE_MIN_MS;
+      this.idleSince = 0;
+      this.prevRaw = null;
       return true;
     }
 
@@ -83,11 +94,36 @@ export class AntigravitySessionPoller {
       this.finishActive('切换到新会话');
       this.currentId = convId;
       this.lastStatus = null;
+      this.graceMs = IDLE_GRACE_MIN_MS;
+      this.idleSince = 0;
+      this.prevRaw = null;
     }
 
     const title = String(t.annotations?.title ?? t.summary ?? '').trim();
     const cwd = fileUriToLocal(t.workspaces?.[0]?.workspaceFolderAbsoluteUri);
     const status = String(t.status ?? '');
+
+    // 量步间空档：从「跑着 → IDLE」开始打点，重新跑起来时结算，据此放宽宽限期。
+    // 必须放在下面的「状态没变就返回」之前，否则长 IDLE 期间量不到。
+    // 只认前面确实在跑的那种 IDLE：会话早就结束、静静躺着的空闲不是步间空档，
+    // 拿它去放宽宽限会让之后每一次真完成都晚报几十秒。
+    const wasRunning =
+      this.prevRaw === 'CASCADE_RUN_STATUS_RUNNING' || this.prevRaw === 'CASCADE_RUN_STATUS_BUSY';
+    this.prevRaw = status;
+    if (status === 'CASCADE_RUN_STATUS_IDLE') {
+      if (this.idleSince === 0 && wasRunning) this.idleSince = Date.now();
+    } else if (this.idleSince !== 0) {
+      const gap = Date.now() - this.idleSince;
+      const widened = nextIdleGrace(this.graceMs, gap);
+      if (widened !== this.graceMs) {
+        console.log(
+          `[AgSessionPoller] 步间空档 ${Math.round(gap / 1000)}s，完成宽限放宽到 ${Math.round(widened / 1000)}s`
+        );
+        this.graceMs = widened;
+      }
+      this.idleSince = 0;
+    }
+
     if (status === this.lastStatus) return true;
     if (status === 'CASCADE_RUN_STATUS_RUNNING' || status === 'CASCADE_RUN_STATUS_BUSY') {
       // RUNNING 覆盖思考+工具执行，RPC 区分不了，统一按「在干活」报；
@@ -102,7 +138,7 @@ export class AntigravitySessionPoller {
       console.log(`[AgSessionPoller] ${convId.slice(0, 8)} -> ${status} (${title})`);
     } else if (status === 'CASCADE_RUN_STATUS_IDLE') {
       const quietMs = Date.now() - ts(t.lastModifiedTime);
-      if (quietMs > IDLE_GRACE_MS) {
+      if (quietMs > this.graceMs) {
         // 会话可能从未以活动态创建过（Pulse 启动时它就闲着）——
         // completeSession 只改不改建，这里统一用 updateSession 落一个 completed
         this.sessionManager.updateSession(convId, 'antigravity', {
@@ -115,9 +151,10 @@ export class AntigravitySessionPoller {
         console.log(`[AgSessionPoller] ${convId.slice(0, 8)} -> completed (quiet ${Math.round(quietMs / 1000)}s)`);
       }
       // 宽限期内不落定也不记 lastStatus（期间又 RUNNING 也接得上）；
-      // 把下一轮轮询提前到「宽限到点 + 150ms」——完成感知压进 IDLE 出现后 ~4s，
-      // 不用再干等一个完整轮询周期（用户要求 5s 内）
-      this.nextDelayOverride = IDLE_GRACE_MS - quietMs + 150;
+      // 把下一轮轮询提前到「宽限到点 + 150ms」，完成感知压进 IDLE 出现后一个宽限期。
+      // 宽限被放宽后这个提前量会超过常规间隔，那就别用它——否则会漏掉重新跑起来。
+      const untilVerdict = this.graceMs - quietMs + 150;
+      this.nextDelayOverride = untilVerdict < ACTIVE_MS ? untilVerdict : 0;
     }
     // CANCELING / UNSPECIFIED：短暂态，等下一轮落定再报
     return true;
