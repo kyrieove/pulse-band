@@ -1,0 +1,1253 @@
+<template>
+  <div class="container">
+    <swiper class="root-swiper" index="0" autoplay="false" interval="1500" loop="false"
+            indicator="false" vertical="false" onchange="onSwiperChange">
+      <!-- 屏 0 · Claude：全部组件按 docs/ui-v4/design.md §2.1 绝对坐标（相对屏原点）。
+           右滑退出：loop=false 时屏 0 的右滑是 swiper 空转手势，touchstart/end 判
+           「横向位移 >60px 且向右主导」→ 播淡出动画（~280ms）后再真正退出。
+           🔴 动画只能用 opacity——3.1.3 真机实证 style 里绑 transform 会崩渲染器
+           （app 启动即重启），Vela 的 transform 不可用 -->
+      <div class="screen" ontouchstart="onScreenTouchStart" ontouchend="onScreenTouchEnd"
+           style="opacity: {{slideO}};">
+        <div class="head-row">
+          <image class="logo" src="/common/agent-claude.png"></image>
+          <text class="agent-name">Claude</text>
+        </div>
+        <div class="status-row">
+          <div class="status-dot {{light0Class}}" style="opacity: {{lightOpacity}};"></div>
+          <text class="status-verb" style="color: {{a0VerbColor}}; opacity: {{sw0}};">{{a0seg0}}</text>
+          <text class="status-verb" style="color: {{a0VerbColor}}; opacity: {{sw1}};">{{a0seg1}}</text>
+          <text class="status-verb" style="color: {{a0VerbColor}}; opacity: {{sw2}};">{{a0seg2}}</text>
+          <text class="status-verb" style="color: {{a0VerbColor}}; opacity: {{sw3}};">{{a0seg3}}</text>
+          <text class="status-verb" style="color: {{a0VerbColor}}; opacity: {{sw4}};">{{a0seg4}}</text>
+          <text class="status-verb" style="color: {{a0VerbColor}}; opacity: {{sw5}};">{{a0seg5}}</text>
+          <text class="status-verb" style="color: {{a0VerbColor}}; opacity: {{sw6}};">{{a0seg6}}</text>
+          <text class="status-verb" style="color: {{a0VerbColor}}; opacity: {{sw7}};">{{a0seg7}}</text>
+        </div>
+        <text class="tool-name">{{a0Tool}}</text>
+        <div class="card card-a0">
+          <text class="card-title tt-a0">5h</text>
+          <text class="card-reset">{{claudeReset5h}}</text>
+          <text class="card-val" style="color: {{claudeValC5h}};">{{claudeVal5h}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{claudeFillW5h}}px; background-color: {{claudeFillC5h}};"></div>
+          </div>
+        </div>
+        <div class="card card-b">
+          <text class="card-title tt-b">7d</text>
+          <text class="card-reset">{{claudeReset7d}}</text>
+          <text class="card-val" style="color: {{claudeValC7d}};">{{claudeVal7d}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{claudeFillW7d}}px; background-color: {{claudeFillC7d}};"></div>
+          </div>
+        </div>
+        <div class="clock-zone" onclick="onTapClock" onlongpress="onExitApp">
+          <div class="dots-row">
+            <div class="pdot pdot-on"></div><div class="pdot"></div><div class="pdot"></div>
+          </div>
+          <text class="date-text">{{currentDate}}</text>
+          <text class="time-text">{{currentTime}}</text>
+        </div>
+      </div>
+      <!-- 屏 1 · Codex：同一骨架（design.md §2.2），指示点第二个亮 -->
+      <div class="screen">
+        <div class="head-row">
+          <image class="logo" src="/common/agent-codex.png"></image>
+          <text class="agent-name">Codex</text>
+        </div>
+        <div class="status-row">
+          <div class="status-dot {{light1Class}}" style="opacity: {{lightOpacity}};"></div>
+          <text class="status-verb" style="color: {{a1VerbColor}}; opacity: {{sw0}};">{{a1seg0}}</text>
+          <text class="status-verb" style="color: {{a1VerbColor}}; opacity: {{sw1}};">{{a1seg1}}</text>
+          <text class="status-verb" style="color: {{a1VerbColor}}; opacity: {{sw2}};">{{a1seg2}}</text>
+          <text class="status-verb" style="color: {{a1VerbColor}}; opacity: {{sw3}};">{{a1seg3}}</text>
+          <text class="status-verb" style="color: {{a1VerbColor}}; opacity: {{sw4}};">{{a1seg4}}</text>
+          <text class="status-verb" style="color: {{a1VerbColor}}; opacity: {{sw5}};">{{a1seg5}}</text>
+          <text class="status-verb" style="color: {{a1VerbColor}}; opacity: {{sw6}};">{{a1seg6}}</text>
+          <text class="status-verb" style="color: {{a1VerbColor}}; opacity: {{sw7}};">{{a1seg7}}</text>
+        </div>
+        <text class="tool-name">{{a1Tool}}</text>
+        <div class="card card-a1">
+          <text class="card-title tt-a1">5h</text>
+          <text class="card-reset">{{codexReset5h}}</text>
+          <text class="card-val" style="color: {{codexValC5h}};">{{codexVal5h}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{codexFillW5h}}px; background-color: {{codexFillC5h}};"></div>
+          </div>
+        </div>
+        <div class="card card-b">
+          <text class="card-title tt-b">7d</text>
+          <text class="card-reset">{{codexReset7d}}</text>
+          <text class="card-val" style="color: {{codexValC7d}};">{{codexVal7d}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{codexFillW7d}}px; background-color: {{codexFillC7d}};"></div>
+          </div>
+        </div>
+        <div class="clock-zone" onclick="onTapClock" onlongpress="onExitApp">
+          <div class="dots-row">
+            <div class="pdot"></div><div class="pdot pdot-on"></div><div class="pdot"></div>
+          </div>
+          <text class="date-text">{{currentDate}}</text>
+          <text class="time-text">{{currentTime}}</text>
+        </div>
+      </div>
+      <!-- 屏 2 · Antigravity：同一骨架（design.md §2.3），指示点第三个亮 -->
+      <div class="screen">
+        <div class="head-row">
+          <image class="logo" src="/common/agent-antigravity.png"></image>
+          <text class="agent-name">Antigravity</text>
+        </div>
+        <div class="status-row">
+          <div class="status-dot {{light2Class}}" style="opacity: {{lightOpacity}};"></div>
+          <text class="status-verb" style="color: {{a2VerbColor}}; opacity: {{sw0}};">{{a2seg0}}</text>
+          <text class="status-verb" style="color: {{a2VerbColor}}; opacity: {{sw1}};">{{a2seg1}}</text>
+          <text class="status-verb" style="color: {{a2VerbColor}}; opacity: {{sw2}};">{{a2seg2}}</text>
+          <text class="status-verb" style="color: {{a2VerbColor}}; opacity: {{sw3}};">{{a2seg3}}</text>
+          <text class="status-verb" style="color: {{a2VerbColor}}; opacity: {{sw4}};">{{a2seg4}}</text>
+          <text class="status-verb" style="color: {{a2VerbColor}}; opacity: {{sw5}};">{{a2seg5}}</text>
+          <text class="status-verb" style="color: {{a2VerbColor}}; opacity: {{sw6}};">{{a2seg6}}</text>
+          <text class="status-verb" style="color: {{a2VerbColor}}; opacity: {{sw7}};">{{a2seg7}}</text>
+        </div>
+        <text class="tool-name">{{a2Tool}}</text>
+        <div class="card card-a2">
+          <text class="card-title tt-a2">5h</text>
+          <text class="card-reset">{{antigravityReset5h}}</text>
+          <text class="card-val" style="color: {{antigravityValC5h}};">{{antigravityVal5h}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{antigravityFillW5h}}px; background-color: {{antigravityFillC5h}};"></div>
+          </div>
+        </div>
+        <div class="card card-b">
+          <text class="card-title tt-b">7d</text>
+          <text class="card-reset">{{antigravityReset7d}}</text>
+          <text class="card-val" style="color: {{antigravityValC7d}};">{{antigravityVal7d}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{antigravityFillW7d}}px; background-color: {{antigravityFillC7d}};"></div>
+          </div>
+        </div>
+        <div class="clock-zone" onclick="onTapClock" onlongpress="onExitApp">
+          <div class="dots-row">
+            <div class="pdot"></div><div class="pdot"></div><div class="pdot pdot-on"></div>
+          </div>
+          <text class="date-text">{{currentDate}}</text>
+          <text class="time-text">{{currentTime}}</text>
+        </div>
+      </div>
+    </swiper>
+  </div>
+</template>
+
+<style>
+.container {
+  width: 192px;
+  height: 490px;
+  background-color: #000000;
+}
+
+.root-swiper {
+  width: 192px;
+  height: 490px;
+}
+
+/* 一屏 192×490。组件全部绝对定位（坐标源：docs/ui-v4/design.md §2） */
+.screen {
+  width: 192px;
+  height: 490px;
+  background-color: #000000;
+}
+
+/* 头部：logo 22px + 8px 间距 + 名字 16px 粗体，单行并排水平居中（design §1.2）。
+   容器 top46 高22：logo 中线 y=57；文字行盒随 flex 交叉轴居中，几何中线对齐 */
+.head-row {
+  position: absolute;
+  top: 46px;
+  left: 0px;
+  width: 192px;
+  height: 22px;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+}
+
+.logo {
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+}
+
+.agent-name {
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 状态行 top74：灯 8px 正圆 + 动词 14px（8 段扫光载体，V4 只改尺寸不改结构） */
+.status-row {
+  position: absolute;
+  top: 74px;
+  left: 0px;
+  width: 192px;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background-color: #48484a;
+  margin-right: 6px;
+}
+
+.lt-run  { background-color: #30d158; }
+.lt-done { background-color: #5ac8fa; }
+.lt-idle { background-color: #48484a; }
+.lt-err  { background-color: #ff453a; }
+
+.status-verb {
+  font-size: 14px;
+  font-weight: 700;
+  color: #8e8e93;
+}
+
+/* 工具名行 top96 12px 浅灰 */
+.tool-name {
+  position: absolute;
+  top: 96px;
+  left: 14px;
+  width: 164px;
+  text-align: center;
+  color: #8e8e93;
+  font-size: 12px;
+  lines: 1;
+}
+
+/* 额度卡片：164×106 圆角14 + 1px 描边（design §2）。
+   屏 0-2 双卡 top126/top242；屏 3 单卡 top184 居中。
+   内部坐标相对卡片：title 12,12 · reset 72,12(右对齐) · 大数字 12,34 · 进度条 12,80 */
+.card {
+  position: absolute;
+  left: 14px;
+  width: 164px;
+  height: 106px;
+  border-radius: 14px;
+  border: 1px solid;
+}
+
+.card-a0 { top: 126px; background-color: #16120c; border-color: #8a5818; } /* Claude 暖黄 */
+.card-a1 { top: 126px; background-color: #0d1712; border-color: #1b4d32; } /* Codex 翠绿 */
+.card-a2 { top: 126px; background-color: #140c1c; border-color: #532682; } /* AG 紫罗兰 */
+.card-b  { top: 242px; background-color: #0c131d; border-color: #163c68; } /* 7d 蓝色通用 */
+
+.card-title {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  height: 18px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.tt-a0 { color: #e5a93c; }
+.tt-a1 { color: #30d158; }
+.tt-a2 { color: #c77dff; }
+.tt-b  { color: #5ac8fa; }
+
+.card-reset {
+  position: absolute;
+  left: 72px;
+  top: 12px;
+  width: 80px;
+  height: 18px;
+  text-align: right;
+  color: #8e8e93;
+  font-size: 13px;
+}
+
+.card-val {
+  position: absolute;
+  left: 12px;
+  top: 34px;
+  width: 140px;
+  height: 38px;
+  font-size: 32px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+/* 进度条：底槽 140×8 圆角4；填充宽度/颜色走内联绑定（est 置灰在 script 算好） */
+.bar-bg {
+  position: absolute;
+  left: 12px;
+  top: 80px;
+  width: 140px;
+  height: 8px;
+  border-radius: 4px;
+  background-color: #252733;
+}
+
+.bar-fill {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  height: 8px;
+  border-radius: 4px;
+}
+
+/* 底部指示点 + 日期 + 时钟（整块是点击区：onclick 重连 + onlongpress 退出）。
+   点 6×6 圆点 y371 · 日期 y394 · 时钟 y416（design §1.1/§2） */
+.clock-zone {
+  position: absolute;
+  top: 371px;
+  left: 0px;
+  width: 192px;
+  flex-direction: column;
+  align-items: center;
+}
+
+.dots-row {
+  flex-direction: row;
+}
+
+.pdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background-color: #3a3a3c;
+  margin-left: 3px;
+  margin-right: 3px;
+}
+
+.pdot-on {
+  background-color: #ffffff;
+}
+
+.date-text {
+  margin-top: 17px;
+  color: #8e8e93;
+  font-size: 12px;
+}
+
+.time-text {
+  margin-top: 6px;
+  color: #ffffff;
+  font-size: 28px;
+  font-weight: 700;
+}
+</style>
+
+<script>
+import fetch from '@system.fetch';
+import interconnect from '@system.interconnect';
+import brightness from '@system.brightness';
+import vibrator from '@system.vibrator';
+import router from '@system.router';
+
+const STATUS_HOST_LOCAL = '127.0.0.1';
+// 兜底 host。原本是给「OronBox 跑在手机上」用的 PC 局域网地址，
+// 现在 8765 只监听回环（Pulse 与 OronBox 必须同机），这条退化成同址重试。
+// ponytail: 下面第 2 步的 fallback 分支已无实际作用，等能上真机验证时再整块删掉。
+const STATUS_HOST_LAN = '127.0.0.1';
+// 模拟器 system.fetch 直连专用：QEMU user-mode 网络里宿主机永远是 10.0.2.2，
+// 不随 DHCP 漂移。真机走 interconnect 不会进 'off' 分支，用不到这个地址。
+const STATUS_HOST_SIM = '10.0.2.2';
+
+let connectInst = null;
+// 'init'  握手中，先别发请求
+// 'ready' 握手成功，走 interconnect
+// 'retry' 握手失败过，等待就绪或点击重试
+// 'off'   压根没有 interconnect 模块（模拟器），退回 fetch 直连
+// 28 步 × 70ms ≈ 2 秒。用余弦而不是等差：台阶在明暗两端最容易被看出来，
+// 余弦让两端变化最慢、中间最快，肉眼就看不出是一帧一帧的。
+// 一圈 40 步 × 70ms = 2.8 秒。灯走平缓的余弦呼吸（慢而规律，不是心跳那种急促搏动），
+// 扫光在第 SWEEP_AT 步从左边进场、8 步穿过文字，然后随灯一起静下来等下一圈。
+const CYCLE = 40;
+const BEAT = [];
+for (let i = 0; i < CYCLE; i++) {
+  BEAT.push((0.65 + 0.35 * Math.cos(2 * Math.PI * i / CYCLE)).toFixed(3));
+}
+const SEGS = 8;        // 文字切几段
+const SWEEP_AT = 8;    // 灯最亮之后第几步起跑（错开约五分之一圈）
+const DIM = '0.42';    // 光没扫到的地方
+
+// 三屏的固定顺序：swiper 第几屏就是谁，也是 limits/sessions 的键序（zcode 屏 3.1.1 起砍掉）
+const AGENTS = ['claude', 'codex', 'antigravity'];
+
+// 30s 无触摸自动熄屏（阶段 5B）。戴着调手感时改这里，别动调用处。
+const SCREEN_AWAKE_MS = 30000;
+
+// 每个 agent 上一次的状态，用于判断 completed/error 跳变（模块级，不进绑定）
+const prevStatus = ['idle', 'idle', 'idle'];
+
+// 屏 0 右滑退出的手势起点（模块级，不进绑定；只有屏 0 的根节点绑了 touch 事件）
+let swipeStartX = 0;
+let swipeStartY = 0;
+// 右滑判定：横向位移超过这个值且明显横向主导，才当退出手势（防误伤点击/长按/竖滑）
+const SWIPE_EXIT_PX = 60;
+// 滑出动画进行中标记（防 touchend 重复触发）
+let exitAnimating = false;
+
+// 动词表：文字只说「在干什么」，不再倒 lastMessage 那种英文日志
+const VERB = {
+  thinking: 'Thinking',
+  running_tool: 'Running',
+  completed: 'Done',
+  error: 'Error'
+};
+
+let icMode = 'init';
+let isInitializing = false;
+let hsTimer = null;
+let reqSeq = 0;
+const pending = {};       // id -> { resolve, timer }
+
+function decodeBase64(str) {
+  try {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    let output = '';
+    str = String(str).replace(/=+$/, '');
+    for (let bc = 0, bs = 0, buffer, i = 0; (buffer = str.charAt(i++)); ~buffer && ((bs = bc % 4 ? bs * 64 + buffer : buffer), bc++ % 4) ? (output += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6)))) : 0) {
+      buffer = chars.indexOf(buffer);
+    }
+    return output;
+  } catch (e) {
+    return str;
+  }
+}
+
+function parseRespBody(resp) {
+  if (!resp) return null;
+  let text = resp.body;
+  if (typeof text !== 'string') return text;
+  if (resp.bodyEncoding === 'base64' || resp.raw === true) {
+    text = decodeBase64(text);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    try {
+      return JSON.parse(decodeBase64(text));
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+// ── 报文归一化（整个页面只有这一处认识线上报文的形状）──────────────
+// 吃 ?all=1 的 B-lean 报文，吐 { ts, sessions, limits }。
+// 万一真机上 768 是硬上限、要换 C 方案（缩写键名），只改这个函数 +
+// 服务端的 leanSession/leanLimit，下面的渲染代码一概不用动。
+function parsePayload(json) {
+  if (!json || !json.sessions || !json.limits) return null;
+  const sessions = {};
+  const limits = {};
+  for (let i = 0; i < AGENTS.length; i++) {
+    const a = AGENTS[i];
+    const s = json.sessions[a];
+    sessions[a] = s
+      ? { status: s.status || null, tool: s.tool || null }
+      : { status: null, tool: null };
+    const l = json.limits[a];
+    limits[a] = l
+      ? {
+          pct5h: l.pct5h,
+          pct7d: l.pct7d,
+          level5h: l.level5h,
+          level7d: l.level7d,
+          resetText: l.resetText,
+          reset7dText: l.reset7dText,
+          // zcode 专用 1d 窗口（其余 agent 报文里无此键，读出来是 undefined 无妨）
+          pct1d: l.pct1d,
+          level1d: l.level1d,
+          reset1dText: l.reset1dText,
+          authoritative: l.authoritative
+        }
+      : null;
+  }
+  return { ts: json.ts, serverIp: json.serverIp, sessions: sessions, limits: limits };
+}
+
+export default {
+  private: {
+    // 没拿到服务端时间就整块空着 —— 画 --:-- 等于把「还没数据」显示成「有数据但坏了」
+    currentTime: '',
+    currentDate: '',
+    // swiper 当前屏号（0/1/2），由 change 事件驱动；切屏不发任何请求（Q7）
+    curIdx: 0,
+    selectedAgent: 'claude',
+    // 每屏一个灯。class 绑定用法逐字沿用 1.2.4 验证过的那一处（硬约束 5 唯一例外），
+    // 三处复用同一模式；颜色若卡住按风险 4 预案改内联 style
+    light0Class: 'lt-idle',
+    light1Class: 'lt-idle',
+    light2Class: 'lt-idle',
+    // 呼吸透明度多屏共用（同一时刻只有一屏可见，和 Q8 共用扫光同一逻辑）
+    lightOpacity: '1',
+    // 每屏状态行 = 灯 + 动词（切 8 段跑扫光，sw0..7 多屏共用）；工具名独立第二行
+    a0seg0: '', a0seg1: '', a0seg2: '', a0seg3: '',
+    a0seg4: '', a0seg5: '', a0seg6: '', a0seg7: '',
+    a0VerbColor: '#8e8e93',
+    a0Tool: '',
+    a1seg0: '', a1seg1: '', a1seg2: '', a1seg3: '',
+    a1seg4: '', a1seg5: '', a1seg6: '', a1seg7: '',
+    a1VerbColor: '#8e8e93',
+    a1Tool: '',
+    a2seg0: '', a2seg1: '', a2seg2: '', a2seg3: '',
+    a2seg4: '', a2seg5: '', a2seg6: '', a2seg7: '',
+    a2VerbColor: '#8e8e93',
+    a2Tool: '',
+
+    // 每屏卡片绑定（design.md §2）：Val 大百分比文本 / ValC 其颜色 /
+    // FillW 进度条填充宽 px / FillC 填充色 / Reset 倒计时。
+    // 骨架态 = '--' + 条宽 0，绝不造数
+    claudeVal5h: '--', claudeValC5h: '#ffffff', claudeFillW5h: 0, claudeFillC5h: '#ff9f0a', claudeReset5h: '--',
+    claudeVal7d: '--', claudeValC7d: '#ffffff', claudeFillW7d: 0, claudeFillC7d: '#0a84ff', claudeReset7d: '--',
+
+    codexVal5h: '--', codexValC5h: '#ffffff', codexFillW5h: 0, codexFillC5h: '#30d158', codexReset5h: '--',
+    codexVal7d: '--', codexValC7d: '#ffffff', codexFillW7d: 0, codexFillC7d: '#0a84ff', codexReset7d: '--',
+
+    antigravityVal5h: '--', antigravityValC5h: '#ffffff', antigravityFillW5h: 0, antigravityFillC5h: '#9d4edd', antigravityReset5h: '--',
+    antigravityVal7d: '--', antigravityValC7d: '#ffffff', antigravityFillW7d: 0, antigravityFillC7d: '#0a84ff', antigravityReset7d: '--',
+
+
+    // 扫光透明度 8 个字段：阶段 5 的 8 段扫光沿用（Q8：三屏共用，每帧仍只写 8 个）
+    sw0: '1',
+    sw1: '1',
+    sw2: '1',
+    sw3: '1',
+    sw4: '1',
+    sw5: '1',
+    sw6: '1',
+    sw7: '1',
+    fadeStep: 0,
+    fadeTimer: null,
+    pollTimer: null,
+    screenTimer: null,
+    awakeSince: 0,
+    manualSleep: false,
+
+    // 计时器本地走秒：服务端 5s 才给一次 durationSeconds，中间自己按 1s 补
+    hasLoadedData: false,
+    isFetching: false,
+    // 屏 0 右滑退出淡出动画（纯 opacity——transform 会崩渲染器，见屏 0 注释）
+    slideO: '1',
+  },
+
+  onInit() {
+    this.armScreenTimer();
+  },
+
+  onShow() {
+    this.armScreenTimer();
+
+    if (icMode === 'ready') {
+      this.fetchStatus();
+    } else if (icMode === 'init' && !isInitializing && !hsTimer) {
+      // The known-good probe reaches instance() two seconds after onShow.
+      hsTimer = setTimeout(() => {
+        hsTimer = null;
+        this.initTransport();
+      }, 2000);
+    }
+    if (!this.fadeTimer) {
+      this.fadeTimer = setInterval(() => {
+        this.fadeStep = (this.fadeStep + 1) % CYCLE;
+        this.tickPulse();
+      }, 70);
+    }
+    if (!this.pollTimer) {
+      this.pollTimer = setInterval(() => {
+        this.fetchStatus();
+      }, 5000);
+    }
+  },
+
+  // 触摸入口（onShow/翻页/点时间区）：计时归零，然后交给 rearmScreen 决策。
+  armScreenTimer() {
+    this.awakeSince = Date.now();
+    this.manualSleep = false;   // 摸了屏 = 收回「我要睡」
+    this.rearmScreen();
+  },
+
+  // 亮屏/熄屏的唯一决策点，触摸和每次轮询后都会调：
+  //   有 agent 在跑 → 一直亮着（计时起点顶到现在），这样跑完的震动是实时的；
+  //   全部 idle    → 从最后一次「触摸或活跃」起算 SCREEN_AWAKE_MS 熄屏。
+  // 真机实测：息屏期间运行时会冻结 setInterval，所以只能靠不熄屏来保住震动（阶段 5B 裁决）。
+  rearmScreen() {
+    if (this.screenTimer) { clearTimeout(this.screenTimer); this.screenTimer = null; }
+    const on = (v) => {
+      try { brightness.setKeepScreenOn({ keepScreenOn: v }); } catch (e) {}
+    };
+    // 用户长按主动要熄屏：下次触摸之前，谁在跑都不再强行亮屏
+    if (this.manualSleep) { on(false); return; }
+    if (this.anyActive()) {
+      this.awakeSince = Date.now();
+      on(true);
+      return;
+    }
+    const left = SCREEN_AWAKE_MS - (Date.now() - this.awakeSince);
+    if (left <= 0) { on(false); return; }
+    on(true);
+    this.screenTimer = setTimeout(() => { on(false); }, left);
+  },
+
+  anyActive() {
+    for (let i = 0; i < AGENTS.length; i++) {
+      if (this['light' + i + 'Class'] === 'lt-run') { return true; }
+    }
+    return false;
+  },
+
+  onHide() {
+    // 息屏/切走：只停动效（黑屏上没有动效可画，白烧 CPU）。
+    // pollTimer、握手状态、pending 一律保留 —— 息屏不停跑，震动照常（阶段 5B）。
+    console.log('[CodeIsland] hidden at ' + Date.now());
+    if (this.fadeTimer) { clearInterval(this.fadeTimer); this.fadeTimer = null; }
+  },
+
+  onDestroy() {
+    // 用户在手环上退出 app = 主动中断：全量拆除
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    if (this.fadeTimer) { clearInterval(this.fadeTimer); this.fadeTimer = null; }
+    if (this.screenTimer) { clearTimeout(this.screenTimer); this.screenTimer = null; }
+    if (hsTimer) { clearTimeout(hsTimer); hsTimer = null; }
+    if (icMode === 'init') { isInitializing = false; }
+    this.isFetching = false;
+    for (const k in pending) {
+      if (pending[k] && pending[k].timer) {
+        clearTimeout(pending[k].timer);
+      }
+      delete pending[k];
+    }
+    try {
+      brightness.setKeepScreenOn({
+        keepScreenOn: false
+      });
+    } catch (e) {}
+  },
+
+  initTransport(force = false) {
+    if (isInitializing && !force) {
+      return;
+    }
+    if (icMode === 'ready' && !force) {
+      return;
+    }
+    isInitializing = true;
+    if (force) {
+      icMode = 'init';
+    }
+    if (hsTimer) {
+      clearTimeout(hsTimer);
+      hsTimer = null;
+    }
+
+    try {
+      if (typeof interconnect === 'undefined' || !interconnect) {
+        icMode = 'off';
+        isInitializing = false;
+        this.setStatusText('E: no interconnect');
+        return;
+      }
+
+      // 单例模式保护：connectInst 仅创建一次，绝不重复调用 instance() 覆盖原有实例
+      if (!connectInst) {
+        connectInst = interconnect.instance();
+      }
+      if (!connectInst) {
+        icMode = 'off';
+        isInitializing = false;
+        this.setStatusText('E: no instance');
+        return;
+      }
+
+      connectInst.onmessage = (msg) => {
+        try {
+          let packet = msg && msg.data ? msg.data : msg;
+          if (typeof packet === 'string') {
+            try {
+              packet = JSON.parse(packet);
+            } catch (e) {
+              this.setStatusText('E: msg parse err');
+              return;
+            }
+          }
+          if (!packet) {
+            return;
+          }
+
+          if (packet.tag === '__hs__') {
+            if (hsTimer) {
+              clearTimeout(hsTimer);
+              hsTimer = null;
+            }
+            icMode = 'ready';
+            isInitializing = false;
+            console.log('[TX] handshake ack');
+            this.fetchStatus();
+            return;
+          }
+
+          if (packet.tag === 'fetch') {
+            const reqId = packet.id;
+            if (reqId && pending[reqId]) {
+              const req = pending[reqId];
+              delete pending[reqId];
+              if (req.timer) {
+                clearTimeout(req.timer);
+              }
+              if (typeof req.resolve === 'function') {
+                req.resolve(packet.resp);
+              }
+            }
+            return;
+          }
+        } catch (e) {
+          this.setStatusText('E: onmsg ' + String(e).slice(0, 15));
+          console.log('[TX] onmessage parse error: ' + e);
+        }
+      };
+
+      // Band 10 firmware can throw or hang in its status APIs even though the
+      // PC has already confirmed the session. Keep only the simulator's
+      // explicit disconnected result; real-device paths send after a guard.
+      const scheduleHandshake = () => {
+        if (hsTimer) clearTimeout(hsTimer);
+        hsTimer = setTimeout(() => {
+          hsTimer = null;
+          doSendHandshake();
+        }, 1000);
+      };
+
+      const checkAndHandshake = () => {
+        if (icMode === 'ready') {
+          isInitializing = false;
+          return;
+        }
+
+
+        if (typeof connectInst.getReadyState === 'function') {
+          try {
+            connectInst.getReadyState({
+              success: (data) => {
+                const st = data && data.status;
+                console.log('[TX] getReadyState=' + st);
+                if (st === 1) {
+                  scheduleHandshake();
+                  return;
+                }
+                // AIoT simulator has no paired-phone channel. Keep the
+                // baseline system.fetch path that is known to work there.
+                icMode = 'off';
+                isInitializing = false;
+                this.fetchStatus();
+              },
+              fail: (errData, code) => {
+                console.log('[TX] getReadyState fail: ' + code);
+                scheduleHandshake();
+              }
+            });
+          } catch (e) {
+            console.log('[TX] getReadyState exception: ' + e);
+            scheduleHandshake();
+          }
+        } else {
+          scheduleHandshake();
+        }
+      };
+
+      const doSendHandshake = () => {
+        if (icMode === 'ready') {
+          isInitializing = false;
+          return;
+        }
+        const hsPacket = {
+          tag: '__hs__',
+          count: 0,
+          caps: {
+            version: 3,
+            chunk: true,
+            maxChunkSize: 768,
+            encodings: ['text', 'base64'],
+            ack: true
+          }
+        };
+
+        try {
+          connectInst.send({
+            data: hsPacket,
+            success: () => {
+              console.log('[TX] handshake sent');
+              if (hsTimer) clearTimeout(hsTimer);
+              hsTimer = setTimeout(() => {
+                if (icMode === 'init') {
+                  this.setStatusText('tap retry');
+                  icMode = 'retry';
+                  isInitializing = false;
+                }
+              }, 4000);
+            },
+            fail: (errData, code) => {
+              const errStr = typeof errData === 'object' ? JSON.stringify(errData) : String(errData == null ? '' : errData);
+              const codeStr = code == null ? '?' : String(code);
+              console.log('[TX] handshake send fail code=' + codeStr + ' data=' + errStr);
+              this.setStatusText(('c=' + codeStr + ' ' + errStr).slice(0, 20));
+              isInitializing = false;
+              icMode = 'retry';
+            }
+          });
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          this.setStatusText(msg.slice(0, 18));
+          console.log('[TX] handshake exception: ' + e);
+          isInitializing = false;
+          icMode = 'retry';
+        }
+      };
+
+      // 核心缓冲：留出 1000ms 缓冲等待 Vela 底层穿戴 BLE 管道建立
+      if (hsTimer) clearTimeout(hsTimer);
+      hsTimer = setTimeout(() => {
+        checkAndHandshake();
+      }, 1000);
+
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      this.setStatusText(msg.slice(0, 18));
+      console.log('[TX] initTransport exception: ' + e);
+      icMode = 'retry';
+      isInitializing = false;
+    }
+  },
+
+  // ponytail: 只支持单帧 (<16KB)，未启用分片。STATUS_URL 走 /api/status/compact 保证单帧在 768 字节内
+  icFetch(url, cb) {
+    const id = 'r' + (++reqSeq);
+    let finished = false;
+
+    const timer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        delete pending[id];
+        cb({ ok: false, status: 0, statusText: 'tmo_6s' });
+      }
+    }, 6000);
+
+    pending[id] = {
+      resolve: (resp) => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          cb(resp);
+        }
+      },
+      timer: timer
+    };
+
+    try {
+      if (!connectInst || typeof connectInst.send !== 'function') {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          delete pending[id];
+          cb({ ok: false, status: 0, statusText: 'no_send_api' });
+        }
+        return;
+      }
+
+      const reqPacket = {
+        tag: 'fetch',
+        id: id,
+        url: url,
+        options: { method: 'GET' }
+      };
+
+      connectInst.send({
+        data: reqPacket,
+        success: () => {
+          console.log('[TX] icFetch sent: ' + id);
+        },
+        fail: (data, code) => {
+          const errStr = typeof data === 'object' ? JSON.stringify(data) : String(data != null ? data : (code != null ? code : 'fail'));
+          if (!this.hasLoadedData) {
+            this.setStatusText(errStr.slice(0, 18));
+          }
+          console.log('[TX] icFetch send fail: ' + errStr);
+          if (!finished) {
+            finished = true;
+            clearTimeout(timer);
+            delete pending[id];
+            cb({ ok: false, status: 0, statusText: 'send_fail: ' + errStr.slice(0, 15) });
+          }
+        }
+      });
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      if (!this.hasLoadedData) {
+        this.setStatusText(msg.slice(0, 18));
+      }
+      console.log('[TX] icFetch exception: ' + e);
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        delete pending[id];
+        cb({ ok: false, status: 0, statusText: 'ex_' + msg });
+      }
+    }
+  },
+
+  fetchStatus() {
+    if (this.isFetching) {
+      return;
+    }
+    if (icMode === 'init') {
+      return;
+    }
+    if (icMode === 'retry') {
+      return;
+    }
+
+    if (icMode === 'ready') {
+      this.isFetching = true;
+      const finish = () => {
+        this.isFetching = false;
+      };
+
+      // 1. 优先请求本机回环 127.0.0.1 (电脑端 OronBox 最快最稳，免受 Wi-Fi/防火墙干扰)
+      this.icFetch(this.statusUrl(STATUS_HOST_LOCAL), (respLocal) => {
+        if (respLocal && respLocal.ok) {
+          const data = parseRespBody(respLocal);
+          if (data) {
+            this.handleData(data);
+            finish();
+            return;
+          }
+        }
+
+        // 若底层蓝牙发包直接返回错误码 (如 send_fail)，说明 BLE 通道异常，标记 retry 并尝试重新检查链路
+        if (respLocal && respLocal.statusText && respLocal.statusText.indexOf('send_fail') !== -1) {
+          if (!this.hasLoadedData) {
+            this['light' + this.curIdx + 'Class'] = 'lt-err';
+            this.setStatusText(respLocal.statusText.slice(0, 18));
+          }
+          icMode = 'retry';
+          finish();
+          return;
+        }
+
+        // 2. 若 127.0.0.1 失败 (如手机端 OronBox)，退回尝试局域网 IP
+        this.icFetch(this.statusUrl(STATUS_HOST_LAN), (respLan) => {
+          if (respLan && respLan.ok) {
+            const data = parseRespBody(respLan);
+            if (data) {
+              this.handleData(data);
+              finish();
+              return;
+            }
+          }
+
+          if (respLan && respLan.statusText && respLan.statusText.indexOf('send_fail') !== -1) {
+            if (!this.hasLoadedData) {
+              this['light' + this.curIdx + 'Class'] = 'lt-err';
+              this.setStatusText(respLan.statusText.slice(0, 18));
+            }
+            icMode = 'retry';
+            finish();
+            return;
+          }
+
+          const errTxt = (respLocal && respLocal.statusText) || (respLan && respLan.statusText) || 'no_resp';
+          if (!this.hasLoadedData) {
+            this['light' + this.curIdx + 'Class'] = 'lt-err';
+            this.setStatusText(errTxt.slice(0, 20));
+          }
+          console.log('[CodeIsland] fetch fail both local and lan: ' + errTxt);
+          finish();
+        });
+      });
+      return;
+    }
+
+    fetch.fetch({
+      url: this.statusUrl(STATUS_HOST_SIM),
+      method: 'GET',
+      responseType: 'json',
+      success: (resp) => {
+        try {
+          const data = typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data;
+          this.handleData(data);
+        } catch (e) {
+          console.log('[CodeIsland] parse error: ' + e);
+        }
+      },
+      fail: (err) => {
+        if (!this.hasLoadedData) {
+          this['light' + this.curIdx + 'Class'] = 'lt-err';
+          this.setStatusText('Direct fetch err');
+        }
+        console.log('[CodeIsland] fetch fail: ' + err);
+      }
+    });
+  },
+
+  updateClock(serverMs) {
+    // 手环自己的 Date.now() 实测比真 UTC 快 5h29m，不能用来算墙上时间。
+    // 时间只由服务端 ts 驱动；拿不到就显示 --:--，宁可空着也不显示错的。
+    if (!serverMs) {
+      this.currentTime = '';
+      this.currentDate = '';
+      return;
+    }
+    try {
+      // 芬兰 EET(UTC+2) / EEST(UTC+3)，欧盟夏令时：3 月最后一个周日 01:00 UTC 起，10 月最后一个周日 01:00 UTC 止
+      const utc = new Date(serverMs);
+      const year = utc.getUTCFullYear();
+      const marLast = 31 - new Date(Date.UTC(year, 2, 31)).getUTCDay();
+      const octLast = 31 - new Date(Date.UTC(year, 9, 31)).getUTCDay();
+      const dstStart = Date.UTC(year, 2, marLast, 1);
+      const dstEnd = Date.UTC(year, 9, octLast, 1);
+      const off = serverMs >= dstStart && serverMs < dstEnd ? 3 : 2;
+      const now = new Date(serverMs + off * 3600 * 1000);
+      const h = now.getUTCHours().toString().padStart(2, '0');
+      const m = now.getUTCMinutes().toString().padStart(2, '0');
+      this.currentTime = h + ':' + m;
+      // 中文日期：「9月5日 周五」（spec V7）
+      const wd = ['日', '一', '二', '三', '四', '五', '六'];
+      this.currentDate = (now.getUTCMonth() + 1) + '月' + now.getUTCDate() + '日 周' + wd[now.getUTCDay()];
+    } catch (e) {}
+  },
+
+  handleData(raw) {
+    this.hasLoadedData = true;
+    const data = parsePayload(raw);
+    if (!data) {
+      console.log('[CodeIsland] payload shape unknown, keep old display');
+      return;
+    }
+
+    // 墙上时间只认服务端 ts —— 手环自己的 Date.now() 不可用
+    this.updateClock(data.ts);
+
+    // 服务端回报自己的 LAN IP（12fcc6f）—— 记下来供重连兜底用
+    if (data.serverIp && this.serverIp !== data.serverIp) {
+      this.serverIp = data.serverIp;
+    }
+
+    // 三屏各吃各的 session：灯、动词/工具行按屏独立，跳变按 agent 独立判。
+    // 🔴 震动是用户点名的核心功能：任意 agent 跳到 completed/error 都震，
+    //    同一轮轮询多个 agent 跳变也只震一次。
+    let buzzNow = false;
+    for (let i = 0; i < AGENTS.length; i++) {
+      const s = data.sessions[AGENTS[i]];
+      const st = s && s.status ? s.status : null;
+
+      if (st === 'thinking' || st === 'running_tool') {
+        this['light' + i + 'Class'] = 'lt-run';
+      } else if (st === 'completed') {
+        this['light' + i + 'Class'] = 'lt-done';
+      } else if (st === 'error') {
+        this['light' + i + 'Class'] = 'lt-err';
+      } else {
+        this['light' + i + 'Class'] = 'lt-idle';
+      }
+
+      // 动词切 8 段（扫光载体）+ 语义色；工具名独立 13px 浅灰行（spec V7 §6）
+      this.setVerbSegs(i, VERB[st] || 'Standby');
+      this['a' + i + 'VerbColor'] =
+        (st === 'thinking' || st === 'running_tool') ? '#ffffff'
+        : st === 'completed' ? '#5ac8fa'
+        : st === 'error' ? '#ff453a' : '#8e8e93';
+      this['a' + i + 'Tool'] = (s && s.tool) || '';
+
+      // 只在「跑完」和「出错」这两个跳变上震，不在每次工具调用上震 ——
+      // 一轮五次工具就是抖五次手腕，那是打扰不是提示。
+      if (st !== prevStatus[i] && (st === 'completed' || st === 'error')) {
+        buzzNow = true;
+      }
+      prevStatus[i] = st || 'idle';
+    }
+    if (buzzNow) {
+      this.buzz();
+    }
+    this.rearmScreen();
+
+    if (data.limits) {
+      for (let i = 0; i < AGENTS.length; i++) {
+        this.applyCards(AGENTS[i], data.limits[AGENTS[i]]);
+      }
+    }
+  },
+
+  // 一个 agent 的归一化 limits 写到卡片绑定上（design.md §2 + 任务书偏离【4】【5】）：
+  //   骨架/缺数  → '--' + 条宽 0（不造数）
+  //   不可信估算 → '~n%' 数字置灰 #8e8e93 + 条置灰 #48484a + 倒计时 '--'（剥夺彩色）
+  //   正常       → 'n%' 白 + 条平涂屏专属色 + 倒计时
+  // 条宽 = Math.round(140 * pct / 100)
+  applyCards(a, l) {
+    const FILL_1 = { claude: '#ff9f0a', codex: '#30d158', antigravity: '#9d4edd' };
+    const FILL_7D = '#0a84ff';
+    const EST_VAL = '#8e8e93';
+    const EST_FILL = '#48484a';
+    const wins = [['5h', 'pct5h', 'resetText'], ['7d', 'pct7d', 'reset7dText']];
+    for (let w = 0; w < wins.length; w++) {
+      const tag = wins[w][0];
+      const pct = l ? l[wins[w][1]] : null;
+      const stale = l ? l.authoritative === false : true;
+      let val = '--';
+      let valC = '#ffffff';
+      let fillW = 0;
+      let fillC = tag === '7d' ? FILL_7D : FILL_1[a];
+      let reset = '--';
+      if (l && pct !== null && pct !== undefined && !stale) {
+        val = pct + '%';
+        fillW = Math.round(140 * pct / 100);
+        reset = l[wins[w][2]] || (tag === '5h' ? 'ready' : '--');
+      } else if (l && pct !== null && pct !== undefined && stale) {
+        val = '~' + pct + '%';
+        valC = EST_VAL;
+        fillC = EST_FILL;
+        fillW = Math.round(140 * pct / 100);
+      }
+      this[a + 'Val' + tag] = val;
+      this[a + 'ValC' + tag] = valC;
+      this[a + 'FillW' + tag] = fillW;
+      this[a + 'FillC' + tag] = fillC;
+      this[a + 'Reset' + tag] = reset;
+    }
+  },
+
+
+
+  // 传输层错误等一次性文字：写到当前可见屏的工具名行（灰字，不占用动词行）
+  setStatusText(str) {
+    let t = String(str == null ? '' : str);
+    if (t.length > 26) { t = t.slice(0, 25) + '…'; }
+    this['a' + this.curIdx + 'Tool'] = t;
+  },
+
+  // 动词切 8 段（扫光载体）：段与段拼接必须还原全文
+  setVerbSegs(i, verb) {
+    const t = String(verb == null ? '' : verb);
+    const per = Math.max(1, Math.ceil(t.length / SEGS));
+    for (let s = 0; s < SEGS; s++) {
+      this['a' + i + 'seg' + s] = t.substr(per * s, per);
+    }
+  },
+
+  // 一拍心跳：灯先搏动，光随后从左穿到右。不在跑就整个定住。
+  // 三屏之后灯的呼吸透明度三屏共用（只有可见屏能被看见），按当前屏的 agent 门控。
+  tickPulse() {
+    if (this['light' + this.curIdx + 'Class'] !== 'lt-run') {
+      this.lightOpacity = '1';
+      this.sw0 = '1'; this.sw1 = '1'; this.sw2 = '1'; this.sw3 = '1';
+      this.sw4 = '1'; this.sw5 = '1'; this.sw6 = '1'; this.sw7 = '1';
+      return;
+    }
+    this.lightOpacity = BEAT[this.fadeStep];
+
+    const head = this.fadeStep - SWEEP_AT;   // 光头位置，一步一段
+    const v = [];
+    for (let i = 0; i < SEGS; i++) {
+      if (head < 0) { v.push(DIM); continue; }
+      const d = Math.abs(i - head);
+      v.push(d === 0 ? '1' : d === 1 ? '0.78' : d === 2 ? '0.58' : DIM);
+    }
+    this.sw0 = v[0]; this.sw1 = v[1]; this.sw2 = v[2]; this.sw3 = v[3];
+    this.sw4 = v[4]; this.sw5 = v[5]; this.sw6 = v[6]; this.sw7 = v[7];
+  },
+
+  // 长按底部时间区 = 主动退出。swiper 把横滑全吃了，系统返回手势到不了这一页，
+  // 所以退出必须有个显式入口。router.back() 在 Vela 上能不能真退出没验过，
+  // 所以先把 keepScreenOn 放掉 —— 就算退不出去，屏也会自己熄，不至于白按。
+  // 屏 0 右滑退出（新增入口）：longpress 仍可用，两者都收口到 onExitApp
+  onScreenTouchStart(e) {
+    const t = e && e.changedTouches && e.changedTouches[0];
+    if (t) {
+      swipeStartX = t.clientX != null ? t.clientX : t.screenX;
+      swipeStartY = t.clientY != null ? t.clientY : t.screenY;
+    }
+  },
+
+  onScreenTouchEnd(e) {
+    const t = e && e.changedTouches && e.changedTouches[0];
+    if (!t) return;
+    const endX = t.clientX != null ? t.clientX : t.screenX;
+    const endY = t.clientY != null ? t.clientY : t.screenY;
+    const dx = endX - swipeStartX;
+    const dy = endY - swipeStartY;
+    if (dx > SWIPE_EXIT_PX && Math.abs(dx) > Math.abs(dy) * 1.5 && !exitAnimating) {
+      exitAnimating = true;
+      console.log('[CodeIsland] exit (swipe right, dx=' + Math.round(dx) + '), playing fade-out');
+      // 淡出动画：5 帧 × 70ms ≈ 350ms，opacity 1→0，完了再真退出
+      let frame = 0;
+      const anim = setInterval(() => {
+        frame = frame + 1;
+        const o = 1 - frame * 0.22;
+        this.slideO = String(o > 0 ? o : 0);
+        if (frame >= 5) {
+          clearInterval(anim);
+          this.onExitApp();
+        }
+      }, 70);
+    }
+  },
+
+  onExitApp() {
+    console.log('[CodeIsland] exit (longpress)');
+    this.manualSleep = true;
+    if (this.screenTimer) { clearTimeout(this.screenTimer); this.screenTimer = null; }
+    try { brightness.setKeepScreenOn({ keepScreenOn: false }); } catch (e) {}
+    try {
+      if (vibrator && typeof vibrator.vibrate === 'function') {
+        vibrator.vibrate({ mode: 'short' });
+      }
+    } catch (e) {}
+    try { router.back(); } catch (e) { console.log('[CodeIsland] router.back failed: ' + e); }
+  },
+
+  // 会话完成/出错提示：双长震（间隔 400ms），单下容易错过（用户真机反馈）
+  buzz() {
+    try {
+      if (vibrator && typeof vibrator.vibrate === 'function') {
+        vibrator.vibrate({ mode: 'long' });
+        setTimeout(() => {
+          try {
+            vibrator.vibrate({ mode: 'long' });
+          } catch (e) {}
+        }, 400);
+      }
+    } catch (e) {
+      // 静默跳过会让「震动没了」变成查不出来的故障（阶段 5 要求）
+      console.log('[CodeIsland] vibrator failed: ' + e);
+    }
+  },
+
+  statusUrl(host) {
+    return 'http://' + host + ':8765/api/status/compact?all=1';
+  },
+
+  // swiper 翻页只记屏号：数据一次拉了三份，切屏不发任何请求（Q7）
+  onSwiperChange(e) {
+    const i = e && typeof e.index === 'number' ? e.index : this.curIdx;
+    if (i < 0 || i >= AGENTS.length || i === this.curIdx) {
+      this.curIdx = Math.min(AGENTS.length - 1, Math.max(0, i));
+      return;
+    }
+    this.curIdx = i;
+    this.selectedAgent = AGENTS[i] || 'claude';
+    console.log('[CodeIsland] swiper -> ' + i);
+    this.armScreenTimer();   // 滑动 = 触摸，重新计 30s 熄屏
+  },
+
+  // 原根容器的点击挪到底部时间区（Q6）：容器级 click 会吞横滑手势。
+  // 行为不变：掉线时重连，否则强制拉一次。
+  onTapClock() {
+    this.armScreenTimer();   // 点按 = 触摸，重新计 30s 熄屏
+    if (icMode !== 'ready' || !this.hasLoadedData) {
+      this.initTransport(true);
+    } else {
+      this.fetchStatus();
+    }
+  }
+};
+</script>

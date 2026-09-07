@@ -1,0 +1,177 @@
+<!-- ⚠️ 探针沙盒页（不进生产：manifest entry = pages/index）。
+     现状：停在 2026-09-06 round 12 的 PNG 编码实验，引用的 ring2/、test*、pal13 等
+     资源已删除，直接运行会显示占位图。结论已沉淀：
+     - frame-image / progress circular / arc / 内联 svg 在本运行时均不可用
+     - <image src> 动态换帧可用；<stack> 叠字可用（阶段 4 实机确认）
+     - 解码器 ~2KB 文件体积上限；弧矩形原点 = 线宽一半（详见 V3_PLAN 执行记录阶段 0/4）
+     复用时参照 git 历史里阶段 0 版本重写，不要直接跑这一版。 -->
+<template>
+  <!-- round 12: 全量小帧 -->
+  <div class="container">
+    <!-- 阶段 4 探针：验证 frame-image 帧序列 + stack 环心文字 + index 绑定 -->
+    <swiper class="root-swiper" index="0" autoplay="true" interval="1500" loop="false"
+            indicator="false" vertical="false" onchange="onSwiperChange">
+      <!-- 屏 0：编码对照——调色板 PNG / 无抗锯齿 PNG（都 <1.5KB） -->
+      <div class="screen s0">
+        <text class="big">A</text>
+        <div class="row">
+          <image class="icon-img" src="/common/agent-claude.png"></image>
+          <image class="ring-img" src="/common/ring2/pal13.png"></image>
+          <image class="ring-img" src="/common/ring2/noaa13.png"></image>
+        </div>
+      </div>
+      <!-- 屏 1：解码变量隔离——72 黑底不透明 / 72 RGBA / 40 RGBA -->
+      <div class="screen s1">
+        <text class="big">B</text>
+        <image class="ring-img" src="/common/ring2/opaque72.png"></image>
+        <image class="ring-img" src="/common/ring2/normal-13.png"></image>
+        <image class="ring-img-s" src="/common/ring2/rgba40.png"></image>
+      </div>
+      <!-- 屏 2：src 动态换图（每 2s 换 normal-0..3） -->
+      <div class="screen s2">
+        <text class="big">C</text>
+        <image class="ring-img" src="{{ringSrc}}"></image>
+      </div>
+    </swiper>
+    <text class="idx">idx={{curIdx}} f={{frameIdx}}</text>
+  </div>
+</template>
+
+<style>
+.container {
+  width: 192px;
+  height: 490px;
+  background-color: #000000;
+  flex-direction: column;
+  align-items: center;
+}
+
+.root-swiper {
+  width: 192px;
+  height: 456px;
+}
+
+.screen {
+  width: 192px;
+  height: 456px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.s0 { background-color: #1c1c1e; }
+.s1 { background-color: #2c2c2e; }
+.s2 { background-color: #3a3a3c; }
+
+.row {
+  flex-direction: row;
+  align-items: center;
+}
+
+.icon-img {
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+}
+
+.big {
+  color: #ffffff;
+  font-size: 40px;
+  font-weight: bold;
+  margin-bottom: 24px;
+}
+
+.ring-img {
+  width: 72px;
+  height: 72px;
+}
+
+.ring-img-s {
+  width: 40px;
+  height: 40px;
+}
+
+.ring-stack {
+  width: 72px;
+  height: 72px;
+}
+
+/* 绝对定位叠放：image 垫底，文字层盖在上面（替代 stack）。
+   ⚠️ quickapp 只支持单类选择器，.a .b 后代选择器会被静默忽略 */
+.ring-box {
+  position: relative;
+  width: 72px;
+  height: 72px;
+}
+
+.ring-img-abs {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 72px;
+  height: 72px;
+}
+
+.ring-center-abs {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 72px;
+  height: 72px;
+  justify-content: center;
+  align-items: center;
+}
+
+.ring-center {
+  width: 72px;
+  height: 72px;
+  justify-content: center;
+  align-items: center;
+}
+
+.ring-pct {
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: bold;
+  text-align: center;
+}
+
+.idx {
+  width: 192px;
+  height: 34px;
+  color: #5ac8fa;
+  font-size: 14px;
+  font-weight: bold;
+  text-align: center;
+}
+</style>
+
+<script>
+export default {
+  private: {
+    curIdx: 0,
+    frameIdx: 0,
+    ringSrc: '/common/ring2/normal-0.png'
+  },
+
+  onInit() {
+    console.log('[Probe4] onInit');
+    // 每 2 秒换一帧 src（0→1→2→3→0...），看 image 换图会不会跟着变
+    setInterval(() => {
+      this.frameIdx = (this.frameIdx + 1) % 4;
+      this.ringSrc = '/common/ring2/normal-' + this.frameIdx + '.png';
+      console.log('[Probe4] frameIdx=' + this.frameIdx);
+    }, 2000);
+  },
+
+  onSwiperChange(e) {
+    let i = -1;
+    if (e) {
+      if (typeof e.index === 'number') { i = e.index; }
+      else if (typeof e.pos === 'number') { i = e.pos; }
+    }
+    this.curIdx = i;
+    console.log('[Probe4] swiper change -> ' + i);
+  }
+};
+</script>

@@ -1,0 +1,13 @@
+<style>
+</style>
+
+<script>
+export default {
+  onCreate() {
+    console.log('[CodeIsland] Band App onCreate');
+  },
+  onDestroy() {
+    console.log('[CodeIsland] Band App onDestroy');
+  }
+};
+</script>

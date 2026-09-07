@@ -1,0 +1,183 @@
+/* Tailwind v4 CSS-First 入口（v3 的 @tailwind 指令在 v4 下链路断裂） */
+@import "tailwindcss";
+@config "../../tailwind.config.js";
+
+/* ==========================================================================
+   Pulse 2.0 设计令牌
+   ========================================================================== */
+:root {
+  --pulse-bg-base: #0d0f14;
+  --pulse-bg-sidebar: #090b0e;
+  --pulse-bg-surface: #13161f;
+  --pulse-bg-elevated: #1a1e2b;
+  --pulse-bg-subtle: #222738;
+  --pulse-bg-input: #0a0c10;
+  --pulse-bg-overlay: rgba(13, 15, 20, 0.85);
+
+  --pulse-border-subtle: rgba(255, 255, 255, 0.08);
+  --pulse-border-default: rgba(255, 255, 255, 0.12);
+  --pulse-border-hover: rgba(255, 255, 255, 0.22);
+  --pulse-border-focus: #38bdf8;
+
+  --pulse-font-sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --pulse-font-mono: "Cascadia Code", "Consolas", "Fira Code", monospace;
+
+  --pulse-text-primary: #f8fafc;
+  --pulse-text-secondary: #94a3b8;
+  --pulse-text-muted: #64748b;
+  --pulse-text-dim: #475569;
+
+  --pulse-status-success: #10b981;
+  --pulse-status-success-bg: rgba(16, 185, 129, 0.12);
+  --pulse-status-success-border: rgba(16, 185, 129, 0.32);
+
+  --pulse-status-warning: #f59e0b;
+  --pulse-status-warning-bg: rgba(245, 158, 11, 0.14);
+  --pulse-status-warning-border: rgba(245, 158, 11, 0.38);
+
+  --pulse-status-danger: #ef4444;
+  --pulse-status-danger-bg: rgba(239, 68, 68, 0.12);
+  --pulse-status-danger-border: rgba(239, 68, 68, 0.35);
+
+  --pulse-status-neutral: #64748b;
+  --pulse-status-neutral-bg: rgba(100, 116, 139, 0.12);
+  --pulse-status-neutral-border: rgba(100, 116, 139, 0.25);
+
+  --pulse-brand-claude: #D97757;
+  --pulse-brand-claude-bg: rgba(217, 119, 87, 0.14);
+  --pulse-brand-claude-border: rgba(217, 119, 87, 0.35);
+
+  --pulse-brand-codex: #10A37F;
+  --pulse-brand-codex-bg: rgba(16, 163, 127, 0.14);
+  --pulse-brand-codex-border: rgba(16, 163, 127, 0.35);
+
+  --pulse-brand-antigravity: #4285F4;
+  --pulse-brand-antigravity-bg: rgba(66, 133, 244, 0.14);
+  --pulse-brand-antigravity-border: rgba(66, 133, 244, 0.35);
+
+  --pulse-accent: #38bdf8;
+  --pulse-accent-hover: #0ea5e9;
+  --pulse-accent-subtle: rgba(56, 189, 248, 0.12);
+  --pulse-accent-border: rgba(56, 189, 248, 0.3);
+
+  --pulse-radius-xs: 4px;
+  --pulse-radius-sm: 6px;
+  --pulse-radius-md: 10px;
+  --pulse-radius-lg: 14px;
+  --pulse-radius-xl: 18px;
+  --pulse-radius-full: 9999px;
+
+  --pulse-shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--pulse-border-default);
+  --pulse-shadow-elevated: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--pulse-border-hover);
+  --pulse-shadow-glow: 0 0 20px rgba(56, 189, 248, 0.2);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  -webkit-font-feature-settings: "tnum";
+  font-feature-settings: "tnum";
+}
+
+.drag-region {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* 非权威本地估算警示斜纹（diagnostics 卡片用） */
+.stripe-pattern-warning {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(245, 158, 11, 0.03),
+    rgba(245, 158, 11, 0.03) 8px,
+    rgba(245, 158, 11, 0.08) 8px,
+    rgba(245, 158, 11, 0.08) 16px
+  );
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--pulse-bg-base);
+}
+
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  color: var(--pulse-text-primary);
+  font-family: var(--pulse-font-sans);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* 迷你悬浮窗（MiniBar）：全透明穿透，防止默认深黑底色遮挡圆角与透明度 */
+html.screen-minibar,
+html.screen-minibar body,
+html.screen-minibar #root {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Apple 磨砂玻璃透明质感 (Glassmorphism & Specular Highlights) */
+.apple-glass-pill {
+  background: rgba(18, 22, 32, 0.65);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 
+    0 16px 36px -10px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0.5px rgba(0, 0, 0, 0.25);
+}
+
+.apple-glass-card {
+  background: rgba(18, 22, 32, 0.72);
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 
+    0 24px 50px -12px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0.5px rgba(0, 0, 0, 0.3);
+}
+
+.apple-glass-subcard {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.15);
+}
+
+.apple-glass-subcard:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.apple-glass-badge {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.25);
+}
+
+.apple-glass-badge:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+

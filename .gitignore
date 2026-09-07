@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-electron/
+release/
+.vite/
+.cache/
+*.log
+
+# 手环端构建产物与签名密钥 —— 签名密钥绝不入库
+band-app/dist/
+band-app/build/
+band-app/sign/
+
+# 发布用的手环安装包是有意入库的，不要被 *.rpk 规则吃掉
+*.rpk
+!assets/band-app.rpk

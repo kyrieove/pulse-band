@@ -1,0 +1,38 @@
+{
+  "package": "com.codeisland.band",
+  "name": "Pulse",
+  "versionName": "1.0.1",
+  "versionCode": 26,
+  "minPlatformVersion": 1000,
+  "icon": "/common/icon-v2.png",
+  "features": [
+    { "name": "system.fetch" },
+    { "name": "system.interconnect" },
+    { "name": "system.brightness" },
+    { "name": "system.vibrator" },
+    { "name": "system.router" }
+  ],
+  "deviceTypeList": [
+    "watch"
+  ],
+  "config": {
+    "logLevel": "debug",
+    "designWidth": 192
+  },
+  "router": {
+    "entry": "pages/index",
+    "pages": {
+      "pages/index": {
+        "component": "index"
+      },
+      "pages/probe": {
+        "component": "probe"
+      }
+    }
+  },
+  "display": {
+    "backgroundColor": "#000000",
+    "titleBar": false,
+    "fullScreen": true
+  }
+}
