@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowRight, Link2, Wifi } from 'lucide-react';
 import type { PulseOronboxState } from '../../../main/services/oronbox-bridge';
 import { canConnectBand } from '../../../main/services/oronbox-policy';
 import { Card, StatusBadge, maskMac } from './ui';
+import { QuotaCards } from './QuotaCards';
 
 type ConnTone = 'success' | 'warning' | 'danger';
 
@@ -126,6 +127,8 @@ export const DeviceScreen: React.FC<{
           </div>
         </Card>
       </section>
+
+      <QuotaCards />
     </main>
   );
 };
