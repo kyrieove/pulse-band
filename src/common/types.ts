@@ -1,4 +1,4 @@
-export type AgentKind = 'claude' | 'codex' | 'zcode' | 'antigravity';
+export type AgentKind = 'claude' | 'codex' | 'antigravity';
 
 export type SessionState = 'idle' | 'thinking' | 'running_tool' | 'completed' | 'error';
 

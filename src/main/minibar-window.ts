@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import type { SessionManager } from './services/session-manager';
 import type { StatusServer } from './services/status-server';
 import type { MinibarState } from '../common/types';
+import { resolveMiniBarVisibility } from './services/minibar-preference';
 
 let minibarWin: BrowserWindow | null = null;
 let isExpanded = false;
@@ -18,6 +19,26 @@ const EXPANDED_HEIGHT = 240;
 
 function getBoundsFile(): string {
   return path.join(app.getPath('userData'), 'minibar-bounds.json');
+}
+
+function getPreferenceFile(): string {
+  return path.join(app.getPath('userData'), 'minibar-preferences.json');
+}
+
+function loadVisibility(): boolean {
+  try {
+    return resolveMiniBarVisibility(JSON.parse(fs.readFileSync(getPreferenceFile(), 'utf-8'))?.visible);
+  } catch {
+    return true;
+  }
+}
+
+function saveVisibility(visible: boolean): void {
+  try {
+    fs.writeFileSync(getPreferenceFile(), JSON.stringify({ visible }), 'utf-8');
+  } catch {
+    /* 界面状态持久化失败不影响悬浮窗本身 */
+  }
 }
 
 function loadSavedBounds(): { x?: number; y?: number } {
@@ -72,8 +93,10 @@ export function toggleMiniBar(): void {
   if (!minibarWin || minibarWin.isDestroyed()) return;
   if (minibarWin.isVisible()) {
     minibarWin.hide();
+    saveVisibility(false);
   } else {
     minibarWin.show();
+    saveVisibility(true);
     pushState();
   }
   notifyVisibility();
@@ -122,9 +145,6 @@ export function createMiniBarWindow(
     skipTaskbar: true,
     resizable: false,
     show: false,
-    hasShadow: true,
-    vibrancy: 'under-window',
-    backgroundMaterial: 'acrylic',
     webPreferences: {
       preload: preloadPath,
       nodeIntegration: false,
@@ -145,7 +165,8 @@ export function createMiniBarWindow(
 
   minibarWin.once('ready-to-show', () => {
     pushState();
-    minibarWin?.show();
+    if (loadVisibility()) minibarWin?.show();
+    notifyVisibility();
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -186,6 +207,7 @@ export function createMiniBarWindow(
   ipcMain.removeAllListeners('minibar:close');
   ipcMain.on('minibar:close', () => {
     minibarWin?.hide();
+    saveVisibility(false);
     notifyVisibility();
   });
 
@@ -209,6 +231,7 @@ export function createMiniBarWindow(
     } else {
       minibarWin.hide();
     }
+    saveVisibility(show);
     notifyVisibility();
     return isMiniBarVisible();
   });

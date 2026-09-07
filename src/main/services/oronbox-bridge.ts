@@ -4,7 +4,7 @@
  * 职责：
  * - 把 daemon 状态整理成**已消毒**的快照推给 UI（⚠️ device.state/device.snapshot 里带
  *   authkey 明文，此文件是唯一出口，任何原始设备对象不得直接下发 —— 见 docs/ORONBOX_DAEMON_RPC.md）
- * - 设备操作：连接 / 断开 / 扫描 / 自动重连开关
+ * - 设备操作：按需启动 daemon、手动连接 / 断开 / 校时
  * - FetchBridge 插件开关 + 请求数统计（订阅 device.interconnect 事件计数）
  * - .rpk 装包：install.local（只接受 .rpk；进度经 install.local 的 progress/completed 事件回推）
  * - 诊断：转发 status-server 的 /api/status（quota + quotaMeta）与错误环形日志
@@ -18,6 +18,8 @@ import { DirectFetchBridge, BAND_PACKAGE } from './fetch-bridge-direct';
 import { pushError, getRecentErrors, clearErrors, onErrorLog, PulseErrorEntry } from './error-log';
 import { getHookStatus } from './claude-hook-install';
 import { buildDiagnosticReport, probeJson } from './diagnostics';
+import { shouldConnectBand, type BandConnectionReason } from './oronbox-policy';
+import { formatDiagnosticReport, formatErrorLog } from './support-report';
 
 const FETCH_BRIDGE_ID = 'org.zxor.oronbox.miwear-interconnect-fetch';
 
@@ -48,7 +50,6 @@ export interface PulseOronboxState {
     /** 直连模式下最近一次 fetch 的进程内耗时；插件模式下测不到，为 null */
     lastLatencyMs: number | null;
   };
-  autoReconnect: boolean;
   installing: { fileName: string; progress: number } | null;
 }
 
@@ -81,11 +82,9 @@ function safeDevice(raw: DeviceWire | null | undefined): PulseOronboxState['devi
 export class OronBoxBridge {
   private state: PulseOronboxState;
   private pollTimer: NodeJS.Timeout | null = null;
-  private retryTimer: NodeJS.Timeout | null = null;
   private win: BrowserWindow | null = null;
   private installing = false;
-  /** 手动断开的时刻：30s 自动重连在 10 分钟内不跟用户意图打架 */
-  private manualDisconnectAt = 0;
+  private ready: Promise<void> | null = null;
   private responder: DirectFetchBridge;
   private modeFilePath: string;
 
@@ -125,7 +124,6 @@ export class OronBoxBridge {
         mode: this.loadMode(),
         lastLatencyMs: null,
       },
-      autoReconnect: false,
       installing: null,
     };
   }
@@ -305,14 +303,6 @@ export class OronBoxBridge {
     });
 
     this.registerIpc();
-
-    // 阶段 7 顺手②：断开状态下每 30s 自动重试 device.connect。
-    // daemon 侧 auto_reconnect 只在 daemon 启动时触发一次（device_manager.dart:841），
-    // Pulse 长开时回家不会自动回连，这里补上。手动断开 10 分钟内不重试（别跟用户意图打架）。
-    this.retryTimer = setInterval(() => void this.autoRetryConnect(), 30_000);
-
-    void this.refreshAll();
-    this.pollTimer = setInterval(() => void this.refreshAll(), 5_000);
   }
 
   /**
@@ -331,57 +321,60 @@ export class OronBoxBridge {
     }
   }
 
-  private async autoRetryConnect(): Promise<void> {
-    if (!this.client.connected) return;
-    if (this.state.connection.state !== 'disconnected') return;
-    if (this.installing) return;
-    if (Date.now() - this.manualDisconnectAt < 10 * 60_000) return;
-    try {
-      await this.client.call('device.connect', {}, 60_000);
-      await this.syncBandTime();
-      pushError('device', '断线 30s 自动重连成功', 'info');
-      await this.refreshBandState();
-      this.push();
-    } catch {
-      /* 失败保持静默：UI 的连接状态已如实显示未连接，别刷屏错误日志 */
-    }
-  }
-
   detach(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = null;
-    if (this.retryTimer) clearInterval(this.retryTimer);
-    this.retryTimer = null;
     this.responder.stop();
+  }
+
+  private ensureReady(): Promise<void> {
+    if (!this.ready) {
+      this.ready = (async () => {
+        await this.client.start();
+        await this.client.call('settings.set', { key: 'auto_reconnect', value: false });
+        await this.applyBootMode();
+        if (!this.pollTimer) this.pollTimer = setInterval(() => void this.refreshAll(), 5_000);
+        await this.refreshAll();
+      })().catch((err) => {
+        this.ready = null;
+        throw err;
+      });
+    }
+    return this.ready;
+  }
+
+  private async connectBand(reason: BandConnectionReason) {
+    if (!shouldConnectBand(reason)) return { ok: false, error: '仅允许用户手动连接手环' };
+    try {
+      await this.ensureReady();
+      const status = await this.client.call<{ connected: boolean; device?: unknown }>('device.status');
+      const device = status?.connected ? status.device : await this.client.call('device.connect', {}, 60_000);
+      await this.syncBandTime();
+      return { ok: true, device };
+    } catch (err: any) {
+      pushError('device', `device.connect 失败: ${err?.message ?? err}`);
+      return { ok: false, error: String(err?.message ?? err) };
+    } finally {
+      if (this.client.connected) await this.refreshBandState();
+      this.push();
+    }
   }
 
   private registerIpc(): void {
     ipcMain.handle('oronbox:get-state', () => this.state);
 
     // 阶段 7 第三步：插件/直连模式开关（互斥在 setBridgeMode 内验证式保证）
-    ipcMain.handle('oronbox:set-bridge-mode', (_e, mode: unknown) => {
+    ipcMain.handle('oronbox:set-bridge-mode', async (_e, mode: unknown) => {
       if (mode !== 'plugin' && mode !== 'direct') return { ok: false, error: '无效模式' };
+      await this.ensureReady();
       return this.setBridgeMode(mode);
     });
 
-    ipcMain.handle('oronbox:connect', async () => {
-      try {
-        this.manualDisconnectAt = 0;
-        const device = await this.client.call('device.connect', {}, 60_000);
-        await this.syncBandTime();
-        return { ok: true, device };
-      } catch (err: any) {
-        pushError('device', `device.connect 失败: ${err?.message ?? err}`);
-        return { ok: false, error: String(err?.message ?? err) };
-      } finally {
-        await this.refreshBandState();
-        this.push();
-      }
-    });
+    ipcMain.handle('oronbox:connect', () => this.connectBand('manual-connect'));
 
     ipcMain.handle('oronbox:disconnect', async () => {
       try {
-        this.manualDisconnectAt = Date.now(); // 30s 自动重连在 10 分钟内让位
+        await this.ensureReady();
         await this.client.call('device.disconnect', {});
         return { ok: true };
       } catch (err: any) {
@@ -393,39 +386,10 @@ export class OronBoxBridge {
       }
     });
 
-    // 阻塞式扫描（daemon 侧 device.scan 1-15s）。scan 不碰配对状态，只检索周围设备。
-    ipcMain.handle('oronbox:scan', async () => {
-      try {
-        const found = await this.client.call<Array<{ name: string; address: string; connectType: string }>>(
-          'device.scan',
-          { timeout: 10, connectType: 'spp' },
-          30_000,
-        );
-        return { ok: true, devices: (found ?? []).map((d) => ({ name: d.name, address: d.address, connectType: d.connectType })) };
-      } catch (err: any) {
-        pushError('device', `device.scan 失败: ${err?.message ?? err}`);
-        return { ok: false, error: String(err?.message ?? err), devices: [] };
-      }
-    });
-
-    ipcMain.handle('oronbox:set-auto-reconnect', async (_e, value: boolean) => {
-      try {
-        const res = await this.client.call<{ key: string; value: unknown }>('settings.set', {
-          key: 'auto_reconnect',
-          value: value === true,
-        });
-        this.state.autoReconnect = res?.value === true;
-        this.push();
-        return { ok: true, value: this.state.autoReconnect };
-      } catch (err: any) {
-        pushError('settings', `settings.set auto_reconnect 失败: ${err?.message ?? err}`);
-        return { ok: false, error: String(err?.message ?? err) };
-      }
-    });
-
     // FetchBridge 插件开关（仅插件模式有意义）。直连模式下插件必须保持关闭 ——
     // 两边同时监听会对手环的同一请求 id 双重应答，这里从 IPC 层再挡一道。
     ipcMain.handle('oronbox:bridge-toggle', async (_e, running: boolean) => {
+      await this.ensureReady();
       if (running && this.state.bridge.mode === 'direct') {
         return { ok: false, error: '当前为直连模式，插件必须保持关闭；请先切回插件模式' };
       }
@@ -444,40 +408,10 @@ export class OronBoxBridge {
       }
     });
 
-    // 阶段 7 顺手①：device.import 添加新设备（硬约束 3 的前提已消失——authkey 恢复流程
-    // 见 HANDOFF 第 9 节，由人手工输入 authkey）。仍禁用 device.remove。
-    // ⚠️ MiWearState JSON 键：{name, addr, connectType, authkey, codename?, disconnected}。
-    // 返回值刻意不带 daemon 回的原始状态（内含 authkey 明文），新配对经快照刷新体现。
-    ipcMain.handle('oronbox:import-device', async (_e, payload: Record<string, unknown>) => {
-      const name = typeof payload?.name === 'string' ? payload.name.trim() : '';
-      const addr = typeof payload?.addr === 'string' ? payload.addr.trim() : '';
-      const authkey = typeof payload?.authkey === 'string' ? payload.authkey.trim() : '';
-      const connectType = payload?.connectType === 'ble' ? 'ble' : 'spp';
-      const codename = typeof payload?.codename === 'string' ? payload.codename.trim() : '';
-      if (!name || !addr || !authkey) {
-        return { ok: false, error: '名称、MAC 地址、authkey 均为必填' };
-      }
-      if (!/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(addr)) {
-        return { ok: false, error: 'MAC 地址格式应为 AA:BB:CC:DD:EE:FF' };
-      }
-      try {
-        await this.client.call(
-          'device.import',
-          { device: { name, addr, connectType, authkey, ...(codename ? { codename } : {}), disconnected: true } },
-          30_000,
-        );
-        pushError('device', `已导入设备 ${name}（${addr}）`, 'info');
-        await this.refreshAll();
-        return { ok: true };
-      } catch (err: any) {
-        pushError('device', `device.import 失败: ${err?.message ?? err}`);
-        return { ok: false, error: String(err?.message ?? err) };
-      }
-    });
-
     // 硬约束 2：装包只做代码与界面，调用链是 UI 按钮 → 这里 → install.local。
     // 只支持 .rpk；实际推送由人在界面上点按钮触发。
     ipcMain.handle('oronbox:install-rpk', async (_e, payload: { path?: string; fileName?: string }) => {
+      await this.ensureReady();
       const filePath = typeof payload?.path === 'string' ? payload.path : '';
       if (!filePath.toLowerCase().endsWith('.rpk')) {
         return { ok: false, error: '只支持 .rpk 快应用格式' };
@@ -493,6 +427,7 @@ export class OronBoxBridge {
     // 内置的手环快应用：随 Pulse 一起发布，用户不用自己去找 .rpk。
     // 打包后它在 app.asar 里，daemon 读不到 asar 内的路径 —— 先落到临时文件，推完即删。
     ipcMain.handle('oronbox:install-bundled-rpk', async () => {
+      await this.ensureReady();
       const src = path.join(import.meta.dirname, '../../assets/band-app.rpk');
       if (!fs.existsSync(src)) return { ok: false, error: '安装包缺失：assets/band-app.rpk 不在发布包里' };
       const tmp = path.join(os.tmpdir(), `pulse-band-${Date.now()}.rpk`);
@@ -547,6 +482,18 @@ export class OronBoxBridge {
     ipcMain.handle('pulse:clear-error-log', () => {
       clearErrors();
       return { ok: true };
+    });
+    ipcMain.handle('pulse:format-error-log', () => formatErrorLog(getRecentErrors(20)));
+    ipcMain.handle('pulse:format-diagnostic-report', (_e, report) => formatDiagnosticReport(report));
+    ipcMain.handle('oronbox:sync-time', async () => {
+      try {
+        await this.ensureReady();
+        await this.client.call('device.sync.time', {}, 15_000);
+        return { ok: true };
+      } catch (err: any) {
+        pushError('device', `对时失败: ${err?.message ?? err}`, 'warn');
+        return { ok: false, error: String(err?.message ?? err) };
+      }
     });
   }
 
@@ -655,17 +602,8 @@ export class OronBoxBridge {
     }
   }
 
-  private async refreshAutoReconnect(): Promise<void> {
-    try {
-      const res = await this.client.call<{ key: string; value: unknown }>('settings.get', { key: 'auto_reconnect' });
-      this.state.autoReconnect = res?.value === true;
-    } catch {
-      /* 未连接 */
-    }
-  }
-
   private async refreshAll(): Promise<void> {
-    await Promise.all([this.refreshBandState(), this.refreshDaemonHealth(), this.refreshBridgePlugin(), this.refreshAutoReconnect()]);
+    await Promise.all([this.refreshBandState(), this.refreshDaemonHealth(), this.refreshBridgePlugin()]);
     this.push();
   }
 

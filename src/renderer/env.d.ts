@@ -41,6 +41,17 @@ export interface HookStatus {
 export type HookResult = Partial<HookStatus> & { ok: boolean; error?: string };
 
 export interface PulseBridge {
+  getAppVersion: () => Promise<string>;
+  isOronboxInstalled: () => Promise<boolean>;
+  checkUpdate: () => Promise<{
+    ok: boolean;
+    currentVersion: string;
+    latestVersion?: string;
+    updateAvailable?: boolean;
+    releaseUrl?: string;
+    error?: string;
+  }>;
+  openRelease: (url: string) => Promise<{ ok: boolean; error?: string }>;
   extractBandKey: (filePath: string) => Promise<BandKeyResult>;
   getHookStatus: () => Promise<HookStatus>;
   installHook: () => Promise<HookResult>;
@@ -49,21 +60,8 @@ export interface PulseBridge {
   onOronboxState: (cb: (state: PulseOronboxState) => void) => () => void;
   connectBand: () => Promise<{ ok: boolean; device?: unknown; error?: string }>;
   disconnectBand: () => Promise<{ ok: boolean; error?: string }>;
-  scanDevices: () => Promise<{
-    ok: boolean;
-    error?: string;
-    devices: Array<{ name: string; address: string; connectType: string }>;
-  }>;
-  setAutoReconnect: (value: boolean) => Promise<{ ok: boolean; value?: boolean; error?: string }>;
   toggleBridge: (running: boolean) => Promise<{ ok: boolean; running?: boolean; error?: string }>;
   setBridgeMode: (mode: 'plugin' | 'direct') => Promise<{ ok: boolean; error?: string }>;
-  importDevice: (payload: {
-    name: string;
-    addr: string;
-    connectType: string;
-    authkey: string;
-    codename?: string;
-  }) => Promise<{ ok: boolean; error?: string }>;
   installBundledRpk: () => Promise<{ ok: boolean; error?: string; result?: unknown }>;
   installRpk: (
     filePath: string,
@@ -74,6 +72,9 @@ export interface PulseBridge {
   runDiagnostics: () => Promise<DiagnosticReport>;
   getErrorLog: () => Promise<PulseErrorEntry[]>;
   clearErrorLog: () => Promise<{ ok: boolean }>;
+  formatErrorLog: () => Promise<string>;
+  formatDiagnosticReport: (report: DiagnosticReport) => Promise<string>;
+  syncBandTime: () => Promise<{ ok: boolean; error?: string }>;
   onErrorLog: (cb: (entries: PulseErrorEntry[]) => void) => () => void;
   minimizeWindow: () => void;
   maximizeWindow: () => void;

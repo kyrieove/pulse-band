@@ -66,16 +66,6 @@ export class StatusServer {
                   authoritative: q.authoritative,
                 }
               : null;
-          // zcode 只有 1d 一个窗口（本地估算，恒 est），字段名与手环 parsePayload 约定同名
-          const leanLimitZcode = (q: any) =>
-            q
-              ? {
-                  pct1d: q.pct1d ?? null,
-                  level1d: q.level1d ?? null,
-                  reset1dText: null, // est 态无真实重置时间，手环显示 '--'
-                  authoritative: q.authoritative,
-                }
-              : null;
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(
             JSON.stringify({
@@ -84,13 +74,11 @@ export class StatusServer {
                 claude: leanSession('claude'),
                 codex: leanSession('codex'),
                 antigravity: leanSession('antigravity'),
-                zcode: leanSession('zcode'),
               },
               limits: {
                 claude: leanLimit(allQuotas.claude),
                 codex: leanLimit(allQuotas.codex),
                 antigravity: leanLimit(allQuotas.antigravity),
-                zcode: leanLimitZcode(allQuotas.zcode),
               },
             })
           );
@@ -1199,4 +1187,3 @@ export class StatusServer {
 </html>`;
   }
 }
-

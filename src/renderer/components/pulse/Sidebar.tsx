@@ -2,15 +2,16 @@
  * 左侧导航边栏（main.html aside）：功能导航 + 底部 OronBox 守护进程微指示。
  */
 import React, { useEffect, useState } from 'react';
-import { Smartphone, Activity } from 'lucide-react';
+import { Smartphone, Activity, Settings } from 'lucide-react';
 import type { PulseOronboxState } from '../../../main/services/oronbox-bridge';
 import { Toggle } from './ui';
 
-export type Screen = 'main' | 'diagnostics';
+export type Screen = 'main' | 'diagnostics' | 'settings';
 
 const NAV: Array<{ id: Screen; label: string; hint: string }> = [
   { id: 'main', label: '设备管理', hint: '主屏' },
   { id: 'diagnostics', label: '运行诊断', hint: '次屏' },
+  { id: 'settings', label: '设置与维护', hint: '设置' },
 ];
 
 export const Sidebar: React.FC<{
@@ -48,7 +49,7 @@ export const Sidebar: React.FC<{
         <div className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 px-2 py-1.5">功能导航</div>
         {NAV.map((item) => {
           const active = screen === item.id;
-          const Icon = item.id === 'main' ? Smartphone : Activity;
+          const Icon = item.id === 'main' ? Smartphone : item.id === 'diagnostics' ? Activity : Settings;
           return (
             <button
               key={item.id}
@@ -99,9 +100,7 @@ export const Sidebar: React.FC<{
               {running ? '运行中' : '未连接'}
             </span>
           </div>
-          <div className="text-[10px] font-mono text-zinc-500 tabular-nums">
-            {daemon?.endpoint ?? '--'} · PID {daemon?.pid ?? '--'}
-          </div>
+          <div className="text-[10px] text-zinc-500">详细信息请前往运行诊断</div>
         </div>
       </div>
     </aside>

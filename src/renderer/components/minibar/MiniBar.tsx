@@ -10,7 +10,7 @@ interface AgentConfig {
   grad: [string, string];
 }
 
-// 仅保留 Claude、Codex、Antigravity（按用户要求已完全剔除 zcode）
+// 公开支持的三个 Agent：Claude、Codex、Antigravity
 const AGENT_CONFIGS: AgentConfig[] = [
   {
     key: 'claude',

@@ -157,6 +157,16 @@ export class OronBoxClient extends EventEmitter {
     await this.ensureConnected();
   }
 
+  /** 仅连接已经在运行的 daemon；不存在时绝不拉起新进程。 */
+  async connectIfRunning(): Promise<boolean> {
+    const ep = readEndpoint();
+    if (!ep || !pidAlive(ep.pid)) return false;
+    this.disposed = false;
+    this.endpoint = ep;
+    await this.ensureConnected();
+    return true;
+  }
+
   /** 幂等建立连接；并发调用合并为同一次。 */
   ensureConnected(): Promise<void> {
     if (this.socket) return Promise.resolve();
@@ -307,6 +317,12 @@ export class OronBoxClient extends EventEmitter {
       /* daemon 可能已退出或协议不兼容；退出流程继续 */
     }
     this.dispose();
+  }
+
+  /** 退出 Pulse 时清理由谁启动都无关；但 daemon 不存在时不能为了退出反而把它拉起来。 */
+  async stopDaemonIfRunning(): Promise<void> {
+    if (!this.connected && !(await this.connectIfRunning())) return;
+    await this.stopDaemon();
   }
 
   /** 只断开本地连接，daemon 继续常驻（普通退出用）。 */

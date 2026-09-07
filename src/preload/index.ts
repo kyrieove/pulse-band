@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('codeisland', {
 
 // Pulse 2.0 新界面 API（阶段 4）。OronBox 状态由主进程消毒后推送，authkey 永不出主进程。
 contextBridge.exposeInMainWorld('pulse', {
+  getAppVersion: () => ipcRenderer.invoke('pulse:get-app-version'),
+  isOronboxInstalled: () => ipcRenderer.invoke('pulse:is-oronbox-installed'),
+  checkUpdate: () => ipcRenderer.invoke('pulse:check-update'),
+  openRelease: (url: string) => ipcRenderer.invoke('pulse:open-release', url),
   getOronboxState: () => ipcRenderer.invoke('oronbox:get-state'),
   onOronboxState: (callback: (state: unknown) => void) => {
     const subscription = (_: any, state: unknown) => callback(state);
@@ -34,17 +38,8 @@ contextBridge.exposeInMainWorld('pulse', {
   },
   connectBand: () => ipcRenderer.invoke('oronbox:connect'),
   disconnectBand: () => ipcRenderer.invoke('oronbox:disconnect'),
-  scanDevices: () => ipcRenderer.invoke('oronbox:scan'),
-  setAutoReconnect: (value: boolean) => ipcRenderer.invoke('oronbox:set-auto-reconnect', value),
   toggleBridge: (running: boolean) => ipcRenderer.invoke('oronbox:bridge-toggle', running),
   setBridgeMode: (mode: 'plugin' | 'direct') => ipcRenderer.invoke('oronbox:set-bridge-mode', mode),
-  importDevice: (payload: {
-    name: string;
-    addr: string;
-    connectType: string;
-    authkey: string;
-    codename?: string;
-  }) => ipcRenderer.invoke('oronbox:import-device', payload),
   installRpk: (filePath: string, fileName: string) =>
     ipcRenderer.invoke('oronbox:install-rpk', { path: filePath, fileName }),
   onInstallProgress: (callback: (p: { fileName: string; progress: number; done: boolean }) => void) => {
@@ -56,6 +51,9 @@ contextBridge.exposeInMainWorld('pulse', {
   runDiagnostics: () => ipcRenderer.invoke('pulse:run-diagnostics'),
   getErrorLog: () => ipcRenderer.invoke('pulse:get-error-log'),
   clearErrorLog: () => ipcRenderer.invoke('pulse:clear-error-log'),
+  formatErrorLog: () => ipcRenderer.invoke('pulse:format-error-log'),
+  formatDiagnosticReport: (report: unknown) => ipcRenderer.invoke('pulse:format-diagnostic-report', report),
+  syncBandTime: () => ipcRenderer.invoke('oronbox:sync-time'),
   onErrorLog: (callback: (entries: unknown[]) => void) => {
     const subscription = (_: any, entries: unknown[]) => callback(entries);
     ipcRenderer.on('pulse-error-log', subscription);

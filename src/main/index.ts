@@ -1,19 +1,19 @@
-import { app, BrowserWindow, ipcMain, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { SessionManager } from './services/session-manager';
 import { CodexSessionTailer } from './services/codex-tailer';
-import { ZCodeSessionTailer } from './services/zcode-tailer';
 import { ClaudeDesktopTailer } from './services/claude-desktop-tailer';
 import { AntigravitySessionPoller } from './services/antigravity-session';
 import { ClaudeHookServer } from './services/claude-hook-server';
 import { registerClaudeHookInstall } from './services/claude-hook-install';
 import { registerBandKeyExtract } from './services/band-key-extract';
 import { StatusServer } from './services/status-server';
-import { OronBoxClient } from './services/oronbox-client';
+import { OronBoxClient, ORONBOX_EXE } from './services/oronbox-client';
 import { OronBoxBridge } from './services/oronbox-bridge';
 import { createTray } from './tray';
 import { createMiniBarWindow, disposeMiniBar, toggleMiniBar, isMiniBarVisible } from './minibar-window';
+import { isVersionNewer } from './services/version-check';
 
 // Ensure single instance
 const gotLock = app.requestSingleInstanceLock();
@@ -37,7 +37,6 @@ let isQuitting = false;
 
 const sessionManager = new SessionManager();
 const codexTailer = new CodexSessionTailer(sessionManager);
-const zcodeTailer = new ZCodeSessionTailer(sessionManager);
 const claudeDesktopTailer = new ClaudeDesktopTailer(sessionManager);
 const antigravityPoller = new AntigravitySessionPoller(sessionManager);
 const claudeServer = new ClaudeHookServer(sessionManager, 41789);
@@ -45,8 +44,7 @@ const claudeServer = new ClaudeHookServer(sessionManager, 41789);
 const statusServer = new StatusServer(sessionManager, 8765);
 statusServer.start();
 
-// OronBox daemon：拉起无头 daemon 并保持 RPC 连接（断线自动重连）。
-// protocolVersion 不匹配时只降级报警，不停 daemon（硬约束 6）。
+// OronBox 客户端只在显式手环操作时按需启动 daemon；打开 Pulse 本身不碰蓝牙。
 const oronbox = new OronBoxClient();
 const oronboxBridge = new OronBoxBridge(
   oronbox,
@@ -59,62 +57,11 @@ oronbox.on('degraded', (info) =>
 oronbox.on('connected', () => console.log('[OronBox] RPC 已连接'));
 oronbox.on('disconnected', () => console.warn('[OronBox] RPC 断开，等待重连'));
 
-const FETCH_BRIDGE_PLUGIN_ID = 'org.zxor.oronbox.miwear-interconnect-fetch';
-
-// 阶段 3/7：不开 OronBox GUI 的最小链路。桥接模式按持久化模式落位：
-// plugin → plugin.open FetchBridge；direct → 响应器接管（applyBootMode 验证式关插件，防双重应答）。
-async function bootstrapOronboxBandLink(): Promise<void> {
-  await oronboxBridge.applyBootMode();
-
-  try {
-    const cur = await oronbox.call<{ key: string; value: unknown }>('settings.get', {
-      key: 'auto_reconnect',
-    });
-    if (cur?.value !== true) {
-      await oronbox.call('settings.set', { key: 'auto_reconnect', value: true });
-      console.log('[OronBox] auto_reconnect → true');
-    }
-  } catch (err) {
-    console.error('[OronBox] 设置 auto_reconnect 失败:', err);
-  }
-
-  if (oronboxBridge.mode === 'plugin') {
-    try {
-      const plugins = await oronbox.call<Array<{ id: string; running: boolean }>>('plugin.list', {
-        includeIcons: false,
-      });
-      const bridge = plugins?.find((p) => p.id === FETCH_BRIDGE_PLUGIN_ID);
-      if (!bridge) {
-        console.error('[OronBox] 未安装 FetchBridge 插件:', FETCH_BRIDGE_PLUGIN_ID);
-      } else if (!bridge.running) {
-        // 插件不会自启，必须显式 open
-        await oronbox.call('plugin.open', { id: FETCH_BRIDGE_PLUGIN_ID }, 30_000);
-        console.log('[OronBox] FetchBridge 插件已 open');
-      } else {
-        console.log('[OronBox] FetchBridge 插件已在运行');
-      }
-    } catch (err) {
-      console.error('[OronBox] 打开 FetchBridge 插件失败:', err);
-    }
-  } else {
-    console.log('[OronBox] 桥接为直连模式，插件保持关闭');
-  }
-
-  try {
-    const status = await oronbox.call<{ connected: boolean }>('device.status');
-    if (!status?.connected) {
-      const device = await oronbox.call('device.connect', {}, 60_000);
-      console.log('[OronBox] device.connect 完成:', JSON.stringify(device));
-    } else {
-      console.log('[OronBox] 手环已连接，跳过 connect');
-    }
-  } catch (err) {
-    console.error('[OronBox] device.connect 失败:', err);
-  }
-}
-
 // 初始屏（截图/调试用）：PULSE_SCREEN=diagnostics 时直接打开次屏
-const INITIAL_SCREEN = process.env.PULSE_SCREEN === 'diagnostics' ? 'diagnostics' : 'main';
+const INITIAL_SCREEN =
+  process.env.PULSE_SCREEN === 'diagnostics' || process.env.PULSE_SCREEN === 'settings'
+    ? process.env.PULSE_SCREEN
+    : 'main';
 
 function createWindow() {
   const cjsPreload = path.join(import.meta.dirname, '../preload/index.cjs');
@@ -207,7 +154,7 @@ function createWindow() {
     },
     () => {
       // 彻底退出：先断开手环（让它回去找手机）、再让 daemon 自行退出，最后退 Pulse
-      oronbox.stopDaemon().finally(() => app.quit());
+      oronbox.stopDaemonIfRunning().finally(() => app.quit());
     },
     toggleMiniBar,
     isMiniBarVisible
@@ -221,6 +168,33 @@ ipcMain.on('clear-sessions', () => {
 
 ipcMain.handle('get-initial-sessions', () => {
   return sessionManager.getAllSessions();
+});
+
+ipcMain.handle('pulse:get-app-version', () => app.getVersion());
+ipcMain.handle('pulse:is-oronbox-installed', () => fs.existsSync(ORONBOX_EXE));
+ipcMain.handle('pulse:check-update', async () => {
+  const currentVersion = app.getVersion();
+  try {
+    const response = await fetch('https://api.github.com/repos/kyrieove/pulse-band/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`GitHub 返回 ${response.status}`);
+    const release = (await response.json()) as { tag_name?: unknown; html_url?: unknown };
+    const latestVersion = typeof release.tag_name === 'string' ? release.tag_name.replace(/^v/, '') : '';
+    const releaseUrl = typeof release.html_url === 'string' ? release.html_url : '';
+    const updateAvailable = isVersionNewer(latestVersion, currentVersion);
+    return { ok: true, currentVersion, latestVersion, updateAvailable, releaseUrl };
+  } catch (err: any) {
+    return { ok: false, currentVersion, error: String(err?.message ?? err) };
+  }
+});
+ipcMain.handle('pulse:open-release', async (_e, url: unknown) => {
+  if (typeof url !== 'string' || !url.startsWith('https://github.com/kyrieove/pulse-band/releases/')) {
+    return { ok: false, error: '不允许打开该地址' };
+  }
+  await shell.openExternal(url);
+  return { ok: true };
 });
 
 // 自绘标题栏的窗口控制（window-close = 隐藏到托盘，阶段 2 约定）
@@ -246,18 +220,11 @@ app.whenReady().then(async () => {
 
   // Start background monitoring services
   codexTailer.start();
-  zcodeTailer.start();
   claudeDesktopTailer.start();
   antigravityPoller.start();
   await claudeServer.start().catch((err) => {
     console.error('Failed to start Claude hook server:', err);
   });
-  // 确保 OronBox daemon 在跑并连上 RPC（失败不阻塞启动，后续自动重连）
-  await oronbox.start().catch((err) => {
-    console.error('Failed to start OronBox daemon client:', err);
-  });
-  // 阶段 3 最小链路：auto_reconnect + FetchBridge 插件 + 连手环（status-server 照旧 8765）
-  await bootstrapOronboxBandLink();
 });
 
 app.on('window-all-closed', () => {
@@ -272,7 +239,6 @@ app.on('before-quit', () => {
     tray = null;
   }
   codexTailer.stop();
-  zcodeTailer.stop();
   claudeDesktopTailer.stop();
   antigravityPoller.stop();
   claudeServer.stop();

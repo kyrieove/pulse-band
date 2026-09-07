@@ -1,13 +1,13 @@
 {
   "name": "pulse-band",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Real-time AI Coding Agent Status Island for Windows",
   "type": "module",
   "main": "dist-electron/main/index.js",
   "scripts": {
     "start": "electron .",
     "dev": "vite",
-    "test": "node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node --test scripts/test-diagnostics.mjs",
+    "test": "node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node --test scripts/test-diagnostics.mjs scripts/test-pc-v1.1.mjs",
     "build": "tsc && vite build",
     "dist": "npm run build && electron-builder",
     "preview": "vite preview"

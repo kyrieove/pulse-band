@@ -24,9 +24,6 @@ export interface AgentQuota {
   /** true = 服务端回传的真实额度；false = 本地估算，仅供参考 */
   authoritative: boolean;
   needsAuth?: boolean;
-  /** ZCode 专用：只有「1d」一个窗口（本地估算），其余 agent 不填 */
-  pct1d?: number | null;
-  level1d?: 'normal' | 'warn' | 'danger';
 }
 
 /** Codex 每次 token_count 事件回传的单个额度窗口 */
@@ -40,7 +37,6 @@ export interface ClusterQuotas {
   claude: AgentQuota;
   codex: AgentQuota;
   antigravity: AgentQuota;
-  zcode: AgentQuota;
   updatedAt: number;
 }
 
@@ -629,88 +625,6 @@ async function fetchAntigravityUsage(): Promise<{ primary: WindowState; secondar
   return { primary: out['5h'] ?? zero, secondary: out.weekly ?? zero };
 }
 
-/** ZCode 的 API key 在这里（builtin:zai-start-plan），只在本进程内存里用，不进日志 */
-const ZCODE_CONFIG_FILE = path.join(os.homedir(), '.zcode', 'v2', 'config.json');
-/** billing/current 拿不到时的兜底分母：Start Plan 的 GLM-5.3-Flash grant（实测值） */
-const ZCODE_FALLBACK_DAILY_TOKENS = 5_000_000;
-let zcodeBillingCache: { denom: number; at: number } | null = null;
-
-function readZcodeApiKey(): string | null {
-  try {
-    const c = JSON.parse(fs.readFileSync(ZCODE_CONFIG_FILE, 'utf-8'));
-    const key = c?.provider?.['builtin:zai-start-plan']?.options?.apiKey;
-    return typeof key === 'string' && key ? key : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 分母：billing/current 返回的 active entitlements 里 GLM-5.3-Flash 的 grant_units
- * （真实配额数字）。10 分钟缓存。拿不到就用 ZCODE_FALLBACK_DAILY_TOKENS。
- */
-async function fetchZcodeDenominator(now: number): Promise<number> {
-  if (zcodeBillingCache && now - zcodeBillingCache.at < 10 * 60_000) return zcodeBillingCache.denom;
-  const key = readZcodeApiKey();
-  if (!key) return ZCODE_FALLBACK_DAILY_TOKENS;
-  try {
-    const res = await fetch('https://zcode.z.ai/api/v1/zcode-plan/billing/current', {
-      headers: { Authorization: 'Bearer ' + key },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const body: any = await res.json();
-    let denom = 0;
-    for (const plan of body?.data?.plans ?? []) {
-      if (plan.status !== 'active') continue;
-      for (const ent of plan.entitlements ?? []) {
-        if (ent.meter !== 'model_usage') continue;
-        if (typeof ent.grant_units !== 'number') continue;
-        // 只认 GLM-5.3-Flash 的池子（当前主力模型），多档取最大
-        if (String(ent.capabilities ?? []).indexOf('glm-5.3-flash') === -1 && String(ent.show_name ?? '').indexOf('Flash') === -1) continue;
-        denom = Math.max(denom, ent.grant_units);
-      }
-    }
-    if (denom <= 0) denom = ZCODE_FALLBACK_DAILY_TOKENS;
-    zcodeBillingCache = { denom, at: now };
-    return denom;
-  } catch {
-    return ZCODE_FALLBACK_DAILY_TOKENS;
-  }
-}
-
-/**
- * ZCode 的「日额度」是本地估算（authoritative 恒 false 走手环 est 态）：
- * billing API 试遍 current/balance/preview 都不回用量（current 只有配额授予，
- * balance 报 parameter error，preview 404），所以分子用本地记账
- * ~/.zcode/cli/db/db.sqlite 的 model_usage 表（本地 0 点起的 computed_total_tokens
- * 合计，node:sqlite 只读打开），分母用 current 返回的真实 grant_units。
- * 消耗口径（cache read 是否计入、多套餐扣减顺序）无法确证，百分比仅供参考。
- */
-async function fetchZcodeUsage(): Promise<{ primary: WindowState; secondary: WindowState } | null> {
-  const now = new Date();
-  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  let totalTokens = 0;
-  try {
-    // node:sqlite（Electron 主进程 node 24 系自带）；WAL 库只读打开没有锁冲突
-    const { DatabaseSync } = require('node:sqlite');
-    const db = new DatabaseSync(path.join(os.homedir(), '.zcode', 'cli', 'db', 'db.sqlite'), { readOnly: true });
-    const row = db
-      .prepare('SELECT COALESCE(SUM(computed_total_tokens), 0) AS t FROM model_usage WHERE started_at >= ?')
-      .get(dayStart) as { t: number };
-    totalTokens = row?.t ?? 0;
-    db.close();
-  } catch {
-    return null; // sqlite 打不开（版本/被锁）→ 手环走 '--' 骨架
-  }
-  const denom = await fetchZcodeDenominator(Date.now());
-  const pct = Math.min(100, Math.max(0, Math.round((totalTokens / denom) * 100)));
-  return {
-    primary: { pct, resetMs: 0 },          // est 态无真实重置时间，手环显示 '--'
-    secondary: { pct: 0, resetMs: 0 },     // zcode 没有 7d 窗口，占位
-  };
-}
-
 /**
  * 离线兜底：Codex 每个 token_count 事件也会把当时的额度写进 rollout 日志。
  * 只在本地跑过 Codex 之后才更新，网页版/云端/别的机器的用量看不到，所以偏低。
@@ -769,7 +683,7 @@ function findLatestCodexRateLimits(): { primary?: CodexWindow; secondary?: Codex
   return best;
 }
 
-type LiveKey = 'claude' | 'codex' | 'antigravity' | 'zcode';
+type LiveKey = 'claude' | 'codex' | 'antigravity';
 
 export class QuotaCollector {
   private cache: ClusterQuotas | null = null;
@@ -777,13 +691,13 @@ export class QuotaCollector {
   private readonly CACHE_TTL_MS = 5000; // 5 seconds cache
 
   // 服务端真实额度：后台异步刷新，getQuotas() 保持同步不阻塞 HTTP 处理
-  private live: Record<LiveKey, LiveQuota | null> = { claude: null, codex: null, antigravity: null, zcode: null };
-  private fetching: Record<LiveKey, boolean> = { claude: false, codex: false, antigravity: false, zcode: false };
-  private nextTry: Record<LiveKey, number> = { claude: 0, codex: 0, antigravity: 0, zcode: 0 };
-  private backoff: Record<LiveKey, number> = { claude: 0, codex: 0, antigravity: 0, zcode: 0 };
-  private authError: Record<LiveKey, boolean> = { claude: false, codex: false, antigravity: false, zcode: false };
+  private live: Record<LiveKey, LiveQuota | null> = { claude: null, codex: null, antigravity: null };
+  private fetching: Record<LiveKey, boolean> = { claude: false, codex: false, antigravity: false };
+  private nextTry: Record<LiveKey, number> = { claude: 0, codex: 0, antigravity: 0 };
+  private backoff: Record<LiveKey, number> = { claude: 0, codex: 0, antigravity: 0 };
+  private authError: Record<LiveKey, boolean> = { claude: false, codex: false, antigravity: false };
   /** 每个源最后一次成功拉到服务端真实值的时间（阶段 5 诊断屏用），0 = 从未成功 */
-  private lastSuccessAt: Record<LiveKey, number> = { claude: 0, codex: 0, antigravity: 0, zcode: 0 };
+  private lastSuccessAt: Record<LiveKey, number> = { claude: 0, codex: 0, antigravity: 0 };
 
   /**
    * 三个接口的脾气完全不同，间隔必须分开定：
@@ -799,8 +713,6 @@ export class QuotaCollector {
   private intervalFor(key: LiveKey, cur: LiveQuota | null): number {
     if (key === 'claude') return 10 * 60_000;
     if (key === 'antigravity') return 30_000;
-    // 本地 sqlite 读 + 一个轻量 GET，30 秒足够
-    if (key === 'zcode') return 30_000;
     // Codex：额度越紧盯得越勤
     const used = cur ? Math.max(cur.primary.pct, cur.secondary.pct) : 0;
     return Math.max(10_000, Math.round(30_000 * (1 - used / 100)));
@@ -865,45 +777,19 @@ export class QuotaCollector {
     this.refreshLive('codex', now, fetchCodexUsage);
     this.refreshLive('claude', now, fetchClaudeUsage);
     this.refreshLive('antigravity', now, fetchAntigravityUsage);
-    this.refreshLive('zcode', now, fetchZcodeUsage);
 
     const claude = this.collectClaudeQuota(now);
     const codex = this.collectCodexQuota(now);
     const antigravity = this.collectAntigravityQuota(now);
-    const zcode = this.collectZcodeQuota();
 
     this.cache = {
       claude,
       codex,
       antigravity,
-      zcode,
       updatedAt: now,
     };
     this.lastFetchTime = now;
     return this.cache;
-  }
-
-  /** zcode 只有 1d 一个窗口：骨架 '--' 或本地估算值，永远 est（authoritative=false） */
-  private collectZcodeQuota(): AgentQuota {
-    const live = this.live.zcode;
-    const pct = live ? live.primary.pct : null;
-    return {
-      name: 'ZCode',
-      resetText: 'ready',
-      reset7dText: null,
-      pct5h: null,
-      pct7d: null,
-      level5h: 'normal',
-      level7d: 'normal',
-      used5h: 0,
-      limit5h: 100,
-      used7d: 0,
-      limit7d: 100,
-      unit: 'percent',
-      pct1d: pct,
-      level1d: getLevel(pct),
-      authoritative: false,
-    };
   }
 
   /** 诊断屏元数据：每源最后成功拉取时间 + 429/auth 退避到期时间（0 = 无退避） */

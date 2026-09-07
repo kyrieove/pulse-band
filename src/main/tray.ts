@@ -1,4 +1,4 @@
-import { Tray, Menu, nativeImage, app, BrowserWindow } from 'electron';
+import { Tray, Menu, nativeImage, BrowserWindow } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { SessionManager } from './services/session-manager';
@@ -61,15 +61,7 @@ export function createTray(
       },
       { type: 'separator' },
       {
-        // 普通退出只退 Pulse：daemon 常驻，手环侧链路不受影响
         label: '退出 Pulse (Exit)',
-        click: () => {
-          app.quit();
-        },
-      },
-      {
-        // 彻底退出：先发 daemon.stop（会短暂断开手环连接，可恢复），再退 Pulse
-        label: '彻底退出（含后台服务）',
         click: onFullExit,
       },
     ]);

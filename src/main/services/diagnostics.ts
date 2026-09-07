@@ -86,7 +86,7 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
           label: 'Claude Code Hook',
           status: 'fail',
           summary: 'Hook 未安装或转发脚本缺失。',
-          nextStep: '请在本页下方点击「安装 Hook」，然后重开 Claude Code 会话。',
+          nextStep: '请前往“设置与维护”安装 Hook，然后重开 Claude Code 会话。',
         },
   );
   checks.push(
@@ -100,9 +100,9 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
       : {
           id: 'daemon',
           label: 'OronBox 后台',
-          status: 'fail',
-          summary: 'OronBox daemon 未连接。',
-          nextStep: '请确认已安装 OronBox，然后重启 OronBox 与 Pulse。',
+          status: 'warn',
+          summary: 'OronBox daemon 尚未启动或未连接。',
+          nextStep: '这是纯手动模式的正常状态；需要使用手环时，请回到设备管理页点击连接。',
         },
   );
   checks.push(
@@ -161,9 +161,9 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
       : {
           id: 'band',
           label: '手环连接',
-          status: 'fail',
+          status: 'warn',
           summary: '手环当前未连接。',
-          nextStep: '请先断开小米运动健康的蓝牙连接，再回到设备管理页连接手环。',
+          nextStep: '需要使用手环时，请先阅读设备管理页警告，再手动点击连接。',
         },
   );
   checks.push(

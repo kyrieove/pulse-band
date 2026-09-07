@@ -108,10 +108,18 @@ html, body, #root {
 }
 
 body {
-  user-select: none;
-  -webkit-user-select: none;
+  user-select: text;
+  -webkit-user-select: text;
   color: var(--pulse-text-primary);
   font-family: var(--pulse-font-sans);
+}
+
+button,
+input,
+label,
+.select-none {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 ::-webkit-scrollbar {
@@ -179,5 +187,4 @@ html.screen-minibar #root {
 .apple-glass-badge:hover {
   background: rgba(255, 255, 255, 0.14);
 }
-
 

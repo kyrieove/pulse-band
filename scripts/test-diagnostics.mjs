@@ -49,8 +49,15 @@ test('treats a degraded daemon protocol as a warning', () => {
 
 test('does not claim protocol or bridge health while daemon is offline', () => {
   const report = buildDiagnosticReport(healthy({ daemonConnected: false }));
+  assert.equal(find(report, 'daemon').status, 'warn');
   assert.equal(find(report, 'protocol').status, 'warn');
   assert.equal(find(report, 'bridge').status, 'warn');
+});
+
+test('a manually disconnected band is a neutral warning, not a failure', () => {
+  const check = find(buildDiagnosticReport(healthy({ bandConnected: false })), 'band');
+  assert.equal(check.status, 'warn');
+  assert.match(check.summary, /未连接/);
 });
 
 test('requires FetchBridge only in plugin mode', () => {

@@ -11,6 +11,7 @@ import { TitleBar } from './components/pulse/TitleBar';
 import { Sidebar, type Screen } from './components/pulse/Sidebar';
 import { DeviceScreen } from './components/pulse/DeviceScreen';
 import { DiagnosticsScreen } from './components/pulse/DiagnosticsScreen';
+import { SettingsScreen } from './components/pulse/SettingsScreen';
 import { MiniBar } from './components/minibar/MiniBar';
 import type { PulseOronboxState, PulseErrorEntry } from '../main/services/oronbox-bridge';
 
@@ -20,7 +21,8 @@ const initialScreen = (): AppScreen => {
   try {
     const s = new URLSearchParams(window.location.search).get('screen');
     if (s === 'minibar') return 'minibar';
-    return s === 'diagnostics' ? 'diagnostics' : 'main';
+    if (s === 'diagnostics' || s === 'settings') return s;
+    return 'main';
   } catch {
     return 'main';
   }
@@ -75,7 +77,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="w-full h-full flex flex-col bg-island-bg overflow-hidden">
-      <TitleBar subtitle={screen === 'main' ? '· 小米手环 10 配套助手' : '· 运行诊断中心'} />
+      <TitleBar subtitle={screen === 'main' ? '· 小米手环 10 配套助手' : screen === 'diagnostics' ? '· 运行诊断中心' : '· 设置与维护'} />
 
       {/* 阶段 4：protocolVersion 不匹配 → 顶部明显警告条（不退出、不停 daemon，按硬约束 6 降级） */}
       {degraded && (
@@ -106,14 +108,16 @@ export const App: React.FC = () => {
       <div className="flex-1 flex overflow-hidden">
         <Sidebar screen={screen} onNavigate={setScreen} daemon={state?.daemon ?? null} />
         {screen === 'main' ? (
-          <DeviceScreen state={state} />
-        ) : (
+          <DeviceScreen state={state} onOpenSettings={() => setScreen('settings')} />
+        ) : screen === 'diagnostics' ? (
           <DiagnosticsScreen
             daemon={state?.daemon ?? null}
             connection={state?.connection ?? { state: 'disconnected' }}
             errors={errors}
             onClearErrors={() => window.pulse?.clearErrorLog()}
           />
+        ) : (
+          <SettingsScreen state={state} />
         )}
       </div>
     </div>

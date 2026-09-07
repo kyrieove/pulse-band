@@ -9,7 +9,7 @@
  * 阶段 5 重点：authoritative:false 必须视觉强区分（双层虚线边框 + 斜纹底 + 琥珀徽章 + ~EST + 数值带 *）。
  */
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Server, TriangleAlert, Layers, Activity, LoaderCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Server, TriangleAlert, Layers, Activity, LoaderCircle, Copy } from 'lucide-react';
 import type { PulseOronboxState, PulseErrorEntry } from '../../../main/services/oronbox-bridge';
 import type { DiagnosticReport, DiagnosticStatus } from '../../../main/services/diagnostics';
 import { fmtUptime, fmtTime } from './ui';
@@ -76,29 +76,10 @@ export const DiagnosticsScreen: React.FC<{
   const [diag, setDiag] = useState<{ limits: Record<string, QuotaView | null>; quotaMeta?: QuotaMeta } | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
-  const [hook, setHook] = useState<{ installed: boolean; settingsPath: string; command: string | null } | null>(null);
-  const [hookMsg, setHookMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [report, setReport] = useState<DiagnosticReport | null>(null);
   const [runningDiagnostics, setRunningDiagnostics] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
-
-  useEffect(() => {
-    window.pulse?.getHookStatus().then(setHook).catch(() => setHook(null));
-  }, []);
-
-  const runHook = async (action: 'install' | 'uninstall') => {
-    const res = action === 'install' ? await window.pulse?.installHook() : await window.pulse?.uninstallHook();
-    if (!res) return;
-    if (res.ok) {
-      setHook({ installed: !!res.installed, settingsPath: res.settingsPath ?? '', command: res.command ?? null });
-      setHookMsg({
-        ok: true,
-        text: action === 'install' ? '已写入 settings.json。重开一个 Claude Code 会话即可生效。' : '已从 settings.json 移除。',
-      });
-    } else {
-      setHookMsg({ ok: false, text: res.error ?? '操作失败' });
-    }
-  };
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -144,8 +125,23 @@ export const DiagnosticsScreen: React.FC<{
     }
   };
 
+  const copyReport = async () => {
+    if (!report) return;
+    const text = await window.pulse?.formatDiagnosticReport(report);
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    setCopyMessage('诊断报告已复制');
+  };
+
+  const copyErrors = async () => {
+    const text = await window.pulse?.formatErrorLog();
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    setCopyMessage('异常日志已复制');
+  };
+
   return (
-    <main className="flex-1 bg-island-bg overflow-y-auto custom-scrollbar p-5 space-y-4">
+    <main className="flex-1 bg-island-bg overflow-y-auto custom-scrollbar p-5 space-y-4 select-text">
       <section className="p-4 rounded-xl bg-island-surface border border-white/[0.08] space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
@@ -157,14 +153,17 @@ export const DiagnosticsScreen: React.FC<{
               <p className="text-[11px] text-zinc-500 mt-0.5">只读取当前状态，不会修改蓝牙、设备或第三方配置</p>
             </div>
           </div>
-          <button
-            onClick={runFullDiagnostics}
-            disabled={runningDiagnostics}
-            className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-island-accent/15 border border-island-accent/35 text-island-accent hover:bg-island-accent/25 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-1.5 shrink-0"
-          >
-            {runningDiagnostics ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
-            {runningDiagnostics ? '正在检查…' : report ? '重新诊断' : '开始完整诊断'}
-          </button>
+          <div className="flex gap-2 select-none">
+            {report && <button onClick={copyReport} className="px-3 py-2 rounded-lg text-xs bg-zinc-800 text-zinc-300 flex items-center gap-1.5"><Copy className="w-3.5 h-3.5" />复制诊断报告</button>}
+            <button
+              onClick={runFullDiagnostics}
+              disabled={runningDiagnostics}
+              className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-island-accent/15 border border-island-accent/35 text-island-accent hover:bg-island-accent/25 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-1.5 shrink-0"
+            >
+              {runningDiagnostics ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+              {runningDiagnostics ? '正在检查…' : report ? '重新诊断' : '开始完整诊断'}
+            </button>
+          </div>
         </div>
 
         {reportError && (
@@ -172,6 +171,7 @@ export const DiagnosticsScreen: React.FC<{
             诊断没有完成：{reportError}。请重启 Pulse 后重试。
           </div>
         )}
+        {copyMessage && <div className="text-xs text-emerald-400">{copyMessage}</div>}
 
         {!report && !reportError && !runningDiagnostics && (
           <div className="py-4 text-center text-xs text-zinc-500 border border-dashed border-white/[0.08] rounded-lg">
@@ -393,9 +393,10 @@ export const DiagnosticsScreen: React.FC<{
             <TriangleAlert className="w-4 h-4 text-rose-400" />
             <h3 className="text-sm font-semibold text-zinc-200">最近异常与错误日志 (最新在上)</h3>
           </div>
-          <button onClick={onClearErrors} className="text-[11px] text-zinc-500 hover:text-zinc-300 font-medium transition">
-            清空日志
-          </button>
+          <div className="flex items-center gap-3 select-none">
+            <button onClick={copyErrors} className="text-[11px] text-island-accent hover:text-sky-300 font-medium transition">复制全部日志</button>
+            <button onClick={onClearErrors} className="text-[11px] text-zinc-500 hover:text-zinc-300 font-medium transition">清空日志</button>
+          </div>
         </div>
 
         {errors.length === 0 ? (
@@ -423,47 +424,6 @@ export const DiagnosticsScreen: React.FC<{
             ))}
           </div>
         )}
-      </section>
-      <section className="space-y-2.5">
-        <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-island-accent" />
-          <h2 className="text-sm font-semibold text-zinc-200">Claude Code 接入</h2>
-        </div>
-        <div className="p-3 rounded-lg bg-[#0e1017] border border-white/[0.04] space-y-2.5">
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            装上后 Claude Code 的会话与工具调用会实时推给 Pulse，再由 Pulse 转发到手环。
-            转发脚本用 Pulse 自带的运行时执行，<span className="text-zinc-200">不需要另外安装 Node.js</span>。
-          </p>
-          <div className="flex items-center gap-2">
-            <span
-              className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${
-                hook?.installed
-                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                  : 'bg-zinc-500/15 border-zinc-500/30 text-zinc-400'
-              }`}
-            >
-              {hook?.installed ? '已安装' : '未安装'}
-            </span>
-            <button
-              onClick={() => runHook('install')}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-island-accent/15 border border-island-accent/30 text-island-accent hover:bg-island-accent/25 transition"
-            >
-              {hook?.installed ? '重新安装' : '安装 Hook'}
-            </button>
-            {hook?.installed && (
-              <button
-                onClick={() => runHook('uninstall')}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-500/10 border border-zinc-500/30 text-zinc-400 hover:bg-zinc-500/20 transition"
-              >
-                卸载
-              </button>
-            )}
-          </div>
-          {hook?.command && <div className="text-[10px] font-mono text-zinc-500 break-all">{hook.command}</div>}
-          {hookMsg && (
-            <div className={`text-xs ${hookMsg.ok ? 'text-emerald-400' : 'text-rose-300'}`}>{hookMsg.text}</div>
-          )}
-        </div>
       </section>
     </main>
   );
