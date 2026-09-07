@@ -53,10 +53,10 @@
 
 ### 仍需人工纪律的两条
 
-1. **OronBox 是共享的。** `taskkill /F /IM oronbox.exe` 会让用户正在跑的 Pulse 断开手环。
-   - 只在阶段 2 及之后、**用户在场**时才允许 kill
-   - 每次实机测试结束，**必须把 OronBox 拉回来**：`"C:\Program Files\OronBox\oronbox.exe" --nogui daemon run`
-   - 收工前确认用户的 Pulse 能重新连上手环
+1. **OronBox 是共享的，但不许强杀。** 用户开发期间不开 Pulse，所以正常情况下它本来就没在跑。
+   - 每次实机阶段开始前跑 §0.5 的前置检查
+   - 发现 Pulse 或 oronbox 在跑 → **停下来让用户自己退**，不许 `taskkill`
+   - 跑完不用恢复：用户下次点连接时 `ensureDaemon()` 会自己拉起 OronBox
 
 2. **手环是共享的，同时只接受一个 SPP 链路。** Rust PoC 占着链路时，生产 Pulse 连不上。测试完必须断开释放。
 
@@ -69,24 +69,46 @@
 
 ---
 
-## 0.5 闸门（无人值守时的停车位）
+## 0.5 闸门与前置检查
 
-每个阶段标了三种执行条件。**遇到 🚧 必须停下来等人，不要自己往下走。**
+用户的工作方式已确定：**开发期间不开 Pulse。** 机器上 Pulse 和 OronBox 都没有开机自启
+（注册表 Run 键和启动文件夹里都没有条目），所以「不打开」是可靠的前提。
 
-| 阶段 | 条件 | 说明 |
-|---|---|---|
-| 0 建私有仓库 | ✅ 无人值守 | 纯 git / gh 操作。`gh auth status` 若未登录 → 停下报告 |
-| 1 工具链 + 帧层（全离线） | ✅ 无人值守 | 不需要手环。`winget` 若要求提权就停下报告 |
-| 2 SPP 实机连接 | ⚠️ 需要实机 | 手环必须在附近、蓝牙开着；且必须先 kill OronBox |
-| 3 认证握手 | ⚠️ 需要实机 | 卡住要装 `btvs.exe` 抓包时 → 🚧 停下来问 |
-| 4 daemon 化 + 打通 Pulse | 🚧 **需要批准** | 会改用户正在用的 Pulse 配置，不许擅自开始 |
-| 5 卸载 OronBox + 发布 | 🚧 **需要批准** | 破坏性操作，任何情况下都不许无人值守 |
+因此除了阶段 5，全部可以无人值守。
 
-**遇到闸门怎么做**：把「已完成到哪 / 卡在哪一步 / 需要人做什么 / 下一条命令是什么」四行写进 `future_version/STATUS.md`，然后停止。
+| 阶段 | 条件 |
+|---|---|
+| 0 建私有仓库 | ✅ **已完成** |
+| 1 工具链 + 帧层（全离线） | ✅ 无人值守，不需要手环 |
+| 2 SPP 实机连接 | ✅ 无人值守 —— 需通过下面的前置检查 |
+| 3 认证握手 | ✅ 无人值守 —— 同上，另有手环保护条款 |
+| 4 daemon 化 + 打通 Pulse Dev | ✅ 无人值守 —— 同上（身份已隔离，碰不到生产） |
+| 5 卸载 OronBox + 发布 | 🚧 **需要批准**，破坏性，任何情况下都不许无人值守 |
 
-**不许为了显得有进展而跳过闸门去做后面的阶段。**
+### 前置检查（阶段 2、3、4 每次开始前必跑）
 
-**今晚无人值守的合理终点**：阶段 0 + 阶段 1 全部完成，`cargo test` 绿，停在阶段 2 之前，`STATUS.md` 写好。
+```powershell
+Get-Process Pulse,oronbox -ErrorAction SilentlyContinue
+```
+
+- **输出为空** → 继续。手环的 SPP 链路是空的，可以放心占用。
+- **有进程** → **不许 kill**，写 `STATUS.md`：「请先退出 Pulse 和 OronBox 再继续」，然后停止。
+  用户可能正在用，强杀会打断他。
+
+跑完不需要恢复 OronBox：用户下次打开 Pulse 点连接时，`ensureDaemon()` 会自己把它拉起来。
+
+### 手环保护条款（阶段 3）
+
+逆向认证握手时会向手环发不合法的帧。
+
+- 手环连续 3 次不响应（超时或直接断链）→ **停止**，写 `STATUS.md`，不许进重试循环
+- 单次无人值守跑不超过 2 小时，避免整夜轰炸手环电池
+- 手环需要重新配对才能恢复的情况 → 🚧 立刻停，这要人操作
+
+### 遇到闸门怎么做
+
+把「已完成到哪 / 卡在哪一步 / 需要人做什么 / 下一条命令是什么」四行写进
+`future_version/STATUS.md`，然后停止。**不许为了显得有进展而跳过闸门去做后面的阶段。**
 
 ---
 
@@ -176,7 +198,7 @@ Xiaomi Smart Band 10 在 Gadgetbridge 支持列表内 —— 协议行为可查�
 
 ### 1.5 已知地雷
 
-1. **手环同时只接受一个 SPP 链路。** 跑任何 Rust PoC 前必须 `taskkill /F /IM oronbox.exe`。
+1. **手环同时只接受一个 SPP 链路。** 跑任何 Rust PoC 前，Pulse 和 OronBox 必须都不在跑（见 §0.5 前置检查，**不许强杀**）。
    历史上那个 `SPP connect failed: CONNECT_FAILED: No RFCOMM channel available` 报错，最可能就是链路被占。**这个错误用 Rust 重写不会消失**，它是 SDP 查找失败，不是语言问题。
 2. **`btleplug` crate 不能用** —— 只做 BLE，协议对不上。这里是 Bluetooth Classic。
 3. **`node --test` 不支持 TypeScript parameter property**（`constructor(private x: T)`）。需要被测试直接 import 的纯逻辑，抽到独立的 `*-policy.ts`，跟现有 `oronbox-policy.ts` / `antigravity-policy.ts` 一个套路。
@@ -226,7 +248,7 @@ gh repo view kyrieove/pulse-band-v2 --json name,isPrivate,defaultBranchRef
 
 **目标**：Rust 项目立起来，A5A5 帧的编解码和 CRC16 写完并测过。这一整阶段不碰蓝牙。
 
-- [ ] `winget install Rustlang.Rustup`（本机当前**没有** Rust 工具链）。若要求 UAC 提权而无法自动完成 → 写 `STATUS.md` 停下。
+- [x] ~~`winget install Rustlang.Rustup`~~ —— **已装好**：cargo 1.98.1 / rustc 1.98.1。若 `cargo` 不在 PATH，用 `%USERPROFILE%\.cargo\bin\cargo.exe`。
 - [ ] `cargo new --bin core --name pulse-core`，放在仓库根的 `core/`
 - [ ] 依赖只加 `windows`（features: `Win32_Networking_WinSock`, `Win32_Devices_Bluetooth`, `Win32_Foundation`）
 - [ ] 生成 `%LOCALAPPDATA%\PulseDev\run\device.json`：从 OronBox 的 `shared_preferences.json` 读 `flutter.paired_devices`（JSON 字符串数组，取第一项再 parse），把 `addr` / `authkey` / `codename` 写过去。**这一步不需要连手环，只是读文件。**
@@ -257,7 +279,7 @@ cd core && cargo test
 
 **目标**：连上手环，收到第一个真实的 `A5 A5` 帧。这是整个项目的可行性判决点。
 
-**前置**：手环在附近、蓝牙开着、已在 Windows 蓝牙设置里处于已配对状态。
+**前置**：跑 §0.5 的前置检查；手环在附近、蓝牙开着、已在 Windows 蓝牙设置里处于已配对状态。
 
 - [ ] `core/src/transport.rs`：Winsock 连接，MAC 和 authkey 从 `device.json` 读（**禁止硬编码，禁止进 git**）
 
@@ -278,15 +300,15 @@ cd core && cargo test
 
 **验证**：
 
-```bash
-taskkill /F /IM oronbox.exe
-cd core && cargo run
+```powershell
+Get-Process Pulse,oronbox -ErrorAction SilentlyContinue   # 必须为空
+cd core; cargo run
 ```
 
 **完成标准**：hexdump 前两个字节是 `a5 a5`，且 `decode` 成功解出该帧；手环对我们发的 ACK 没有回 NAK。
 
 **如果连接失败**：
-1. `No RFCOMM channel available` → 先确认 OronBox 真的退干净了（含托盘进程），再确认手环在 Windows 蓝牙设置里是已配对
+1. `No RFCOMM channel available` → 先跑前置检查确认 OronBox 真的退干净了（含托盘进程），再确认手环在 Windows 蓝牙设置里是已配对
 2. 手环不在附近 / 蓝牙关着 → 写 `STATUS.md` 停下，这不是代码问题
 3. 连续三次不同原因失败 → 停下来问，不要继续试
 
@@ -329,8 +351,8 @@ cd core && cargo run
 
 **验证**：
 
-```bash
-taskkill /F /IM oronbox.exe
+```powershell
+Get-Process Pulse,oronbox -ErrorAction SilentlyContinue   # 必须为空
 npm run dev
 ```
 
