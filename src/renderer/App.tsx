@@ -106,7 +106,7 @@ export const App: React.FC = () => {
       )}
 
       <div className="flex-1 flex overflow-hidden">
-        <Sidebar screen={screen} onNavigate={setScreen} daemon={state?.daemon ?? null} />
+        <Sidebar screen={screen} onNavigate={setScreen} />
         {screen === 'main' ? (
           <DeviceScreen state={state} onOpenSettings={() => setScreen('settings')} />
         ) : screen === 'diagnostics' ? (

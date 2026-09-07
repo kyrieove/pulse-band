@@ -1,9 +1,8 @@
 /**
- * 左侧导航边栏（main.html aside）：功能导航 + 底部 OronBox 守护进程微指示。
+ * 左侧导航边栏（main.html aside）：功能导航 + 底部悬浮窗开关。
  */
 import React, { useEffect, useState } from 'react';
 import { Smartphone, Activity, Settings } from 'lucide-react';
-import type { PulseOronboxState } from '../../../main/services/oronbox-bridge';
 import { Toggle } from './ui';
 
 export type Screen = 'main' | 'diagnostics' | 'settings';
@@ -17,9 +16,7 @@ const NAV: Array<{ id: Screen; label: string; hint: string }> = [
 export const Sidebar: React.FC<{
   screen: Screen;
   onNavigate: (s: Screen) => void;
-  daemon: PulseOronboxState['daemon'] | null;
-}> = ({ screen, onNavigate, daemon }) => {
-  const running = daemon?.rpcConnected === true;
+}> = ({ screen, onNavigate }) => {
   const [minibarVisible, setMinibarVisible] = useState(false);
 
   useEffect(() => {
@@ -87,20 +84,6 @@ export const Sidebar: React.FC<{
           <div className="text-[10px] text-zinc-500">
             {minibarVisible ? '已置顶显示 · 磨砂玻璃透明风格' : '未开启 · 点击开关开启悬浮'}
           </div>
-        </div>
-
-        {/* 原有 OronBox 守护进程状态 */}
-        <div className="p-2.5 rounded-lg bg-[#12151c] border border-white/[0.06] space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-zinc-400 flex items-center gap-1.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${running ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-              OronBox 守护进程
-            </span>
-            <span className={`text-[10px] font-medium ${running ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {running ? '运行中' : '未连接'}
-            </span>
-          </div>
-          <div className="text-[10px] text-zinc-500">详细信息请前往运行诊断</div>
         </div>
       </div>
     </aside>
