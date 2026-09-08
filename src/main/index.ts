@@ -9,7 +9,7 @@ import { ClaudeHookServer } from './services/claude-hook-server';
 import { registerClaudeHookInstall } from './services/claude-hook-install';
 import { registerBandKeyExtract } from './services/band-key-extract';
 import { StatusServer } from './services/status-server';
-import { OronBoxClient, ORONBOX_EXE } from './services/oronbox-client';
+import { OronBoxClient, CORE_EXE } from './services/oronbox-client';
 import { OronBoxBridge } from './services/oronbox-bridge';
 import { createTray } from './tray';
 import { createMiniBarWindow, disposeMiniBar, toggleMiniBar, isMiniBarVisible } from './minibar-window';
@@ -44,7 +44,7 @@ const claudeServer = new ClaudeHookServer(sessionManager, 41789);
 const statusServer = new StatusServer(sessionManager, 8765);
 statusServer.start();
 
-// OronBox 客户端只在显式手环操作时按需启动 daemon；打开 Pulse 本身不碰蓝牙。
+// pulse-core 只在显式手环操作时按需启动；打开 Pulse 本身不碰蓝牙。
 const oronbox = new OronBoxClient();
 const oronboxBridge = new OronBoxBridge(
   oronbox,
@@ -171,7 +171,7 @@ ipcMain.handle('get-initial-sessions', () => {
 });
 
 ipcMain.handle('pulse:get-app-version', () => app.getVersion());
-ipcMain.handle('pulse:is-oronbox-installed', () => fs.existsSync(ORONBOX_EXE));
+ipcMain.handle('pulse:is-oronbox-installed', () => fs.existsSync(CORE_EXE));
 ipcMain.handle('pulse:check-update', async () => {
   const currentVersion = app.getVersion();
   try {

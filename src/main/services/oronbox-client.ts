@@ -1,18 +1,18 @@
 /**
- * OronBox daemon 客户端（阶段 2）。
+ * pulse-core 客户端（阶段 2，协议不变，按 §1.3 对接 pulse-core）。
  *
  * 职责：
- * - 从 %LOCALAPPDATA%\OronBox\run\daemon.json 读端点；文件缺失或 pid 已死（端点文件会残留陈旧内容）
- *   时 spawn `oronbox.exe --nogui daemon run` 并轮询等端点文件**内容变化**（上限 20 秒）
+ * - 从 %LOCALAPPDATA%\PulseDev\run\core.json 读端点；文件缺失或 pid 已死（端点文件会残留陈旧内容）
+ *   时 spawn `pulse-core.exe --fake` 并轮询等端点文件**内容变化**（上限 20 秒）
  * - 回环 TCP + 行分隔 JSON，token 鉴权，按请求 id 关联响应
  * - 事件订阅：所有 daemon 事件转发到 EventEmitter（`device.state`、`device.interconnect`、…）
  * - 断线重连：指数退避，上限 60 秒；重连前重读端点（端口是动态的，daemon 重启会换端口）
  * - protocolVersion 严格相等校验：不等时设 `degraded` 标志并发 `degraded` 事件，
  *   **不抛异常、不停 daemon**，继续用旧链路（硬约束 6）
  *
- * 方法签名见 docs/ORONBOX_DAEMON_RPC.md。
+ * 方法签名以 docs/protocol/rpc-contract.md 为准。
  * 纯 Node 实现（net/fs/child_process），不 import electron：
- * scripts/test-daemon-client.mjs 由 node 24 直接运行本文件（erasable TS），
+ * node 24 可直接运行本文件（erasable TS），
  * Electron 主进程则经 vite 打包进 dist-electron。
  */
 import { spawn } from 'node:child_process';
@@ -21,12 +21,12 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 
-export const ORONBOX_EXE = 'C:\\Program Files\\OronBox\\oronbox.exe';
+export const CORE_EXE = path.join(import.meta.dirname, '../../core/target/release/pulse-core.exe');
 export const DAEMON_ENDPOINT_FILE = path.join(
   process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
-  'OronBox',
+  'PulseDev',
   'run',
-  'daemon.json',
+  'core.json',
 );
 export const EXPECTED_PROTOCOL_VERSION = 6;
 
@@ -120,8 +120,9 @@ export class OronBoxClient extends EventEmitter {
     const oldRaw = fs.existsSync(DAEMON_ENDPOINT_FILE)
       ? fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8')
       : null;
-    if (!fs.existsSync(ORONBOX_EXE)) throw new Error('找不到 ' + ORONBOX_EXE);
-    const child = spawn(ORONBOX_EXE, ['--nogui', 'daemon', 'run'], {
+    if (!fs.existsSync(CORE_EXE)) throw new Error('找不到 ' + CORE_EXE + '（先在 core/ 下 cargo build --release）');
+    // --fake 是阶段 1 唯一存在的模式；真设备模式等阶段 2~4 的抓包证据
+    const child = spawn(CORE_EXE, ['--fake'], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
