@@ -18,6 +18,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod fake;
 mod rpc;
+pub mod crc;
+pub mod frame;
 
 use fake::FakeDevice;
 use rpc::ClientHandle;
