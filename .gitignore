@@ -22,3 +22,6 @@ debug-window-*.png
 core/target/
 device.json
 /STATUS.md
+core/tests/fixtures/
+*.pcapng
+*.pcap
