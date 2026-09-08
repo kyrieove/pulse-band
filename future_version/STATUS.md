@@ -1,17 +1,13 @@
-# STATUS — 2026-09-08（阶段 4 完成 · 真机手环 RFCOMM 首通 · 准备进入阶段 5）
+# STATUS — 2026-09-08（阶段 5 停在第 0 步前置闸门 · device.json 不存在）
 
 - **已完成到哪**：
-  - 阶段 4 完成：首次成功直连 Xiaomi Smart Band 10 真机手环，完成 4a 链路建立、4b 被动观察与 4c 主动首包探测。
-  - **4a 链路连接**：基于原生 Windows Winsock（`ws2_32.dll`）实现 `AF_BTH` RFCOMM 连接（SPP UUID `{00001101-0000-1000-8000-00805F9B34FB}`，MAC `04:34:C3:97:9A:06`，port=0 SDP 解析），**第 1 次尝试即 100% 成功直连**（socket fd = 344）。
-  - **4b 被动观察**：观察结果：在本次连接后的 10 秒观察窗口内未收到数据（WSAETIMEDOUT 10060）。
-    这只能记录本次窗口现象，不能据此推出手环永远不会主动推包；
-    首包方向仍以阶段 2 两次抓包为准。
-  - **4c 主动首包探测**：
-    1. **包 1（前导握手帧）**：发送 11 字节 `ba dc fe 00 c0 03 00 00 01 00 ef`，手环成功响应 14 字节 `ba dc fe 00 00 06 00 01 02 00 03 01 40 ef`，与阶段 2 抓包两会话事实 100% 逐字节完全吻合！
-    2. **包 2（协商帧）**：用 `core/src/frame.rs` 的 `encode()` 构造并发送 30 字节 type=0x02 协商帧（payload 22 字节），手环立即返回 30 字节 type=0x02 协商响应帧（payload 22 字节，CRC 为 `00 c7`），成功由 `core/src/frame.rs` 的 `decode()` 完整解析，判定为可区分响应。
-  - **保护条款计数器终值**：连接失败 = 0 次，发包失败 = 0 次（均未触发上限）。
-  - **设备配对状态**：手环在 Windows 注册表 `BTHPORT\Parameters\Devices\0434c3979a06` 保持已配对状态，`LastConnected` 成功更新至最新连接时间戳。
-- **卡在哪一步**：无阻塞。阶段 4 所有硬指标全部达成。
+  - 阶段 4 完成：真机手环 RFCOMM 首次直连与 4a/4b/4c 首包实测完成，保护条款计数器终值（连接失败 0 次，发包失败 0 次），收尾观察性表述修正已单独提交（`3411f6e`）。
+  - 阶段 5 启动：按 `future_version/PHASE5-BRIEF.md` 执行第 0 步前置闸门检查。
+    1. `Get-Process Pulse,oronbox -ErrorAction SilentlyContinue`：输出为空，无冲突后台进程。
+    2. 手环配对状态：注册表 `BTHPORT\Parameters\Devices\0434c3979a06` 存在且状态健康，未脱落。
+    3. `Test-Path "$env:LOCALAPPDATA\PulseDev\run\device.json"`：实测输出 `False`，文件不存在。
+- **卡在哪一步**：阶段 5 第 0 步前置闸门 —— `$env:LOCALAPPDATA\PulseDev\run\device.json` 不存在。
+  - 触发铁律：`device.json` 不存在时立即停止，严禁猜测、严禁伪造生成 key、严禁继续执行。
 - **需要人做什么**：
-  - 审阅阶段 4 真机连接与首包交互实测报告，确认是否进入阶段 5（认证握手与业务帧通道建立）。
-- **下一步**：阶段 5（认证握手与业务帧通道建立）。
+  - 在 `$env:LOCALAPPDATA\PulseDev\run\device.json` 放置包含手环 MAC 与 16 字节 authkey 的有效配置文件。
+- **下一步**：用户就绪后，重新执行第 0 步前置闸门，验证字段与 16 字节 authkey 长度后进入第 1 步。
