@@ -20,6 +20,7 @@ mod fake;
 mod rpc;
 pub mod crc;
 pub mod frame;
+pub mod rfcomm;
 
 use fake::FakeDevice;
 use rpc::ClientHandle;
@@ -117,6 +118,13 @@ fn already_running(run_dir: &PathBuf) -> bool {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--probe") {
+        if let Err(e) = rfcomm::run_probe() {
+            eprintln!("pulse-core probe failed: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if !args.iter().any(|a| a == "--fake") {
         eprintln!("pulse-core: 真设备模式尚未实现（蓝牙层要等阶段 2~4 的抓包证据），请用 --fake 启动");
         std::process::exit(2);
