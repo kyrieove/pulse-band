@@ -25,3 +25,14 @@ device.json
 core/tests/fixtures/
 *.pcapng
 *.pcap
+# 阶段 2/2B 临时分析脚本（不入库）
+tools/__pycache__/
+tools/analyze_step1.py
+tools/audit_mismatches.py
+tools/audit_session2.py
+tools/audit_session2_part2.py
+tools/check_all_seqs.py
+tools/compare_type02.py
+tools/export_test_vector.py
+tools/inspect_208_216.py
+tools/inspect_timeline.py
