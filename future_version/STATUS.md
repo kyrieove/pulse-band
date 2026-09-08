@@ -1,22 +1,19 @@
-# STATUS — 2026-09-08（阶段 5 离线协议调查与 KDF 验证完成 · 停在 Step 3 生成与成功判定）
+# STATUS — 2026-09-08（阶段 5 · Step 3 两会话离线复现通过）
 
-- **已完成到哪**：
-  - 阶段 1~4 完成并已推送；阶段 4 真机 RFCOMM 首通成功。
-  - 阶段 5 前置凭据就绪：`%LOCALAPPDATA%\PulseDev\run\device.json`（Xiaomi Smart Band 10，代号 `o66`，authkey 16B）已受控读取，未泄露。
-  - 公开协议依据确立：匹配开源实现 `adomerle/xiaomi_protobuf_extractor`（commit `4560f8c0`）与 `xiaomi.proto`，确认协议为 `XiaomiSppV2`，命令为 `Command.type=1`, `subtype=26/27`, `auth=3`。
-  - 离线复现验证闭环（两份独立会话）：
-    1. KDF 算法确认：基于 `authkey` 与双向 Nonce 的 HKDF-SHA256 算法，在 `baseline-2026-09-08-01`（包 #116, #120）与 `baseline-2026-09-08-02`（包 #112, #115）中推导的 Step 2 HMAC 均实现 **100% 逐字节完全匹配**。
-    2. 会话解密验证：派生的 AES-128-CTR 会话密钥成功将两份抓包全量后续 `01 02` 加密业务报文（146 帧与 53 帧）解密为合法的 Protobuf Command。
-  - 文档更新：`docs/protocol/auth.md` 已全面重构，记录了算法推导公式、两份会话脱敏复现原文及证据缺口。
-- **当前状态**：阶段 5 停在离线认证分析（KDF 与会话密钥已验证，Step 3 构造与 Step 4 判定未确认）。
-- **仍未确认 / 证据缺口**：
-  - Step 3 中 32B `encryptedNonces` 与 21B `encryptedDeviceInfo` 的主动加密构造规范（明文拼接与 IV 构造）；
-  - Step 4 内部字段的精确状态语义，以及认证失败时的设备响应行为（无失败反例对比）。
-- **当前闸门**：
-  - 严格禁止连接手环、严格禁止发送猜测认证包、禁止实现未经验证的 `core/src/session.rs`、禁止进入阶段 6。
-  - 即使上述条件部分满足，亦不自动授权真机连接。
-- **下一步任务**：
-  1. 检索开源实现中主动发送 Step 3 的构造逻辑（`AuthStep3` 的明文结构与 IV 派生规范）；
-  2. 检索或寻找认证失败响应特征定义；
-  3. 待 Step 3 与失败判定完全闭环后，再行设计最小受控测试方案。
-
+- **已有基础**：阶段 1–4 完成；阶段 4 RFCOMM 首通成功。凭据已受控导入，本次未修改。
+- **本次完成**：
+  - 固定 OronBox `26dd89e7`、AstroBox-NG 主仓 `52d3ba5f` 及公开 Core 模块 `95541fda`，核对主动认证实现。完整 commit 和源码位置见 `docs/protocol/auth.md`。
+  - Step 3 的 32B 字段确认是 HMAC-SHA256；21B 字段为 17B CompanionDevice 明文的 AES-128-CCM 密文加 4B tag，nonce 为 enc_nonce 加 8 个零字节。
+  - 两份基线 SHA256、420 个完整 A5A5 帧 CRC、两次 Step 2 HMAC、两次 Step 3 完整 68B payload 逐字节验证通过；本地篡改 CCM tag 均被拒绝。
+  - 全量 199 帧业务报文通过 protobuf 外层及一层 wire 检查：会话 1 双向 73/73，会话 2 双向 27/26，失败和跳过均为 0。不宣称完整业务语义验证。
+  - Step 4 字段 1 有明确 `confirm_result` 定义，OronBox 检查其 true/false；两份成功抓包均为 true。字段 2/3 是能力字段，不再泛称 unknown。
+  - 新增 `tools/verify_auth.py` 与 `docs/protocol/auth-verification.txt`。修正旧 scratch 脚本仅检查前 5 帧首字节却报告全量通过的问题。
+- **限制**：
+  - AstroBox Core 当前忽略 confirm_result，不能照搬它的成功分支。
+  - 未确认两个开源实现的完整继承关系，不作为独立协议发现计数。
+  - Step 3 平台枚举作为抓包输入；设备名和能力常量依据公开 OronBox 实现重新序列化。未验证 Pulse 名称或其他参数的真机接受行为。
+  - 真实认证失败时的返回/断链/超时行为尚无对照抓包；本地负对照不替代设备实测。
+- **当前闸门**：继续不连接手环、不发包、不进入阶段 6。本次没有修改产品 Rust 代码；阶段 5 尚未完成三次自研认证重连验收。
+- **下一步**：准备基于已验证算法的会话状态机设计与合成离线测试，覆盖错误 HMAC、错误 tag、拒绝/缺失/乱序确认及超时断链；原有真机闸门明确解除后再执行受控认证验收。
+- **复现**：在项目根目录执行 `python tools/verify_auth.py`；成功退出码 0。详细命令、包号、方向流内偏移、哈希与输出见认证文档。
+- **收工交接（2026-09-08）**：用户要求今天停止，保存进度并提交推送到 `origin/main`。明天先读本文件与 `docs/protocol/auth.md`，从会话状态机离线设计与测试继续；无需重新搜索认证算法。真机连接仍须保持上述闸门。本次仅提交认证文档、状态、脱敏验证输出与验证脚本，不包含凭据、抓包或无关的 `.zcode/`。
