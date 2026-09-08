@@ -21,7 +21,7 @@
 | 小米手环 10 | 只在 Band 10 上做过开发和验证 |
 | 一台安卓手机 | 用来绑定手环并导出日志取密钥。**iOS 未验证** |
 | Windows 10 / 11 电脑 | Pulse 和 OronBox 必须装在同一台机器上 |
-| [OronBox](https://github.com/OrPudding/OronBox) | 第三方开源软件，负责和手环通信。**需要你自己安装** |
+| [OronBox](https://github.com/zxor-org/OronBox/releases/tag/v1.1.3) | 第三方开源软件，负责和手环通信。**需要你自己安装** |
 | 一点耐心 | 最难的一步是从手机日志里取出手环的 authkey |
 
 > ⚠️ **重要：连接 Pulse 或 OronBox 会断开手环与小米运动健康的蓝牙连接。** 小米手环 10 同一时间只能连接一个蓝牙设备。退出 Pulse 后，手环不会自动切回手机；需要在手环上选择「连接新手机」，再重新连接小米运动健康。目前没有更便捷的切换方式。
@@ -95,7 +95,7 @@ cd band-app && npm install && npm run build
 
 ## 依赖与致谢
 
-- **[OronBox](https://github.com/OrPudding/OronBox)**（AGPL-3.0）——负责与小米手环通信的第三方开源软件。
+- **[OronBox](https://github.com/zxor-org/OronBox)**（AGPL-3.0）——负责与小米手环通信的第三方开源软件。
   Pulse 通过本机回环 RPC 调用它，**不包含也不分发它的任何代码或二进制**，请从其官方渠道获取。
 
   > ⚠️ **本项目与 OronBox 项目没有任何关联。**
