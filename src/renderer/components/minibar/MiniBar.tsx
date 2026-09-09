@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, X, Activity } from 'lucide-react';
 import type { MinibarState, AgentKind, AgentSession } from '../../../common/types';
+import { toRemainingPercent } from '../pulse/agent-quota-utils';
 
 export interface MiniBarProps {
   theme?: 'light' | 'dark';
@@ -118,12 +119,18 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
           <div className="flex items-center gap-1.5 shrink-0">
             {AGENT_CONFIGS.map((cfg) => {
               const q = quotas ? quotas[cfg.key] : null;
-              const pct = q?.pct5h;
+              const used5h = q?.pct5h;
+              const remaining5h = toRemainingPercent(used5h);
+              const tooltip =
+                remaining5h != null
+                  ? `${cfg.label}:\n5小时剩余额度 ${remaining5h}%\n窗口已使用 ${used5h}%${!q?.authoritative ? '\n(本地估算)' : ''}`
+                  : `${cfg.label}: 暂无额度数据`;
+
               return (
                 <div
                   key={cfg.key}
                   className="apple-glass-badge rounded-full px-2.5 py-0.5 flex items-center gap-1.5 text-[10px] font-mono leading-none transition-all"
-                  title={`${cfg.label}: ${pct != null ? `${pct}%` : '--'}${!q?.authoritative ? ' (本地估算)' : ''}`}
+                  title={tooltip}
                 >
                   <span
                     className="w-1.5 h-1.5 rounded-full shrink-0"
@@ -134,7 +141,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
                   />
                   <span className="text-[var(--text-secondary)] font-medium">{cfg.shortLabel}</span>
                   <span className="text-[var(--text-primary)] font-semibold tabular-nums">
-                    {pct != null ? `${pct}%` : '--'}
+                    {remaining5h != null ? `${remaining5h}%` : '--'}
                   </span>
                 </div>
               );
@@ -227,7 +234,8 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
           AGENT_CONFIGS.map((cfg) => {
             const q = quotas ? quotas[cfg.key] : null;
             const isCurrentActive = activeSession?.agent === cfg.key;
-            const pct5h = q?.pct5h ?? 0;
+            const used5h = q?.pct5h;
+            const remaining5h = toRemainingPercent(used5h);
             const pct7d = q?.pct7d ?? 0;
             const r5 = shortReset(q?.resetText);
             const r7 = shortReset(q?.reset7dText);
@@ -258,11 +266,11 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
 
                   <div className="flex items-center gap-2.5 font-mono text-[10px] tabular-nums">
                     <span className="text-[var(--text-secondary)]">
-                      5h: <strong className="text-[var(--text-primary)] font-semibold">{q?.pct5h != null ? `${q.pct5h}%` : '--'}</strong>
+                      5h剩余: <strong className="text-[var(--text-primary)] font-semibold">{remaining5h != null ? `${remaining5h}%` : '--'}</strong>
                       {r5 && <span className="text-[var(--text-muted)] ml-0.5">({r5})</span>}
                     </span>
                     <span className="text-[var(--text-muted)]">
-                      7d: <strong className="text-[var(--text-primary)] font-semibold">{q?.pct7d != null ? `${q.pct7d}%` : '--'}</strong>
+                      7d使用: <strong className="text-[var(--text-primary)] font-semibold">{q?.pct7d != null ? `${q.pct7d}%` : '--'}</strong>
                       {r7 && <span className="text-[var(--text-muted)] ml-0.5">({r7})</span>}
                     </span>
                   </div>
@@ -270,21 +278,27 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
 
                 {/* 苹果风平滑渐变进度槽 */}
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="w-full h-1.5 bg-black/10 dark:bg-black/30 rounded-full overflow-hidden border border-[var(--border-default)] p-[0.5px]">
+                  <div
+                    className="w-full h-1.5 bg-black/10 dark:bg-black/30 rounded-full overflow-hidden border border-[var(--border-default)] p-[0.5px]"
+                    title={`5小时剩余额度: ${remaining5h != null ? `${remaining5h}%` : '--'}`}
+                  >
                     <div
                       className="h-full rounded-full transition-all duration-500"
                       style={{
-                        width: `${Math.min(100, pct5h)}%`,
+                        width: `${Math.min(100, Math.max(0, remaining5h ?? 0))}%`,
                         background: `linear-gradient(to right, ${cfg.grad[0]}, ${cfg.grad[1]})`,
                         boxShadow: `0 0 8px ${cfg.color}66`,
                       }}
                     />
                   </div>
-                  <div className="w-full h-1.5 bg-black/10 dark:bg-black/30 rounded-full overflow-hidden border border-[var(--border-default)] p-[0.5px]">
+                  <div
+                    className="w-full h-1.5 bg-black/10 dark:bg-black/30 rounded-full overflow-hidden border border-[var(--border-default)] p-[0.5px]"
+                    title={`7天窗口已使用: ${pct7d}%`}
+                  >
                     <div
                       className="h-full rounded-full transition-all duration-500"
                       style={{
-                        width: `${Math.min(100, pct7d)}%`,
+                        width: `${Math.min(100, Math.max(0, pct7d))}%`,
                         background: 'linear-gradient(to right, #0077b6, #00b4d8)',
                         boxShadow: '0 0 8px rgba(0, 180, 216, 0.4)',
                       }}
