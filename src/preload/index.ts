@@ -90,6 +90,8 @@ contextBridge.exposeInMainWorld('pulse', {
       ipcRenderer.invoke('pulse:app-install:send-chunks', { installId }),
     commit: (req: any) => ipcRenderer.invoke('pulse:app-install:commit', req),
     cancel: (req: any) => ipcRenderer.invoke('pulse:app-install:cancel', req),
+    cancelTransfer: (installId: string) =>
+      ipcRenderer.invoke('pulse:app-install:cancel-transfer', { installId }),
     onProgress: (callback: (event: any) => void) => {
       const subscription = (_: any, ev: any) => callback(ev);
       ipcRenderer.on('pulse:app-install-progress', subscription);

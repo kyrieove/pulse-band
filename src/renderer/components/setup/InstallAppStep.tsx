@@ -51,7 +51,11 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
       });
       if (ev.status === 'failed' || ev.status === 'cancelled') {
         if (ev.error) {
-          setErrorMessage(typeof ev.error === 'string' ? ev.error : JSON.stringify(ev.error));
+          const errText =
+            typeof ev.error === 'string'
+              ? ev.error
+              : (ev.error as any)?.userMessage ?? JSON.stringify(ev.error);
+          setErrorMessage(errText);
         }
       }
     });
@@ -72,7 +76,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
     if (!filePath) {
       setSessionStatus('failed');
       setPreparedPkg(null);
-      setErrorMessage('无法读取安装包\n原因: 无法获取文件路径');
+      setErrorMessage('无法获取文件路径');
       return;
     }
 
@@ -97,7 +101,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
     } catch (err: any) {
       setSessionStatus('failed');
       setPreparedPkg(null);
-      setErrorMessage(`无法读取安装包\n原因: ${err?.message ?? '解析失败'}`);
+      setErrorMessage(err?.message ?? '安装包解析失败');
     } finally {
       if (e.target) e.target.value = '';
     }
@@ -111,13 +115,15 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
       }
     } catch (err: any) {
       setSessionStatus('failed');
-      setErrorMessage(`无法读取安装包\n原因: ${err?.message ?? err}`);
+      setErrorMessage(err?.message ?? '分块传输中断');
     }
   };
 
-  const handleCancel = async () => {
+  const handleCancelTransfer = async () => {
     try {
-      if (window.pulse?.appInstall?.cancel && activeInstallId) {
+      if (window.pulse?.appInstall?.cancelTransfer && activeInstallId) {
+        await window.pulse.appInstall.cancelTransfer(activeInstallId);
+      } else if (window.pulse?.appInstall?.cancel && activeInstallId) {
         await window.pulse.appInstall.cancel({
           installId: activeInstallId,
           reason: '用户主动取消',
@@ -127,8 +133,21 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
       console.error('[InstallAppStep] 取消失败:', err);
     } finally {
       setSessionStatus('cancelled');
-      setErrorMessage('安装已取消');
+      setErrorMessage('传输已取消');
     }
+  };
+
+  const handleReselectFile = () => {
+    setSessionStatus('idle');
+    setActiveInstallId(null);
+    setPreparedPkg(null);
+    setErrorMessage(null);
+    setProgress({
+      transferredBytes: 0,
+      fileSize: 0,
+      percentage: 0,
+    });
+    fileInputRef.current?.click();
   };
 
   const handleReset = () => {
@@ -211,7 +230,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
               </button>
               <button
                 type="button"
-                onClick={handleCancel}
+                onClick={handleCancelTransfer}
                 className="px-3 py-2 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
               >
                 取消
@@ -231,7 +250,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
             </div>
             <button
               type="button"
-              onClick={handleCancel}
+              onClick={handleCancelTransfer}
               className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
             >
               取消安装
@@ -246,7 +265,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
             <div className="flex items-center gap-2">
               <Loader2 className="w-4 h-4 text-[var(--accent-primary)] animate-spin" />
               <span className="font-medium text-[var(--text-primary)]">
-                正在传输快应用分块
+                正在传输安装包
               </span>
             </div>
             <span className="font-mono text-[var(--accent-primary)] font-semibold">
@@ -264,7 +283,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
 
           <div className="flex items-center justify-between text-[11px] text-[var(--text-muted)] font-mono">
             <span>
-              已传输: {(progress.transferredBytes / 1024).toFixed(1)} / {(progress.fileSize / 1024).toFixed(1)} KB
+              {(progress.transferredBytes / 1024).toFixed(1)} KB / {(progress.fileSize / 1024).toFixed(1)} KB
             </span>
             <span>{progress.percentage}%</span>
           </div>
@@ -272,7 +291,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
           <div className="text-center pt-1">
             <button
               type="button"
-              onClick={handleCancel}
+              onClick={handleCancelTransfer}
               className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
             >
               取消传输
@@ -297,7 +316,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
           </div>
           <button
             type="button"
-            onClick={handleCancel}
+            onClick={handleCancelTransfer}
             className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
           >
             取消
@@ -305,29 +324,46 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
         </div>
       )}
 
-      {(sessionStatus === 'cancelled' || sessionStatus === 'failed') && (
-        <div className="p-4 rounded-[var(--radius-md)] bg-rose-500/[0.08] border border-rose-500/25 space-y-3">
-          <div className="flex items-start gap-2 text-xs text-[var(--status-error)]">
-            {sessionStatus === 'cancelled' ? (
-              <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            ) : (
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            )}
-            <div className="space-y-0.5 whitespace-pre-line">
-              <p className="font-medium">
-                {sessionStatus === 'cancelled' ? '安装已取消' : '无法读取安装包'}
-              </p>
-              <p className="leading-relaxed opacity-90">
-                {errorMessage || '安装会话已终止。'}
+      {sessionStatus === 'cancelled' && (
+        <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] space-y-3 text-left">
+          <div className="flex items-start gap-2 text-xs text-[var(--text-secondary)]">
+            <XCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+            <div className="space-y-0.5">
+              <p className="font-medium text-[var(--text-primary)]">
+                传输已取消
               </p>
             </div>
           </div>
           <button
             type="button"
-            onClick={handleReset}
-            className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
+            onClick={handleReselectFile}
+            className="px-3.5 py-1.5 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium transition-colors shadow-sm cursor-pointer"
           >
-            重置
+            重新选择文件
+          </button>
+        </div>
+      )}
+
+      {sessionStatus === 'failed' && (
+        <div className="p-4 rounded-[var(--radius-md)] bg-rose-500/[0.08] border border-rose-500/25 space-y-3 text-left">
+          <div className="flex items-start gap-2 text-xs text-[var(--status-error)]">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="space-y-1 whitespace-pre-line">
+              <p className="font-medium">
+                安装包处理失败
+              </p>
+              <div className="text-[11px] leading-relaxed opacity-90">
+                <p className="text-[var(--text-muted)]">原因:</p>
+                <p className="font-mono">{errorMessage || '未知异常'}</p>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="px-3.5 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
+          >
+            重新开始
           </button>
         </div>
       )}

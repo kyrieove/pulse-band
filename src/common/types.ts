@@ -251,6 +251,11 @@ export interface InstallCancelRequest {
   reason?: string;
 }
 
+export interface InstallErrorDetail {
+  code: string;
+  userMessage: string;
+}
+
 export interface InstallProgressEvent {
   messageType: 'event';
   event: 'device.app.install.progress';
@@ -259,7 +264,7 @@ export interface InstallProgressEvent {
   transferredBytes?: number;
   fileSize?: number;
   percentage?: number;
-  error?: string;
+  error?: string | InstallErrorDetail;
 }
 
 // ============================================================================

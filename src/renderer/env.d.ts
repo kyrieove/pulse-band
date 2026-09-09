@@ -28,6 +28,7 @@ export interface AppInstallBridge {
   sendChunks: (installId?: string) => Promise<{ sentChunks: number; totalBytes: number; status: InstallSessionStatus }>;
   commit: (req: InstallCommitRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus; error?: string }>;
   cancel: (req: InstallCancelRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus }>;
+  cancelTransfer: (installId: string) => Promise<{ ok: boolean; status?: InstallSessionStatus }>;
   onProgress: (cb: (event: InstallProgressEvent) => void) => () => void;
 }
 

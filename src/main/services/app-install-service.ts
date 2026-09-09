@@ -9,6 +9,7 @@
  * - 纯内存流转，无磁盘写入，不调用硬件/蓝牙/Core
  */
 
+import fs from 'node:fs';
 import type { BrowserWindow } from 'electron';
 import type {
   InstallSessionStatus,
@@ -62,6 +63,7 @@ export interface InstallSession {
   versionName?: string;
   versionCode?: number;
   expectedHash: string;
+  cancelRequested: boolean;
   createdAt: number;
 }
 
@@ -152,6 +154,7 @@ export class AppInstallService {
       versionName: req.versionName,
       versionCode: req.versionCode,
       expectedHash: req.hash.trim(),
+      cancelRequested: false,
       createdAt: Date.now(),
     };
 
@@ -224,6 +227,7 @@ export class AppInstallService {
       versionName: meta.versionName,
       versionCode: meta.versionCode,
       expectedHash: hash,
+      cancelRequested: false,
       createdAt: Date.now(),
     };
 
@@ -355,25 +359,34 @@ export class AppInstallService {
     };
   }
 
-  cancel(req: InstallCancelRequest): { ok: boolean; status: InstallSessionStatus } {
-    if (!this.session || this.session.installId !== req.installId) {
+  cancelFileTransfer(installId?: string): { ok: boolean; status: InstallSessionStatus } {
+    if (!this.session || (installId && this.session.installId !== installId)) {
       return { ok: false, status: 'cancelled' };
     }
 
+    const currentInstallId = this.session.installId;
+    const currentFileSize = this.session.fileSize;
+
     this.session.status = 'cancelled';
+    this.session.cancelRequested = true;
+
     this.broadcastProgress({
       messageType: 'event',
       event: 'device.app.install.progress',
-      installId: this.session.installId,
+      installId: currentInstallId,
       status: 'cancelled',
-      fileSize: this.session.fileSize,
-      transferredBytes: this.session.receivedBytes,
-      percentage: Math.round((this.session.receivedBytes / this.session.fileSize) * 100) || 0,
-      error: req.reason ?? '用户取消安装',
+      fileSize: currentFileSize,
+      transferredBytes: 0,
+      percentage: 0,
+      error: '传输已取消',
     });
 
     this.cleanup();
     return { ok: true, status: 'cancelled' };
+  }
+
+  cancel(req: InstallCancelRequest): { ok: boolean; status: InstallSessionStatus } {
+    return this.cancelFileTransfer(req.installId);
   }
 
   async sendFileChunks(installId?: string): Promise<{ sentChunks: number; totalBytes: number; status: InstallSessionStatus }> {
@@ -393,42 +406,105 @@ export class AppInstallService {
     const { sourcePath, totalChunks, chunkSize } = this.session;
     let sentChunks = 0;
 
-    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-      if (!this.session || (this.session.status as string) === 'cancelled') {
-        throw new Error('传输已取消');
+    try {
+      if (!fs.existsSync(sourcePath)) {
+        throw new Error('FILE_NOT_FOUND');
+      }
+      const currentStat = fs.statSync(sourcePath);
+      if (currentStat.size !== this.session.fileSize) {
+        throw new Error('FILE_SIZE_CHANGED');
       }
 
-      // 1. 真实随机读取物理分块 Buffer（不整读大文件）
-      const chunkBuf = readChunk(sourcePath, chunkIndex, chunkSize);
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        if (!this.session || this.session.cancelRequested || (this.session.status as string) === 'cancelled') {
+          throw new Error('cancelled');
+        }
 
-      // 2. 严格 Base64 编码
-      const chunkData = chunkBuf.toString('base64');
+        let chunkBuf: Buffer;
+        try {
+          chunkBuf = readChunk(sourcePath, chunkIndex, chunkSize);
+        } catch {
+          throw new Error('READ_CHUNK_FAILED');
+        }
 
-      // 3. 内部进入真实 handleChunk 校验与进度派发
-      this.handleChunk({
-        installId: this.session.installId,
-        chunkIndex,
-        chunkData,
-      });
+        const chunkData = chunkBuf.toString('base64');
+        this.handleChunk({
+          installId: this.session.installId,
+          chunkIndex,
+          chunkData,
+        });
 
-      sentChunks++;
+        sentChunks++;
+      }
+
+      try {
+        this.commit({
+          installId: this.session.installId,
+          expectedHash: this.session.expectedHash,
+        });
+      } catch {
+        throw new Error('HASH_VERIFY_FAILED');
+      }
+
+      return {
+        sentChunks,
+        totalBytes: this.session.receivedBytes,
+        status: this.session.status,
+      };
+    } catch (err: any) {
+      if (err?.message === 'cancelled') {
+        throw err;
+      }
+
+      const code =
+        err?.message === 'FILE_NOT_FOUND'
+          ? 'FILE_NOT_FOUND'
+          : err?.message === 'FILE_SIZE_CHANGED'
+          ? 'FILE_SIZE_CHANGED'
+          : err?.message === 'READ_CHUNK_FAILED'
+          ? 'READ_CHUNK_FAILED'
+          : err?.message === 'HASH_VERIFY_FAILED'
+          ? 'HASH_VERIFY_FAILED'
+          : 'TRANSFER_ERROR';
+
+      const userMessage =
+        code === 'FILE_NOT_FOUND'
+          ? '安装包文件不存在或已被移除'
+          : code === 'FILE_SIZE_CHANGED'
+          ? '安装包文件大小发生变更，传输中止'
+          : code === 'READ_CHUNK_FAILED'
+          ? '读取安装包分块失败'
+          : code === 'HASH_VERIFY_FAILED'
+          ? '安装包完整性校验不通过'
+          : '安装包处理失败';
+
+      if (this.session) {
+        this.session.status = 'failed';
+        this.broadcastProgress({
+          messageType: 'event',
+          event: 'device.app.install.progress',
+          installId: this.session.installId,
+          status: 'failed',
+          fileSize: this.session.fileSize,
+          transferredBytes: this.session.receivedBytes,
+          percentage: Math.min(
+            100,
+            Math.round((this.session.receivedBytes / this.session.fileSize) * 100)
+          ),
+          error: {
+            code,
+            userMessage,
+          },
+        });
+      }
+
+      throw new Error(userMessage);
     }
-
-    // 传输完成后自动执行 commit 校验前置对账，推入 verifying 状态（绝不进入 completed）
-    this.commit({
-      installId: this.session.installId,
-      expectedHash: this.session.expectedHash,
-    });
-
-    return {
-      sentChunks,
-      totalBytes: this.session.receivedBytes,
-      status: this.session.status,
-    };
   }
 
   cleanup(): void {
     this.session = null;
+    this.listeners.clear();
   }
 }
 
@@ -478,5 +554,11 @@ export function registerAppInstallIpc(
   ipc.handle('pulse:app-install:cancel', (_e, req: InstallCancelRequest) => {
     if (winGetter) service.attach(winGetter());
     return service.cancel(req);
+  });
+
+  ipc.handle('pulse:app-install:cancel-transfer', (_e, req: { installId: string } | string) => {
+    if (winGetter) service.attach(winGetter());
+    const installId = typeof req === 'string' ? req : req?.installId;
+    return service.cancelFileTransfer(installId);
   });
 }
