@@ -14,6 +14,8 @@ export type {
   CredentialSaveState,
   WindowsPairingStatus,
   WindowsPairingState,
+  RfcommAuthStatus,
+  RfcommAuthState,
 } from '../../../common/types';
 
 /** 向后兼容现有 SetupWizard 内部引用的别名 */

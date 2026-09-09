@@ -23,6 +23,7 @@ import {
 import { LogImportStep } from './LogImportStep';
 import { CredentialSaveStep } from './CredentialSaveStep';
 import { WindowsPairingStep } from './WindowsPairingStep';
+import { RfcommAuthStep } from './RfcommAuthStep';
 
 export interface SetupWizardProps {
   onClose: () => void;
@@ -92,6 +93,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
     if (step.id === 'windows_pairing') {
       return <WindowsPairingStep />;
+    }
+
+    if (step.id === 'rfcomm_auth') {
+      return <RfcommAuthStep />;
     }
 
     return (

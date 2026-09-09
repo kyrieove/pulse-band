@@ -145,3 +145,19 @@ export interface WindowsPairingState {
   status: WindowsPairingStatus;
   error?: SetupError;
 }
+
+// ============================================================================
+// RFCOMM 连接认证步骤数据契约 (RFCOMM Auth Step Data Contract)
+// ============================================================================
+
+export type RfcommAuthStatus =
+  | 'idle'
+  | 'connecting'
+  | 'authenticating'
+  | 'connected'
+  | 'error';
+
+export interface RfcommAuthState {
+  status: RfcommAuthStatus;
+  error?: SetupError;
+}
