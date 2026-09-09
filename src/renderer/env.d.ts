@@ -8,6 +8,7 @@ declare module '*.css' {
 import type {
   AgentSession,
   MinibarState,
+  InstallSessionStatus,
   InstallPrepareRequest,
   InstallPrepareResult,
   InstallChunkRequest,
@@ -22,7 +23,9 @@ import type { DiagnosticReport } from '../main/services/diagnostics';
 /** 快应用原生安装 RPC 桥接接口（阶段契约：仅定义类型边界） */
 export interface AppInstallBridge {
   prepare: (req: InstallPrepareRequest) => Promise<InstallPrepareResult>;
+  prepareFile: (filePath: string) => Promise<InstallPrepareResult>;
   sendChunk: (req: InstallChunkRequest) => Promise<InstallChunkResult>;
+  sendChunks: (installId?: string) => Promise<{ sentChunks: number; totalBytes: number; status: InstallSessionStatus }>;
   commit: (req: InstallCommitRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus; error?: string }>;
   cancel: (req: InstallCancelRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus }>;
   onProgress: (cb: (event: InstallProgressEvent) => void) => () => void;

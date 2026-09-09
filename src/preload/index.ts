@@ -83,7 +83,11 @@ contextBridge.exposeInMainWorld('pulse', {
   // device.app.install 真实 IPC 桥接（阶段契约闭环）
   appInstall: {
     prepare: (req: any) => ipcRenderer.invoke('pulse:app-install:prepare', req),
+    prepareFile: (filePath: string) =>
+      ipcRenderer.invoke('pulse:app-install:prepare-file', { filePath }),
     sendChunk: (req: any) => ipcRenderer.invoke('pulse:app-install:chunk', req),
+    sendChunks: (installId?: string) =>
+      ipcRenderer.invoke('pulse:app-install:send-chunks', { installId }),
     commit: (req: any) => ipcRenderer.invoke('pulse:app-install:commit', req),
     cancel: (req: any) => ipcRenderer.invoke('pulse:app-install:cancel', req),
     onProgress: (callback: (event: any) => void) => {

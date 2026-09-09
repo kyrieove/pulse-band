@@ -21,7 +21,7 @@ import type {
   InstallProgressEvent,
 } from '../../common/types';
 import { inspectRpk } from './rpk-inspector.ts';
-import { calculateFileHash } from './app-install-reader.ts';
+import { calculateFileHash, readChunk } from './app-install-reader.ts';
 
 export { calculateFileHash } from './app-install-reader.ts';
 export const MIN_CHUNK_SIZE = 256;
@@ -243,6 +243,9 @@ export class AppInstallService {
       fileSize: meta.fileSize,
       chunkSize,
       totalChunks,
+      packageId: meta.packageId,
+      versionName: meta.versionName,
+      versionCode: meta.versionCode,
     };
   }
 
@@ -373,6 +376,57 @@ export class AppInstallService {
     return { ok: true, status: 'cancelled' };
   }
 
+  async sendFileChunks(installId?: string): Promise<{ sentChunks: number; totalBytes: number; status: InstallSessionStatus }> {
+    if (!this.session) {
+      throw new Error('未找到当前活动的安装会话');
+    }
+    if (installId && this.session.installId !== installId) {
+      throw new Error(`installId 不匹配: 期望 ${this.session.installId}, 实际 ${installId}`);
+    }
+    if (this.session.status !== 'preparing' && this.session.status !== 'transferring') {
+      throw new Error(`当前会话状态 (${this.session.status}) 不允许发送分块`);
+    }
+    if (!this.session.sourcePath) {
+      throw new Error('当前会话未绑定 sourcePath 本地文件源');
+    }
+
+    const { sourcePath, totalChunks, chunkSize } = this.session;
+    let sentChunks = 0;
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      if (!this.session || (this.session.status as string) === 'cancelled') {
+        throw new Error('传输已取消');
+      }
+
+      // 1. 真实随机读取物理分块 Buffer（不整读大文件）
+      const chunkBuf = readChunk(sourcePath, chunkIndex, chunkSize);
+
+      // 2. 严格 Base64 编码
+      const chunkData = chunkBuf.toString('base64');
+
+      // 3. 内部进入真实 handleChunk 校验与进度派发
+      this.handleChunk({
+        installId: this.session.installId,
+        chunkIndex,
+        chunkData,
+      });
+
+      sentChunks++;
+    }
+
+    // 传输完成后自动执行 commit 校验前置对账，推入 verifying 状态（绝不进入 completed）
+    this.commit({
+      installId: this.session.installId,
+      expectedHash: this.session.expectedHash,
+    });
+
+    return {
+      sentChunks,
+      totalBytes: this.session.receivedBytes,
+      status: this.session.status,
+    };
+  }
+
   cleanup(): void {
     this.session = null;
   }
@@ -388,9 +442,32 @@ export function registerAppInstallIpc(
     return service.createSession(req);
   });
 
+  ipc.handle('pulse:app-install:prepare-file', async (_e, req: { filePath: string }) => {
+    if (winGetter) service.attach(winGetter());
+    if (!req || typeof req.filePath !== 'string') {
+      throw new Error('无效的请求参数: 必须包含 filePath');
+    }
+    const result = await service.prepareFromFile(req.filePath);
+    return {
+      installId: result.installId,
+      status: result.status,
+      fileSize: result.fileSize,
+      chunkSize: result.chunkSize,
+      totalChunks: result.totalChunks,
+      packageId: result.packageId,
+      versionName: result.versionName,
+      versionCode: result.versionCode,
+    };
+  });
+
   ipc.handle('pulse:app-install:chunk', (_e, req: InstallChunkRequest) => {
     if (winGetter) service.attach(winGetter());
     return service.handleChunk(req);
+  });
+
+  ipc.handle('pulse:app-install:send-chunks', async (_e, req?: { installId?: string }) => {
+    if (winGetter) service.attach(winGetter());
+    return service.sendFileChunks(req?.installId);
   });
 
   ipc.handle('pulse:app-install:commit', (_e, req: InstallCommitRequest) => {

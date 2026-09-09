@@ -221,6 +221,9 @@ export interface InstallPrepareResult {
   fileSize: number;
   chunkSize: number;
   totalChunks: number;
+  packageId?: string;
+  versionName?: string;
+  versionCode?: number;
 }
 
 export interface InstallChunkRequest {

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { PackageCheck, Loader2, AlertCircle, XCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { PackageCheck, Loader2, AlertCircle, XCircle, FileUp } from 'lucide-react';
 import type {
   InstallSessionStatus,
   InstallProgressEvent,
@@ -13,16 +13,17 @@ export interface InstallAppStepProps {
   };
 }
 
-function formatBytes(bytes: number): string {
-  if (!bytes || bytes <= 0) return '0 B';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+interface PreparedPackageInfo {
+  packageId: string;
+  versionName: string;
+  fileSizeKb: string;
+  totalChunks: number;
 }
 
 export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
   const [sessionStatus, setSessionStatus] = useState<InstallSessionStatus>('idle');
   const [activeInstallId, setActiveInstallId] = useState<string | null>(null);
+  const [preparedPkg, setPreparedPkg] = useState<PreparedPackageInfo | null>(null);
   const [progress, setProgress] = useState<{
     transferredBytes: number;
     fileSize: number;
@@ -33,6 +34,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
     percentage: 0,
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!window.pulse?.appInstall?.onProgress) return;
@@ -59,18 +61,33 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
     };
   }, []);
 
-  const handleStartInstall = async () => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const filePath = window.pulse?.getPathForFile
+      ? window.pulse.getPathForFile(file)
+      : (file as any)?.path;
+
+    if (!filePath) {
+      setSessionStatus('failed');
+      setPreparedPkg(null);
+      setErrorMessage('无法读取安装包\n原因: 无法获取文件路径');
+      return;
+    }
+
     try {
       setErrorMessage(null);
       setSessionStatus('preparing');
-      if (window.pulse?.appInstall?.prepare) {
-        const res = await window.pulse.appInstall.prepare({
-          packageId: 'com.pulse.bandapp',
-          fileSize: 262144,
-          hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-          chunkSize: 512,
-        });
+      if (window.pulse?.appInstall?.prepareFile) {
+        const res = await window.pulse.appInstall.prepareFile(filePath);
         setActiveInstallId(res.installId);
+        setPreparedPkg({
+          packageId: res.packageId || '未知',
+          versionName: res.versionName || '1.0.0',
+          fileSizeKb: (res.fileSize / 1024).toFixed(1),
+          totalChunks: res.totalChunks,
+        });
         setProgress({
           transferredBytes: 0,
           fileSize: res.fileSize,
@@ -79,7 +96,22 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
       }
     } catch (err: any) {
       setSessionStatus('failed');
-      setErrorMessage(err?.message ?? '初始化安装会话失败');
+      setPreparedPkg(null);
+      setErrorMessage(`无法读取安装包\n原因: ${err?.message ?? '解析失败'}`);
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const handleStartTransfer = async () => {
+    try {
+      setErrorMessage(null);
+      if (window.pulse?.appInstall?.sendChunks) {
+        await window.pulse.appInstall.sendChunks(activeInstallId || undefined);
+      }
+    } catch (err: any) {
+      setSessionStatus('failed');
+      setErrorMessage(`无法读取安装包\n原因: ${err?.message ?? err}`);
     }
   };
 
@@ -102,6 +134,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
   const handleReset = () => {
     setSessionStatus('idle');
     setActiveInstallId(null);
+    setPreparedPkg(null);
     setErrorMessage(null);
     setProgress({
       transferredBytes: 0,
@@ -112,6 +145,15 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
 
   return (
     <div className="space-y-4">
+      {/* 隐藏的 RPK 文件选择器 */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".rpk"
+        className="hidden"
+        onChange={handleFileSelect}
+      />
+
       {/* 头部说明卡片 */}
       <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] space-y-2">
         <h4 className="text-xs font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
@@ -129,41 +171,73 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
           <PackageCheck className="w-8 h-8 mx-auto text-[var(--text-muted)]" />
           <div className="space-y-1">
             <p className="text-xs font-medium text-[var(--text-primary)]">
-              准备就绪
+              选择快应用安装包
             </p>
             <p className="text-[11px] text-[var(--text-muted)]">
-              点击开始安装创建传输会话并执行分块校验
+              请选择本地 .rpk 安装包，系统将自动校验 manifest 并建立安全安装会话
             </p>
           </div>
           <button
             type="button"
-            onClick={handleStartInstall}
-            className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium transition-colors shadow-sm cursor-pointer"
+            onClick={() => fileInputRef.current?.click()}
+            className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium transition-colors shadow-sm cursor-pointer inline-flex items-center gap-1.5"
           >
-            开始安装
+            <FileUp className="w-3.5 h-3.5" />
+            <span>选择 RPK 文件</span>
           </button>
         </div>
       )}
 
       {sessionStatus === 'preparing' && (
-        <div className="p-6 rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-app)] text-center space-y-3">
-          <Loader2 className="w-6 h-6 mx-auto text-[var(--accent-primary)] animate-spin" />
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-[var(--text-primary)]">
-              正在准备安装会话
-            </p>
-            <p className="text-[11px] text-[var(--text-muted)] font-mono">
-              {activeInstallId ? `会话: ${activeInstallId}` : '初始化参数中...'}
-            </p>
+        preparedPkg ? (
+          <div className="p-5 rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-app)] space-y-3 text-left">
+            <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+              <PackageCheck className="w-4 h-4" />
+              <span>安装包已读取</span>
+            </div>
+            <div className="text-xs space-y-1 text-[var(--text-secondary)] font-mono bg-[var(--bg-surface)] p-3 rounded-[var(--radius-sm)] border border-[var(--border-default)]">
+              <div>包名称: {preparedPkg.packageId}</div>
+              <div>版本: {preparedPkg.versionName}</div>
+              <div>大小: {preparedPkg.fileSizeKb} KB</div>
+              <div>分块: {preparedPkg.totalChunks}</div>
+            </div>
+            <div className="pt-1 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleStartTransfer}
+                className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium transition-colors shadow-sm cursor-pointer"
+              >
+                开始分块传输
+              </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="px-3 py-2 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={handleCancel}
-            className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
-          >
-            取消安装
-          </button>
-        </div>
+        ) : (
+          <div className="p-6 rounded-[var(--radius-md)] border border-[var(--border-default)] bg-[var(--bg-app)] text-center space-y-3">
+            <Loader2 className="w-6 h-6 mx-auto text-[var(--accent-primary)] animate-spin" />
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-[var(--text-primary)]">
+                正在准备安装会话
+              </p>
+              <p className="text-[11px] text-[var(--text-muted)] font-mono">
+                {activeInstallId ? `会话: ${activeInstallId}` : '解析安装包中...'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-default)] text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
+            >
+              取消安装
+            </button>
+          </div>
+        )
       )}
 
       {sessionStatus === 'transferring' && (
@@ -189,8 +263,10 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
           </div>
 
           <div className="flex items-center justify-between text-[11px] text-[var(--text-muted)] font-mono">
-            <span>已传输: {formatBytes(progress.transferredBytes)}</span>
-            <span>总大小: {formatBytes(progress.fileSize)}</span>
+            <span>
+              已传输: {(progress.transferredBytes / 1024).toFixed(1)} / {(progress.fileSize / 1024).toFixed(1)} KB
+            </span>
+            <span>{progress.percentage}%</span>
           </div>
 
           <div className="text-center pt-1">
@@ -216,7 +292,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
               分块传输完毕，正在进行完整性校验（当前阶段不向硬件写入）
             </p>
             <p className="text-[11px] font-mono text-[var(--text-secondary)]">
-              已传输: {formatBytes(progress.transferredBytes)} / {formatBytes(progress.fileSize)} (100%)
+              已传输: {(progress.transferredBytes / 1024).toFixed(1)} / {(progress.fileSize / 1024).toFixed(1)} KB (100%)
             </p>
           </div>
           <button
@@ -237,9 +313,9 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
             ) : (
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             )}
-            <div className="space-y-0.5">
+            <div className="space-y-0.5 whitespace-pre-line">
               <p className="font-medium">
-                {sessionStatus === 'cancelled' ? '安装已取消' : '安装失败'}
+                {sessionStatus === 'cancelled' ? '安装已取消' : '无法读取安装包'}
               </p>
               <p className="leading-relaxed opacity-90">
                 {errorMessage || '安装会话已终止。'}
