@@ -7,6 +7,7 @@ import { AgentSection } from './components/pulse/AgentSection';
 import { BandManagementPage } from './components/pulse/BandManagementPage';
 import { SettingsPage } from './components/pulse/SettingsPage';
 import { MiniBar } from './components/minibar/MiniBar';
+import type { PulseOronboxState } from '../main/services/oronbox-bridge';
 
 type AppScreen = PulsePage | 'minibar';
 
@@ -25,6 +26,7 @@ export const App: React.FC = () => {
   const [screen] = useState<AppScreen>(getInitialScreen);
   const [page, setPage] = useState<PulsePage>(screen === 'minibar' ? 'overview' : screen);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [state, setState] = useState<PulseOronboxState | null>(null);
 
   // MiniBar 独立窗口适配
   useEffect(() => {
@@ -46,6 +48,19 @@ export const App: React.FC = () => {
       window.removeEventListener('drop', prevent);
     };
   }, []);
+
+  // 恢复原有 daemon/device 状态订阅
+  useEffect(() => {
+    if (screen === 'minibar') return;
+    if (!window.pulse) return;
+    let alive = true;
+    window.pulse.getOronboxState().then((s) => alive && setState(s));
+    const unsubState = window.pulse.onOronboxState((s) => setState(s));
+    return () => {
+      alive = false;
+      unsubState();
+    };
+  }, [screen]);
 
   // 主题切换效果生效到 html 根节点
   useEffect(() => {
@@ -90,7 +105,7 @@ export const App: React.FC = () => {
         <ContentArea>
           {page === 'overview' && (
             <div className="space-y-5">
-              <BandConnectionCard />
+              <BandConnectionCard connectionState={state?.connection.state} />
               <AgentSection />
             </div>
           )}
