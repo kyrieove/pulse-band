@@ -6,6 +6,7 @@ import { BandConnectionCard } from './components/pulse/BandConnectionCard';
 import { AgentSection } from './components/pulse/AgentSection';
 import { BandManagementPage } from './components/pulse/BandManagementPage';
 import { SettingsPage } from './components/pulse/SettingsPage';
+import { SetupWizard } from './components/setup';
 import { MiniBar } from './components/minibar/MiniBar';
 import type { PulseOronboxState } from '../main/services/oronbox-bridge';
 
@@ -33,6 +34,7 @@ export const App: React.FC = () => {
     }
   });
   const [showAgents, setShowAgents] = useState<boolean>(true);
+  const [showSetup, setShowSetup] = useState<boolean>(false);
   const [state, setState] = useState<PulseOronboxState | null>(null);
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
@@ -142,7 +144,9 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {page === 'band' && <BandManagementPage />}
+          {page === 'band' && (
+            <BandManagementPage onStartSetup={() => setShowSetup(true)} />
+          )}
 
           {page === 'settings' && (
             <SettingsPage
@@ -154,6 +158,14 @@ export const App: React.FC = () => {
           )}
         </ContentArea>
       </div>
+
+      {/* 首次设置 / 更换手环向导 (默认隐藏，仅在触发更换手环时展示) */}
+      {showSetup && (
+        <SetupWizard
+          onClose={() => setShowSetup(false)}
+          onFinish={() => setShowSetup(false)}
+        />
+      )}
     </div>
   );
 };

@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { Watch, Package, ChevronDown, ChevronRight, Upload } from 'lucide-react';
 
-export const BandManagementPage: React.FC = () => {
+export interface BandManagementPageProps {
+  onStartSetup?: () => void;
+}
+
+export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartSetup }) => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   return (
@@ -24,8 +28,9 @@ export const BandManagementPage: React.FC = () => {
           </div>
           <button
             type="button"
-            disabled
-            className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-strong)] text-xs text-[var(--text-secondary)] opacity-60 cursor-not-allowed"
+            onClick={onStartSetup}
+            className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-strong)] text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-app)] transition-colors cursor-pointer"
+            title="进入手环设置向导，重新配置设备"
           >
             更换手环
           </button>
