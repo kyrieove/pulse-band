@@ -12,16 +12,48 @@ export interface AgentCardData {
   id: string;
   name: string;
   status: AgentStatusType;
+  remainingPercent?: number | null;
+  /** 兼容别名 */
   primaryQuota?: number | null;
   resetTime?: string | null;
   currentToolName?: string | null;
   elapsedSeconds?: number | null;
   extendedQuotas?: ExtendedQuotaItem[] | null;
   lastUpdatedAt?: number | null;
+  quotaStatus?: 'idle' | 'warning' | 'critical';
 }
 
 export interface AgentCardProps {
   data: AgentCardData;
+}
+
+/**
+ * 将配额采集器的已使用百分比 (used_percent) 转换为剩余百分比 (remaining_percent)
+ * 公式：Math.max(0, Math.min(100, Math.round(100 - usedPct)))
+ */
+export function toRemainingPercent(usedPct: number | null | undefined): number | null {
+  if (usedPct == null || Number.isNaN(usedPct)) return null;
+  return Math.max(0, Math.min(100, Math.round(100 - usedPct)));
+}
+
+/**
+ * 根据服务端返回的告警等级或已使用百分比判定额度告警状态
+ * 优先消费 level (danger -> critical, warn -> warning, normal -> idle)
+ * 兜底使用已使用百分比阈值 (used >= 95 -> critical, used >= 80 -> warning)
+ */
+export function resolveQuotaStatus(
+  level?: 'normal' | 'warn' | 'danger' | null,
+  usedPct?: number | null
+): 'idle' | 'warning' | 'critical' {
+  if (level === 'danger') return 'critical';
+  if (level === 'warn') return 'warning';
+  if (level === 'normal') return 'idle';
+
+  if (usedPct != null && !Number.isNaN(usedPct)) {
+    if (usedPct >= 95) return 'critical';
+    if (usedPct >= 80) return 'warning';
+  }
+  return 'idle';
 }
 
 const fmtDuration = (sec: number): string => {
@@ -34,8 +66,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
   const [expanded, setExpanded] = useState(false);
 
   const isRunning = data.status === 'running';
-  const isWarning = data.status === 'warning';
   const isCritical = data.status === 'critical';
+  const isWarning = data.status === 'warning';
 
   // 状态色彩与指示
   const statusColor = isRunning
@@ -54,13 +86,20 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
     ? '额度紧张'
     : '待命就绪';
 
-  // 额度色彩
-  const quotaTone =
-    data.primaryQuota != null && data.primaryQuota <= 5
-      ? 'text-[var(--quota-critical)]'
-      : data.primaryQuota != null && data.primaryQuota <= 20
-      ? 'text-[var(--quota-warning)]'
-      : 'text-[var(--text-primary)]';
+  // 剩余额度数值（兼容 remainingPercent 与 primaryQuota）
+  const remaining = data.remainingPercent ?? data.primaryQuota ?? null;
+
+  // 额度色彩（基于剩余额度或独立 quotaStatus，即便卡片为 running 状态额度依然突出告警色）
+  const isQuotaCritical =
+    data.quotaStatus === 'critical' || (remaining != null && remaining <= 5);
+  const isQuotaWarning =
+    data.quotaStatus === 'warning' || (remaining != null && remaining <= 20);
+
+  const quotaTone = isQuotaCritical
+    ? 'text-[var(--quota-critical)]'
+    : isQuotaWarning
+    ? 'text-[var(--quota-warning)]'
+    : 'text-[var(--text-primary)]';
 
   const hasExpandedData =
     (data.extendedQuotas && data.extendedQuotas.length > 0) ||
@@ -124,13 +163,13 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
         </div>
       </div>
 
-      {/* 核心指标行：主要额度、重置时间、运行计时 */}
+      {/* 核心指标行：主要剩余额度、重置时间、运行计时 */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1 text-xs">
-        {data.primaryQuota != null && (
+        {remaining != null && (
           <div className="space-y-0.5">
-            <div className="text-[11px] text-[var(--text-muted)]">主要剩余额度</div>
+            <div className="text-[11px] text-[var(--text-muted)]">5 小时剩余额度</div>
             <div className={`text-base font-bold tabular-nums ${quotaTone}`}>
-              {data.primaryQuota}%
+              {remaining}%
             </div>
           </div>
         )}

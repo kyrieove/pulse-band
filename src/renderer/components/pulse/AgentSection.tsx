@@ -1,13 +1,61 @@
 import React, { useEffect, useState } from 'react';
 import { Bot } from 'lucide-react';
 import type { AgentSession, MinibarState } from '../../../common/types';
-import { AgentCard, type AgentCardData, type AgentStatusType } from './AgentCard';
+import type { AgentQuota } from '../../../main/services/quota-collector';
+import {
+  AgentCard,
+  type AgentCardData,
+  type AgentStatusType,
+  type ExtendedQuotaItem,
+  toRemainingPercent,
+  resolveQuotaStatus,
+} from './AgentCard';
 
-const AGENT_DISPLAY_NAMES: Record<string, string> = {
+export const SUPPORTED_AGENTS = ['claude', 'codex', 'antigravity'] as const;
+export type SupportedAgent = typeof SUPPORTED_AGENTS[number];
+
+const AGENT_DISPLAY_NAMES: Record<SupportedAgent, string> = {
   claude: 'Claude Code',
   codex: 'Codex CLI',
   antigravity: 'Antigravity',
 };
+
+/**
+ * 判定某个 AI Agent 是否被真实检测到
+ * 规则：
+ * 1. 在 active/recent sessions 中存在该 Agent；或者
+ * 2. 在 quotas 中存在对应 key，且具备有效真实数据（非空占位、未失效、具有服务端真实数据或实际使用记录）
+ */
+export function isAgentDetected(
+  agent: SupportedAgent,
+  sessions: AgentSession[],
+  quota?: AgentQuota | null
+): boolean {
+  // 条件 1：在 active/recent sessions 中存在该 Agent
+  const hasSession = sessions.some((s) => s.agent === agent);
+  if (hasSession) return true;
+
+  // 条件 2：在 quotas 中存在对应 key，且具备有效真实数据
+  if (!quota || typeof quota !== 'object') return false;
+  if (quota.needsAuth === true) return false;
+
+  // 服务端权威认证数据
+  if (quota.authoritative === true) return true;
+
+  // 本地兜底或非权威数据：必须存在实际的使用记录或冷却状态，杜绝 0 活跃的初始占位
+  const hasRecordedUsage =
+    (quota.pct5h != null && quota.pct5h > 0) ||
+    (quota.pct7d != null && quota.pct7d > 0) ||
+    (quota.used5h != null && quota.used5h > 0) ||
+    (quota.used7d != null && quota.used7d > 0);
+
+  if (hasRecordedUsage) return true;
+
+  // 若重置倒计时不是默认初始的 'ready'，说明发生过调用并处于窗口期
+  if (quota.resetText && quota.resetText !== 'ready') return true;
+
+  return false;
+}
 
 export const AgentSection: React.FC = () => {
   const [minibarState, setMinibarState] = useState<MinibarState | null>(null);
@@ -32,60 +80,70 @@ export const AgentSection: React.FC = () => {
   }, []);
 
   const sessions: AgentSession[] = minibarState?.sessions ?? [];
-  const quotas: any = minibarState?.quotas;
+  const quotas = minibarState?.quotas;
 
-  // 严格基于真实数据提取已检测到的 Agent（绝不硬编码列表，绝不造假）
-  const detectedKeys = new Set<string>();
-
-  // 1. 从会话流识别已激活的 Agent
-  sessions.forEach((s) => {
-    if (s.agent) detectedKeys.add(s.agent);
-  });
-
-  // 2. 从已有配额快照识别有真实返回数据的 Agent
-  if (quotas && typeof quotas === 'object') {
-    Object.keys(quotas).forEach((key) => {
-      const q = quotas[key];
-      if (q && (q.pct5h != null || q.pct7d != null || q.resetText)) {
-        detectedKeys.add(key);
-      }
-    });
-  }
+  // 仅在明确支持的合法 Agent 范围中检测实体，严禁泛化遍历和假阳性
+  const detectedKeys = SUPPORTED_AGENTS.filter((key) =>
+    isAgentDetected(key, sessions, quotas ? quotas[key] : null)
+  );
 
   // 构建实际检测到的 Agent 列表数据
-  const agentList: AgentCardData[] = Array.from(detectedKeys).map((key) => {
-    const q = quotas ? quotas[key] : null;
+  const agentList: AgentCardData[] = detectedKeys.map((key) => {
+    const q: AgentQuota | null = quotas ? quotas[key] : null;
     const activeSession = sessions.find(
       (s) => s.agent === key && (s.status === 'running_tool' || s.status === 'thinking')
     );
     const session = activeSession ?? sessions.find((s) => s.agent === key);
 
-    // 计算状态
+    // 配额状态与剩余百分比（正确解释 pct5h/pct7d 为已使用百分比，转换为剩余百分比）
+    const remainingPercent = toRemainingPercent(q?.pct5h);
+    const quotaStatus = resolveQuotaStatus(q?.level5h, q?.pct5h);
+
+    // 运行态优先级最高：如果有正在运行的 session，卡片主状态为 running
     let status: AgentStatusType = 'idle';
     if (activeSession) {
       status = 'running';
-    } else if (q?.pct5h != null) {
-      if (q.pct5h <= 5) status = 'critical';
-      else if (q.pct5h <= 20) status = 'warning';
-      else status = 'idle';
+    } else if (quotaStatus === 'critical') {
+      status = 'critical';
+    } else if (quotaStatus === 'warning') {
+      status = 'warning';
+    } else {
+      status = 'idle';
     }
 
-    // 收集真实存在的额外周期额度
-    const extendedQuotas = [];
+    // 收集真实存在的额外周期额度（展开态明确区分 5 小时与 7 天窗口已使用）
+    const extendedQuotas: ExtendedQuotaItem[] = [];
+    if (q?.pct5h != null) {
+      extendedQuotas.push({
+        label: '5 小时窗口已使用',
+        value: `${q.pct5h}%`,
+      });
+    }
     if (q?.pct7d != null) {
-      extendedQuotas.push({ label: '7 天滑动窗口额度', value: `${q.pct7d}%` });
+      extendedQuotas.push({
+        label: '7 天窗口已使用',
+        value: `${q.pct7d}%`,
+      });
+    }
+    if (q?.reset7dText) {
+      extendedQuotas.push({
+        label: '7 天窗口重置',
+        value: q.reset7dText,
+      });
     }
 
     return {
       id: key,
       name: AGENT_DISPLAY_NAMES[key] ?? session?.title ?? key,
       status,
-      primaryQuota: q?.pct5h ?? null,
+      remainingPercent,
+      primaryQuota: remainingPercent,
       resetTime: q?.resetText ?? null,
       currentToolName: activeSession?.currentTool?.name ?? null,
       elapsedSeconds: activeSession?.durationSeconds ?? null,
       extendedQuotas: extendedQuotas.length > 0 ? extendedQuotas : null,
       lastUpdatedAt: session?.updatedAt ?? null,
+      quotaStatus,
     };
   });
 
