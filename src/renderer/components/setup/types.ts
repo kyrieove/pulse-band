@@ -8,6 +8,8 @@ export type {
   SetupError,
   SetupState,
   SetupAction,
+  LogImportStatus,
+  LogImportState,
 } from '../../../common/types';
 
 /** 向后兼容现有 SetupWizard 内部引用的别名 */

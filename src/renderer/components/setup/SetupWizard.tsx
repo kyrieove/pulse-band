@@ -20,6 +20,7 @@ import {
   type SetupStep,
   INITIAL_SETUP_STEPS,
 } from './types';
+import { LogImportStep } from './LogImportStep';
 
 export interface SetupWizardProps {
   onClose: () => void;
@@ -79,6 +80,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   };
 
   const renderStepContent = (step: SetupStep) => {
+    if (step.id === 'import_log') {
+      return <LogImportStep />;
+    }
+
     return (
       <div className="space-y-4">
         <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] space-y-2">

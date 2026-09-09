@@ -97,3 +97,20 @@ export type SetupAction =
   | { type: 'cancel' }
   | { type: 'select_log' }
   | { type: 'retry_step'; step: SetupStepId };
+
+// ============================================================================
+// 手机日志导入步骤数据契约 (Log Import Step Data Contract)
+// ============================================================================
+
+export type LogImportStatus =
+  | 'idle'
+  | 'selecting'
+  | 'parsing'
+  | 'success'
+  | 'error';
+
+export interface LogImportState {
+  status: LogImportStatus;
+  fileName?: string;
+  error?: SetupError;
+}
