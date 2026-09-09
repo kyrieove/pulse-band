@@ -105,7 +105,10 @@ export const App: React.FC = () => {
         <ContentArea>
           {page === 'overview' && (
             <div className="space-y-5">
-              <BandConnectionCard connectionState={state?.connection.state} />
+              <BandConnectionCard
+                connectionState={state?.connection.state}
+                rawError={state?.connection.error}
+              />
               <AgentSection />
             </div>
           )}
