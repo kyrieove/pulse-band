@@ -21,6 +21,7 @@ mod rpc;
 pub mod crc;
 pub mod frame;
 pub mod rfcomm;
+pub mod session;
 
 use fake::FakeDevice;
 use rpc::ClientHandle;
