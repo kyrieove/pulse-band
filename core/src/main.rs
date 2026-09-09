@@ -22,6 +22,7 @@ pub mod crc;
 pub mod frame;
 pub mod rfcomm;
 pub mod session;
+pub mod live;
 
 use fake::FakeDevice;
 use rpc::ClientHandle;
@@ -36,6 +37,7 @@ pub struct Core {
     pub started: Instant,
     pub clients: Mutex<Vec<ClientHandle>>,
     pub device: Mutex<FakeDevice>,
+    pub bt: Mutex<Option<live::DownlinkCtx>>,
 }
 
 impl Core {
@@ -133,6 +135,49 @@ fn main() {
         }
         return;
     }
+    if args.iter().any(|a| a == "--live") {
+        let run_dir = match run_dir() {
+            Ok(d) => d,
+            Err(e) => { eprintln!("pulse-core: {e}"); std::process::exit(2); }
+        };
+        let listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => l,
+            Err(e) => { eprintln!("pulse-core: 监听失败: {e}"); std::process::exit(2); }
+        };
+        let port = listener.local_addr().expect("local addr").port();
+        let core = Arc::new(Core {
+            token: random_token(),
+            run_dir: run_dir.clone(),
+            started: Instant::now(),
+            clients: Mutex::new(Vec::new()),
+            device: Mutex::new(FakeDevice::new()),
+            bt: Mutex::new(None),
+        });
+        let endpoint = serde_json::json!({
+            "port": port, "token": core.token, "pid": std::process::id(),
+            "protocolVersion": PROTOCOL_VERSION,
+        });
+        if let Err(e) = fs::write(run_dir.join("core.json"), endpoint.to_string()) {
+            eprintln!("pulse-core: 写端点失败: {e}");
+            std::process::exit(2);
+        }
+        core.log(&format!(
+            "started --live pid={} port={port} token={}…(截断)",
+            std::process::id(), &core.token[..6]
+        ));
+        let core2 = Arc::clone(&core);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let c = Arc::clone(&core2);
+                std::thread::spawn(move || rpc::serve(c, stream));
+            }
+        });
+        if let Err(e) = live::run_live(&core) {
+            eprintln!("pulse-core live failed: {e}");
+        }
+        return;
+    }
     if !args.iter().any(|a| a == "--fake") {
         eprintln!("pulse-core: 真设备模式尚未实现（蓝牙层要等阶段 2~4 的抓包证据），请用 --fake 启动");
         std::process::exit(2);
@@ -164,6 +209,7 @@ fn main() {
         started: Instant::now(),
         clients: Mutex::new(Vec::new()),
         device: Mutex::new(FakeDevice::new()),
+        bt: Mutex::new(None),
     });
 
     let endpoint = serde_json::json!({

@@ -105,7 +105,16 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
         "device.connect" => (fake::device_connect(core, &id), false),
         "device.disconnect" => (fake::device_disconnect(core, &id), false),
         "device.status" => (fake::device_status(core, &id), false),
-        "device.interconnect.send" => (fake::interconnect_send(core, &id, &params), false),
+        "device.interconnect.send" => {
+            // 真机数据泵模式下，把客户端回传的 content 构造为下行 id=8 帧发回手环；
+            // 否则走 --fake 假手环的自证逻辑。
+            let resp = if core.bt.lock().unwrap().is_some() {
+                crate::live::handle_downlink(core, &id, &params)
+            } else {
+                fake::interconnect_send(core, &id, &params)
+            };
+            (resp, false)
+        }
         "settings.set" => {
             core.log(&format!(
                 "settings.set key={}（no-op：core 没有设置系统）",
