@@ -36,7 +36,7 @@ const STEP_ICONS: Record<SetupStepId, React.ElementType> = {
   verify_quota: CheckCircle2,
 };
 
-export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish }) => {
+export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [stepError, setStepError] = useState<string | null>(null);
 
@@ -62,7 +62,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish }) =
   const handleNext = () => {
     setStepError(null);
     if (isLastStep) {
-      onFinish ? onFinish() : onClose();
+      onClose();
     } else {
       setCurrentIndex((prev) => Math.min(steps.length - 1, prev + 1));
     }
@@ -257,7 +257,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish }) =
               onClick={handleNext}
               className="flex items-center gap-1 px-4 py-1.5 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium transition-colors shadow-sm cursor-pointer"
             >
-              <span>{isLastStep ? '完成' : '下一步'}</span>
+              <span>{isLastStep ? '关闭预览' : '下一步'}</span>
               {!isLastStep && <ChevronRight className="w-3.5 h-3.5" />}
             </button>
           </div>
