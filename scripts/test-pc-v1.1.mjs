@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canConnectBand, shouldConnectBand } from '../src/main/services/oronbox-policy.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  canConnectBand,
+  shouldConnectBand,
+  resolveCoreExePath,
+  resolveDaemonArgs,
+  shouldRetryLiveConnect,
+} from '../src/main/services/oronbox-policy.ts';
 import { nextIdleGrace } from '../src/main/services/antigravity-policy.ts';
 import {
   formatDiagnosticReport,
@@ -87,3 +95,66 @@ test('version comparison follows major, minor, and patch order', () => {
   assert.equal(isVersionNewer('2.0.0', '1.9.9'), true);
   assert.equal(isVersionNewer('1.0.9', '1.1.0'), false);
 });
+
+test('resolveCoreExePath: uses packaged path when it exists', () => {
+  const fakeResources = 'C:/Program Files/Pulse Dev/resources';
+  const existsFn = (p) => p === 'C:/Program Files/Pulse Dev/resources/pulse-core.exe';
+  const fallback = 'C:/dev/pulse-band2/core/target/release/pulse-core.exe';
+
+  const resolved = resolveCoreExePath(fakeResources, existsFn, fallback);
+  assert.equal(resolved, 'C:/Program Files/Pulse Dev/resources/pulse-core.exe');
+});
+
+test('resolveCoreExePath: falls back to dev path when packaged exe does not exist', () => {
+  const fakeResources = 'C:/Program Files/Pulse Dev/resources';
+  const existsFn = () => false;
+  const fallback = 'C:/dev/pulse-band2/core/target/release/pulse-core.exe';
+
+  const resolved = resolveCoreExePath(fakeResources, existsFn, fallback);
+  assert.equal(resolved, fallback);
+});
+
+test('resolveCoreExePath: falls back to dev path when resourcesPath is undefined', () => {
+  const existsFn = () => true;
+  const fallback = 'C:/dev/pulse-band2/core/target/release/pulse-core.exe';
+
+  const resolved = resolveCoreExePath(undefined, existsFn, fallback);
+  assert.equal(resolved, fallback);
+});
+
+test('resolveDaemonArgs: explicit options mode takes highest priority', () => {
+  assert.deepEqual(resolveDaemonArgs({ mode: 'fake', deviceConfigExists: true, envMode: 'live' }), ['--fake']);
+  assert.deepEqual(resolveDaemonArgs({ mode: 'live', deviceConfigExists: false, envMode: 'fake' }), ['--live']);
+});
+
+test('resolveDaemonArgs: envMode takes priority over device config when mode is unset', () => {
+  assert.deepEqual(resolveDaemonArgs({ envMode: 'fake', deviceConfigExists: true }), ['--fake']);
+  assert.deepEqual(resolveDaemonArgs({ envMode: 'live', deviceConfigExists: false }), ['--live']);
+});
+
+test('resolveDaemonArgs: selects --live for formal device when device.json exists', () => {
+  assert.deepEqual(resolveDaemonArgs({ deviceConfigExists: true }), ['--live']);
+});
+
+test('resolveDaemonArgs: selects --fake for test/unpaired environment when device.json is missing', () => {
+  assert.deepEqual(resolveDaemonArgs({ deviceConfigExists: false }), ['--fake']);
+  assert.deepEqual(resolveDaemonArgs({}), ['--fake']);
+});
+
+test('shouldRetryLiveConnect: allows retrying up to 3 attempts and stops', () => {
+  assert.equal(shouldRetryLiveConnect(0, 3), true);
+  assert.equal(shouldRetryLiveConnect(1, 3), true);
+  assert.equal(shouldRetryLiveConnect(2, 3), true);
+  assert.equal(shouldRetryLiveConnect(3, 3), false);
+  assert.equal(shouldRetryLiveConnect(4, 3), false);
+});
+
+test('packaged win-unpacked resources contains pulse-core.exe and CORE_EXE resolves to it', () => {
+  const unpackedResources = path.resolve('release/win-unpacked/resources');
+  const packagedExe = path.join(unpackedResources, 'pulse-core.exe');
+  assert.equal(fs.existsSync(packagedExe), true, 'resources/pulse-core.exe 必须存在于打包解包目录');
+  const resolved = resolveCoreExePath(unpackedResources, (p) => fs.existsSync(p), 'fallback');
+  assert.equal(resolved.replace(/\\/g, '/'), packagedExe.replace(/\\/g, '/'));
+});
+
+

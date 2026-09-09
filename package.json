@@ -19,6 +19,12 @@
     "directories": {
       "output": "release"
     },
+    "extraResources": [
+      {
+        "from": "core/target/release/pulse-core.exe",
+        "to": "pulse-core.exe"
+      }
+    ],
     "files": [
       "dist/**/*",
       "dist-electron/**/*",

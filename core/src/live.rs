@@ -8,19 +8,61 @@
 //!
 //! fingerprint 从上行报文的 BasicInfo 动态获取（不硬编码、不打印），下行应答复用同一 BasicInfo。
 
-use aes::Aes128;
 use aes::cipher::{KeyIvInit, StreamCipher};
+use aes::Aes128;
 use ctr::Ctr128BE;
 
 use std::time::Duration;
 
-use crate::Core;
 use crate::frame::{decode, encode, Frame};
 use crate::rfcomm;
 use crate::session::{
-    Session, SessionState, encode_field, encode_varint_bytes, extract_one_bytes,
-    extract_one_varint, parse_protobuf,
+    encode_field, encode_varint_bytes, extract_one_bytes, extract_one_varint, parse_protobuf,
+    Session, SessionState,
 };
+use crate::Core;
+
+/// live 模式连接与重连状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveStatus {
+    Disconnected,
+    Connecting,
+    Ready,
+    Reconnecting,
+    Error,
+}
+
+pub const MAX_CONNECT_RETRIES: u32 = 3;
+pub const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
+
+/// 重连策略控制器（遵循交接单与 §0.5 保护条款）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconnectPolicy {
+    pub max_retries: u32,
+    pub current_attempt: u32,
+}
+
+impl ReconnectPolicy {
+    pub fn new(max_retries: u32) -> Self {
+        Self {
+            max_retries,
+            current_attempt: 0,
+        }
+    }
+
+    pub fn next_attempt(&mut self) -> Option<u32> {
+        if self.current_attempt < self.max_retries {
+            self.current_attempt += 1;
+            Some(self.current_attempt)
+        } else {
+            None
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.current_attempt = 0;
+    }
+}
 
 /// AES-128-CTR，128 位大端计数器，nonce/IV = 完整 16B 方向密钥（与 verify_auth.py 的 `modes.CTR(key)` 一致）。
 type BizCtr = Ctr128BE<Aes128>;
@@ -99,7 +141,8 @@ pub fn parse_uplink(decoded: &[u8]) -> Result<Option<UplinkFetch>, String> {
         .map_err(|e| format!("ThirdpartyApp 解析失败: {e}"))?;
     let msg_content = parse_protobuf(extract_one_bytes(&thirdparty, 9).map_err(|_| "缺 field9")?)
         .map_err(|e| format!("MessageContent 解析失败: {e}"))?;
-    let basic = parse_basic_info(extract_one_bytes(&msg_content, 1).map_err(|_| "缺 field9.field1")?)?;
+    let basic =
+        parse_basic_info(extract_one_bytes(&msg_content, 1).map_err(|_| "缺 field9.field1")?)?;
     let content = extract_one_bytes(&msg_content, 2)
         .map_err(|_| "缺 field9.field2 content")?
         .to_vec();
@@ -202,9 +245,12 @@ fn spp_guid() -> rfcomm::Guid {
 }
 
 fn connect_rfcomm(mac_u64: u64) -> Result<usize, String> {
-    let sock = unsafe { rfcomm::socket(rfcomm::AF_BTH, rfcomm::SOCK_STREAM, rfcomm::BTHPROTO_RFCOMM) };
+    let sock =
+        unsafe { rfcomm::socket(rfcomm::AF_BTH, rfcomm::SOCK_STREAM, rfcomm::BTHPROTO_RFCOMM) };
     if sock == rfcomm::INVALID_SOCKET {
-        return Err(format!("socket 失败: {}", unsafe { rfcomm::WSAGetLastError() }));
+        return Err(format!("socket 失败: {}", unsafe {
+            rfcomm::WSAGetLastError()
+        }));
     }
     let sockaddr = rfcomm::SockAddrBth {
         address_family: rfcomm::AF_BTH as u16,
@@ -225,7 +271,9 @@ fn connect_rfcomm(mac_u64: u64) -> Result<usize, String> {
         return Err(format!("connect 失败: {err}"));
     }
     // 前导帧与协商帧（transport.md §7/§9）
-    let preamble = [0xba, 0xdc, 0xfe, 0x00, 0xc0, 0x03, 0x00, 0x00, 0x01, 0x00, 0xef];
+    let preamble = [
+        0xba, 0xdc, 0xfe, 0x00, 0xc0, 0x03, 0x00, 0x00, 0x01, 0x00, 0xef,
+    ];
     send_all(sock, &preamble)?;
     let mut pre_buf = [0u8; 64];
     let pre_n = recv_into(sock, &mut pre_buf)?;
@@ -272,7 +320,9 @@ fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8)
     }
     let sock = connect_rfcomm(mac)?;
     let mut session = Session::new(authkey);
-    let step1 = session.start_auth(None).map_err(|e| format!("start_auth: {e}"))?;
+    let step1 = session
+        .start_auth(None)
+        .map_err(|e| format!("start_auth: {e}"))?;
     let mut last_tx_seq = step1.seq;
     send_all(sock, &encode(&step1))?;
 
@@ -283,7 +333,15 @@ fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8)
     let mut dec_key = [0u8; 16];
     let mut authed = false;
     while std::time::Instant::now() < deadline && !authed {
-        unsafe { rfcomm::setsockopt(sock, rfcomm::SOL_SOCKET, rfcomm::SO_RCVTIMEO, &1000u32 as *const u32 as *const u8, 4) };
+        unsafe {
+            rfcomm::setsockopt(
+                sock,
+                rfcomm::SOL_SOCKET,
+                rfcomm::SO_RCVTIMEO,
+                &1000u32 as *const u32 as *const u8,
+                4,
+            )
+        };
         let n = unsafe { rfcomm::recv(sock, raw.as_mut_ptr(), raw.len() as i32, 0) };
         if n > 0 {
             rx.extend_from_slice(&raw[..n as usize]);
@@ -306,16 +364,20 @@ fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8)
                         continue;
                     }
                     if frame.frame_type == 0x02 {
-                        ack_frame(sock, frame.seq)
-                            .map_err(|e| { unsafe { rfcomm::closesocket(sock) }; e })?;
+                        ack_frame(sock, frame.seq).map_err(|e| {
+                            unsafe { rfcomm::closesocket(sock) };
+                            e
+                        })?;
                         continue;
                     }
                     if frame.frame_type != 0x03 {
                         continue;
                     }
                     // 数据帧：先回传输层 ACK（seq 回显），再喂状态机（对齐 run_auth_3times 行为）。
-                    ack_frame(sock, frame.seq)
-                        .map_err(|e| { unsafe { rfcomm::closesocket(sock) }; e })?;
+                    ack_frame(sock, frame.seq).map_err(|e| {
+                        unsafe { rfcomm::closesocket(sock) };
+                        e
+                    })?;
                     match session.process_frame(&frame) {
                         Ok(Some(step3)) => {
                             last_tx_seq = step3.seq;
@@ -386,7 +448,11 @@ fn build_hs_ack(raw_content: &[u8]) -> Vec<u8> {
 }
 
 fn ack_frame(sock: usize, seq: u8) -> Result<(), String> {
-    let ack = Frame { frame_type: 0x01, seq, payload: vec![] };
+    let ack = Frame {
+        frame_type: 0x01,
+        seq,
+        payload: vec![],
+    };
     send_all(sock, &encode(&ack))
 }
 
@@ -420,31 +486,48 @@ pub fn build_app_status_payload(basic: &BasicInfo) -> Vec<u8> {
     wp
 }
 
-/// 阶段 6B 数据泵入口：连接真机、认证、而后进入业务收循环，把上行 fetch/快应用消息转发给客户端。
-pub fn run_live(core: &Core) -> Result<(), String> {
-    let (sock, enc_key, dec_key, mut rx, next_seq) = connect_and_authenticate()?;
-    unsafe { rfcomm::setsockopt(sock, rfcomm::SOL_SOCKET, rfcomm::SO_RCVTIMEO, &300u32 as *const u32 as *const u8, 4) };
-    *core.bt.lock().unwrap() = Some(DownlinkCtx { sock, enc_key, basic: None, seq_out: next_seq });
-    core.log("阶段 6B 数据泵：已认证，进入业务转发循环（脱敏）");
+pub fn broadcast_device_state(core: &Core, protocol_state: &str, connecting: bool, err_msg: &str) {
+    let dev = if protocol_state == "ready" {
+        live_device_json()
+    } else {
+        serde_json::Value::Null
+    };
+    core.broadcast(
+        "device.state",
+        serde_json::json!({
+            "state": {
+                "currentDevice": dev,
+                "protocolState": protocol_state,
+                "connecting": connecting,
+                "error": err_msg,
+            }
+        }),
+    );
+}
 
+fn run_pump_loop(core: &Core, sock: usize, dec_key: &[u8; 16], rx: &mut Vec<u8>) -> &'static str {
     let mut raw = [0u8; 1024];
     loop {
+        if core
+            .shutdown_requested
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return "shutdown_requested";
+        }
         let n = unsafe { rfcomm::recv(sock, raw.as_mut_ptr(), raw.len() as i32, 0) };
         if n > 0 {
             rx.extend_from_slice(&raw[..n as usize]);
         } else if n < 0 {
             let err = unsafe { rfcomm::WSAGetLastError() };
             if err != rfcomm::WSAETIMEDOUT {
-                core.log(&format!("数据泵 recv 错误 err={err}，退出"));
-                break;
+                return "socket_error";
             }
             continue;
         } else {
-            core.log("数据泵：对端断开，退出");
-            break;
+            return "peer_closed";
         }
         loop {
-            match decode(&rx) {
+            match decode(rx) {
                 Ok((frame, consumed)) => {
                     rx.drain(..consumed);
                     if frame.frame_type == 0x01 {
@@ -462,7 +545,7 @@ pub fn run_live(core: &Core) -> Result<(), String> {
                     if !frame.payload.starts_with(&BIZ_PREFIX) {
                         continue;
                     }
-                    if let Some(plain) = decrypted_business_payload(&dec_key, &frame.payload) {
+                    if let Some(plain) = decrypted_business_payload(dec_key, &frame.payload) {
                         if let Ok(Some(up)) = parse_uplink(&plain) {
                             {
                                 let mut bt = core.bt.lock().unwrap();
@@ -470,8 +553,8 @@ pub fn run_live(core: &Core) -> Result<(), String> {
                                     ctx.basic = Some(up.basic.clone());
                                 }
                             }
-                            let v: serde_json::Value =
-                                serde_json::from_slice(&up.content).unwrap_or(serde_json::Value::Null);
+                            let v: serde_json::Value = serde_json::from_slice(&up.content)
+                                .unwrap_or(serde_json::Value::Null);
                             let tag = v["tag"].as_str().unwrap_or("");
                             if tag == "__hs__" {
                                 let ack = build_hs_ack(&up.content);
@@ -479,7 +562,10 @@ pub fn run_live(core: &Core) -> Result<(), String> {
                                 let mut bt = core.bt.lock().unwrap();
                                 if let Some(ctx) = bt.as_mut() {
                                     let frame = build_downlink_frame(
-                                        &ctx.enc_key, &up.basic, &ack, ctx.seq_out,
+                                        &ctx.enc_key,
+                                        &up.basic,
+                                        &ack,
+                                        ctx.seq_out,
                                     );
                                     ctx.seq_out = ctx.seq_out.wrapping_add(1);
                                     let raw = encode(&frame);
@@ -518,17 +604,168 @@ pub fn run_live(core: &Core) -> Result<(), String> {
             }
         }
     }
-    unsafe { rfcomm::closesocket(sock); rfcomm::WSACleanup(); }
-    *core.bt.lock().unwrap() = None;
+}
+
+/// 阶段 7 数据泵入口：支持有限重连自愈与优雅退出控制。
+pub fn run_live(core: &Core) -> Result<(), String> {
+    let mut policy = ReconnectPolicy::new(MAX_CONNECT_RETRIES);
+
+    while !core
+        .shutdown_requested
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        let attempt = match policy.next_attempt() {
+            Some(a) => a,
+            None => {
+                core.log(&format!(
+                    "live: 已达最大重连次数 {}，停止重连",
+                    policy.max_retries
+                ));
+                *core.live_state.lock().unwrap() = LiveStatus::Error;
+                broadcast_device_state(
+                    core,
+                    "error",
+                    false,
+                    &format!("连接失败达到上限 ({} 次)", policy.max_retries),
+                );
+                return Err(format!("重试上限已达 ({} 次)", policy.max_retries));
+            }
+        };
+
+        core.log(&format!(
+            "live: 正在建立连接与认证 (尝试 #{attempt}/{})",
+            policy.max_retries
+        ));
+        {
+            *core.live_state.lock().unwrap() = if attempt == 1 {
+                LiveStatus::Connecting
+            } else {
+                LiveStatus::Reconnecting
+            };
+        }
+        broadcast_device_state(core, "connecting", true, "");
+
+        let auth_res = connect_and_authenticate();
+        if core
+            .shutdown_requested
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            core.log("live: 收到退出请求，中止重连");
+            break;
+        }
+
+        let (sock, enc_key, dec_key, mut rx, next_seq) = match auth_res {
+            Ok(tuple) => tuple,
+            Err(e) => {
+                core.log(&format!("live: 连接认证失败 (尝试 #{attempt}): {e}"));
+                if attempt >= policy.max_retries {
+                    core.log(&format!(
+                        "live: 已达最大重连次数 {}，停止重连",
+                        policy.max_retries
+                    ));
+                    *core.live_state.lock().unwrap() = LiveStatus::Error;
+                    broadcast_device_state(
+                        core,
+                        "error",
+                        false,
+                        &format!("连接失败达到上限 ({} 次)", policy.max_retries),
+                    );
+                    return Err(format!("重试上限已达: {e}"));
+                }
+                let sleep_start = std::time::Instant::now();
+                while sleep_start.elapsed() < RECONNECT_INTERVAL {
+                    if core
+                        .shutdown_requested
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            }
+        };
+
+        // 连接认证成功：重置重连计数
+        policy.reset();
+        core.log("live: 连接认证成功，建立业务数据泵");
+        unsafe {
+            rfcomm::setsockopt(
+                sock,
+                rfcomm::SOL_SOCKET,
+                rfcomm::SO_RCVTIMEO,
+                &300u32 as *const u32 as *const u8,
+                4,
+            );
+        }
+        {
+            let mut bt = core.bt.lock().unwrap();
+            *bt = Some(DownlinkCtx {
+                sock,
+                enc_key,
+                basic: None,
+                seq_out: next_seq,
+            });
+        }
+        *core.live_state.lock().unwrap() = LiveStatus::Ready;
+        broadcast_device_state(core, "ready", false, "");
+
+        // 运行业务数据泵循环
+        let pump_err = run_pump_loop(core, sock, &dec_key, &mut rx);
+        core.log(&format!("live: 业务数据泵退出 (原因: {pump_err})"));
+
+        // 并发安全：取出旧 DownlinkCtx 并释放 socket
+        let old_ctx = core.bt.lock().unwrap().take();
+        if let Some(ctx) = old_ctx {
+            unsafe {
+                rfcomm::closesocket(ctx.sock);
+                rfcomm::WSACleanup();
+            }
+        }
+
+        if core
+            .shutdown_requested
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            core.log("live: 收到退出请求，退出重连循环");
+            break;
+        }
+
+        *core.live_state.lock().unwrap() = LiveStatus::Reconnecting;
+        broadcast_device_state(core, "connecting", true, "对端断开，正在重连");
+
+        let sleep_start = std::time::Instant::now();
+        while sleep_start.elapsed() < RECONNECT_INTERVAL {
+            if core
+                .shutdown_requested
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    *core.live_state.lock().unwrap() = LiveStatus::Disconnected;
+    broadcast_device_state(core, "disconnected", false, "");
     Ok(())
 }
 
 /// RPC `device.interconnect.send` 的桥接：把客户端回传的 content（`__hs__` 应答或 fetch 响应 JSON）
 /// 构造为下行 id=8 帧发回手环。返回 RPC 响应字符串。
-pub fn handle_downlink(core: &Core, req_id: &serde_json::Value, params: &serde_json::Value) -> String {
+pub fn handle_downlink(
+    core: &Core,
+    req_id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> String {
     let content = match params["payload"].as_array() {
-        Some(a) => a.iter().filter_map(|v| v.as_u64().map(|u| u as u8)).collect::<Vec<u8>>(),
-        None => return crate::rpc::error_resp(req_id, "bad_request", "payload 缺整数数组").to_string(),
+        Some(a) => a
+            .iter()
+            .filter_map(|v| v.as_u64().map(|u| u as u8))
+            .collect::<Vec<u8>>(),
+        None => {
+            return crate::rpc::error_resp(req_id, "bad_request", "payload 缺整数数组").to_string()
+        }
     };
     let mut bt = core.bt.lock().unwrap();
     let Some(ctx) = bt.as_mut() else {
@@ -573,34 +810,53 @@ fn live_device_json() -> serde_json::Value {
 /// 真机模式 device.connect：返回真机设备对象 + 广播 device.state connecting→ready（不伪造假 __hs__）。
 pub fn device_connect_live(core: &Core, id: &serde_json::Value) -> String {
     let dev = live_device_json();
-    core.log("live device.connect → connecting (真机)");
-    core.broadcast("device.state", serde_json::json!({"state":{"currentDevice":dev,"protocolState":"connecting","connecting":true,"error":""}}));
-    core.broadcast("device.state", serde_json::json!({"state":{"currentDevice":dev,"protocolState":"ready","connecting":false,"error":""}}));
+    let state = *core.live_state.lock().unwrap();
+    core.log(&format!("live device.connect (state={state:?})"));
+    if state == LiveStatus::Ready {
+        broadcast_device_state(core, "ready", false, "");
+    } else {
+        broadcast_device_state(core, "connecting", true, "");
+    }
     serde_json::json!({ "id": id, "ok": true, "result": dev }).to_string()
 }
 
 /// 真机模式 device.status。
 pub fn device_status_live(core: &Core, id: &serde_json::Value) -> String {
-    let connected = core.bt.lock().unwrap().is_some();
-    let dev = if connected { live_device_json() } else { serde_json::Value::Null };
+    let state = *core.live_state.lock().unwrap();
+    let connected = state == LiveStatus::Ready && core.bt.lock().unwrap().is_some();
+    let dev = if connected {
+        live_device_json()
+    } else {
+        serde_json::Value::Null
+    };
+    let protocol_state = match state {
+        LiveStatus::Ready => "ready",
+        LiveStatus::Connecting | LiveStatus::Reconnecting => "connecting",
+        LiveStatus::Error => "error",
+        LiveStatus::Disconnected => "disconnected",
+    };
     serde_json::json!({
         "id": id, "ok": true, "result": {
             "connected": connected,
-            "protocolState": if connected { "ready" } else { "disconnected" },
+            "protocolState": protocol_state,
             "device": dev, "error": "",
         }
-    }).to_string()
+    })
+    .to_string()
 }
 
 /// 真机模式 device.disconnect：关闭蓝牙 + 广播 disconnected。
 pub fn device_disconnect_live(core: &Core, id: &serde_json::Value) -> String {
-    core.log("live device.disconnect");
-    let sock = core.bt.lock().unwrap().as_ref().map(|c| c.sock);
-    if let Some(s) = sock {
-        unsafe { rfcomm::closesocket(s); }
+    core.log("live device.disconnect: 显式释放链路");
+    let old_ctx = core.bt.lock().unwrap().take();
+    if let Some(ctx) = old_ctx {
+        unsafe {
+            rfcomm::closesocket(ctx.sock);
+            rfcomm::WSACleanup();
+        }
     }
-    *core.bt.lock().unwrap() = None;
-    core.broadcast("device.state", serde_json::json!({"state":{"currentDevice":serde_json::Value::Null,"protocolState":"disconnected","connecting":false,"error":""}}));
+    *core.live_state.lock().unwrap() = LiveStatus::Disconnected;
+    broadcast_device_state(core, "disconnected", false, "");
     serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string()
 }
 
@@ -684,12 +940,33 @@ mod tests {
         let (decoded_frame, consumed) = decode(&raw).expect("frame decode");
         assert_eq!(consumed, raw.len());
         assert_eq!(decoded_frame.frame_type, 0x03);
-        let dec_down = decrypted_business_payload(&KEY, &decoded_frame.payload).expect("decrypt down");
-        let content = parse_downlink_content(&dec_down).expect("parse").expect("content");
+        let dec_down =
+            decrypted_business_payload(&KEY, &decoded_frame.payload).expect("decrypt down");
+        let content = parse_downlink_content(&dec_down)
+            .expect("parse")
+            .expect("content");
         // 解析回 content 为 JSON，字段一致
         let down: serde_json::Value = serde_json::from_slice(&content).unwrap();
         assert_eq!(down["tag"], "fetch");
         assert_eq!(down["id"], "r1");
         assert_eq!(down["resp"]["ok"], true);
+    }
+
+    #[test]
+    fn test_reconnect_policy_attempts() {
+        let mut policy = ReconnectPolicy::new(3);
+        assert_eq!(policy.next_attempt(), Some(1));
+        assert_eq!(policy.next_attempt(), Some(2));
+        assert_eq!(policy.next_attempt(), Some(3));
+        assert_eq!(policy.next_attempt(), None);
+    }
+
+    #[test]
+    fn test_reconnect_policy_reset() {
+        let mut policy = ReconnectPolicy::new(3);
+        assert_eq!(policy.next_attempt(), Some(1));
+        assert_eq!(policy.next_attempt(), Some(2));
+        policy.reset();
+        assert_eq!(policy.next_attempt(), Some(1));
     }
 }

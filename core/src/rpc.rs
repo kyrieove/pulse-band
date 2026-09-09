@@ -23,15 +23,22 @@ pub struct ClientHandle {
 
 impl ClientHandle {
     pub fn send_line(&self, line: &str) -> bool {
-        let Ok(mut w) = self.writer.lock() else { return false };
+        let Ok(mut w) = self.writer.lock() else {
+            return false;
+        };
         writeln!(w, "{line}").is_ok() && w.flush().is_ok()
     }
 }
 
 pub fn serve(core: Arc<Core>, stream: TcpStream) {
-    let Ok(writer) = stream.try_clone() else { return };
+    let Ok(writer) = stream.try_clone() else {
+        return;
+    };
     let id = next_client_id();
-    let handle = ClientHandle { id, writer: Arc::new(Mutex::new(writer)) };
+    let handle = ClientHandle {
+        id,
+        writer: Arc::new(Mutex::new(writer)),
+    };
     core.clients.lock().unwrap().push(handle.clone());
 
     for line in BufReader::new(stream).lines() {
@@ -46,9 +53,20 @@ pub fn serve(core: Arc<Core>, stream: TcpStream) {
             break;
         }
         if shutdown {
+            core.shutdown_requested
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             // 先对这条连接发 FIN（数据已 write+flush），客户端就能读到响应而不是吃 RST
             if let Ok(w) = handle.writer.lock() {
                 let _ = w.shutdown(std::net::Shutdown::Both);
+            }
+            // 清除 core.bt 并显式释放 SPP socket
+            let old_ctx = core.bt.lock().unwrap().take();
+            if let Some(ctx) = old_ctx {
+                unsafe {
+                    crate::rfcomm::closesocket(ctx.sock);
+                    crate::rfcomm::WSACleanup();
+                }
+                core.log("daemon.stop: SPP socket 显式释放 closesocket");
             }
             let _ = fs::remove_file(core.run_dir.join("core.json"));
             core.log("daemon.stop: 端点文件已删，进程退出");
@@ -87,7 +105,10 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
     let params = req["params"].clone();
 
     if req["token"].as_str() != Some(core.token.as_str()) {
-        return (error_resp(&id, "unauthorized", "token 不匹配").to_string(), false);
+        return (
+            error_resp(&id, "unauthorized", "token 不匹配").to_string(),
+            false,
+        );
     }
 
     match method {
@@ -99,9 +120,15 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 "endpoint": format!("127.0.0.1:{}", endpoint_port(core)),
                 "uptimeSeconds": core.started.elapsed().as_secs(),
             });
-            (serde_json::json!({ "id": id, "ok": true, "result": result }).to_string(), false)
+            (
+                serde_json::json!({ "id": id, "ok": true, "result": result }).to_string(),
+                false,
+            )
         }
-        "daemon.stop" => (serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string(), true),
+        "daemon.stop" => (
+            serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string(),
+            true,
+        ),
         "device.connect" => {
             let resp = if core.bt.lock().unwrap().is_some() {
                 crate::live::device_connect_live(core, &id)
@@ -141,12 +168,18 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 "settings.set key={}（no-op：core 没有设置系统）",
                 params["key"].as_str().unwrap_or("?")
             ));
-            (serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string(), false)
+            (
+                serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string(),
+                false,
+            )
         }
         // 降级决策见 docs/protocol/rpc-contract.md：客户端对 plugin.* 的调用全部包着
         // try/catch，报 method_not_found 只会让「FetchBridge 插件」显示为未安装/未运行，
         // 这是 core 无插件系统的诚实表达。
-        "plugin.list" => (serde_json::json!({ "id": id, "ok": true, "result": [] }).to_string(), false),
+        "plugin.list" => (
+            serde_json::json!({ "id": id, "ok": true, "result": [] }).to_string(),
+            false,
+        ),
         "plugin.open" | "plugin.close" | "device.sync.time" | "install.local" => {
             let msg = match method {
                 "device.sync.time" => {

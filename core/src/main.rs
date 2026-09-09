@@ -16,13 +16,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-mod fake;
-mod rpc;
 pub mod crc;
+mod fake;
 pub mod frame;
-pub mod rfcomm;
-pub mod session;
 pub mod live;
+pub mod rfcomm;
+mod rpc;
+pub mod session;
 
 use fake::FakeDevice;
 use rpc::ClientHandle;
@@ -38,6 +38,8 @@ pub struct Core {
     pub clients: Mutex<Vec<ClientHandle>>,
     pub device: Mutex<FakeDevice>,
     pub bt: Mutex<Option<live::DownlinkCtx>>,
+    pub shutdown_requested: std::sync::atomic::AtomicBool,
+    pub live_state: Mutex<live::LiveStatus>,
 }
 
 impl Core {
@@ -57,7 +59,10 @@ impl Core {
     }
 
     pub fn log(&self, msg: &str) {
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         eprintln!("[pulse-core {ts}] {msg}");
         let _ = fs::OpenOptions::new()
             .create(true)
@@ -68,7 +73,8 @@ impl Core {
 }
 
 fn run_dir() -> Result<PathBuf, String> {
-    let base = std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA 环境变量不存在".to_string())?;
+    let base =
+        std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA 环境变量不存在".to_string())?;
     let dir = PathBuf::from(base).join("PulseDev").join("run");
     fs::create_dir_all(&dir).map_err(|e| format!("创建运行目录失败 {dir:?}: {e}"))?;
     Ok(dir)
@@ -109,7 +115,9 @@ fn already_running(run_dir: &PathBuf) -> bool {
     let mut line = String::new();
     use std::io::BufRead as _;
     if stream.write_all(probe.to_string().as_bytes()).is_err()
-        || std::io::BufReader::new(stream).read_line(&mut line).is_err()
+        || std::io::BufReader::new(stream)
+            .read_line(&mut line)
+            .is_err()
     {
         return false;
     }
@@ -138,11 +146,21 @@ fn main() {
     if args.iter().any(|a| a == "--live") {
         let run_dir = match run_dir() {
             Ok(d) => d,
-            Err(e) => { eprintln!("pulse-core: {e}"); std::process::exit(2); }
+            Err(e) => {
+                eprintln!("pulse-core: {e}");
+                std::process::exit(2);
+            }
         };
+        if already_running(&run_dir) {
+            eprintln!("pulse-core: 已有实例在运行（core.json 的端点可达），退出");
+            std::process::exit(0);
+        }
         let listener = match TcpListener::bind("127.0.0.1:0") {
             Ok(l) => l,
-            Err(e) => { eprintln!("pulse-core: 监听失败: {e}"); std::process::exit(2); }
+            Err(e) => {
+                eprintln!("pulse-core: 监听失败: {e}");
+                std::process::exit(2);
+            }
         };
         let port = listener.local_addr().expect("local addr").port();
         let core = Arc::new(Core {
@@ -152,6 +170,8 @@ fn main() {
             clients: Mutex::new(Vec::new()),
             device: Mutex::new(FakeDevice::new()),
             bt: Mutex::new(None),
+            shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+            live_state: Mutex::new(live::LiveStatus::Disconnected),
         });
         let endpoint = serde_json::json!({
             "port": port, "token": core.token, "pid": std::process::id(),
@@ -163,7 +183,8 @@ fn main() {
         }
         core.log(&format!(
             "started --live pid={} port={port} token={}…(截断)",
-            std::process::id(), &core.token[..6]
+            std::process::id(),
+            &core.token[..6]
         ));
         let core2 = Arc::clone(&core);
         std::thread::spawn(move || {
@@ -176,10 +197,13 @@ fn main() {
         if let Err(e) = live::run_live(&core) {
             eprintln!("pulse-core live failed: {e}");
         }
+        let _ = fs::remove_file(run_dir.join("core.json"));
         return;
     }
     if !args.iter().any(|a| a == "--fake") {
-        eprintln!("pulse-core: 真设备模式尚未实现（蓝牙层要等阶段 2~4 的抓包证据），请用 --fake 启动");
+        eprintln!(
+            "pulse-core: 真设备模式尚未实现（蓝牙层要等阶段 2~4 的抓包证据），请用 --fake 启动"
+        );
         std::process::exit(2);
     }
 
@@ -210,6 +234,8 @@ fn main() {
         clients: Mutex::new(Vec::new()),
         device: Mutex::new(FakeDevice::new()),
         bt: Mutex::new(None),
+        shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+        live_state: Mutex::new(live::LiveStatus::Disconnected),
     });
 
     let endpoint = serde_json::json!({

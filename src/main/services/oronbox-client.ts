@@ -1,9 +1,9 @@
 /**
- * pulse-core 客户端（阶段 2，协议不变，按 §1.3 对接 pulse-core）。
+ * pulse-core 客户端（阶段 7，支持打包路径优先与 --live / --fake 自适应启动）。
  *
  * 职责：
- * - 从 %LOCALAPPDATA%\PulseDev\run\core.json 读端点；文件缺失或 pid 已死（端点文件会残留陈旧内容）
- *   时 spawn `pulse-core.exe --fake` 并轮询等端点文件**内容变化**（上限 20 秒）
+ * - 从 %LOCALAPPDATA%\PulseDev\run\core.json 读端点；文件缺失或 pid 已死时自动 spawn pulse-core
+ *   （正式设备连接启动 --live，测试/明确假设备场景启动 --fake）并轮询等端点文件内容变化
  * - 回环 TCP + 行分隔 JSON，token 鉴权，按请求 id 关联响应
  * - 事件订阅：所有 daemon 事件转发到 EventEmitter（`device.state`、`device.interconnect`、…）
  * - 断线重连：指数退避，上限 60 秒；重连前重读端点（端口是动态的，daemon 重启会换端口）
@@ -20,13 +20,25 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { resolveCoreExePath, resolveDaemonArgs } from './oronbox-policy';
 
-export const CORE_EXE = path.join(import.meta.dirname, '../../core/target/release/pulse-core.exe');
+const DEV_CORE_EXE = path.join(import.meta.dirname, '../../core/target/release/pulse-core.exe');
+export const CORE_EXE = resolveCoreExePath(
+  (process as any).resourcesPath,
+  (p) => fs.existsSync(p),
+  DEV_CORE_EXE,
+);
 export const DAEMON_ENDPOINT_FILE = path.join(
   process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
   'PulseDev',
   'run',
   'core.json',
+);
+export const DEVICE_CONFIG_FILE = path.join(
+  process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
+  'PulseDev',
+  'run',
+  'device.json',
 );
 export const EXPECTED_PROTOCOL_VERSION = 6;
 
@@ -75,6 +87,10 @@ function readEndpoint(): DaemonEndpoint | null {
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const TRANSIENT_CODES = new Set(['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED', 'EHOSTUNREACH', 'ENOTFOUND']);
 
+export interface OronBoxClientOptions {
+  mode?: 'live' | 'fake';
+}
+
 export class OronBoxClient extends EventEmitter {
   private endpoint: DaemonEndpoint | null = null;
   private socket: net.Socket | null = null;
@@ -87,6 +103,12 @@ export class OronBoxClient extends EventEmitter {
   private reconnectAttempt = 0;
   private disposed = false;
   private degradedInfo: Degradation | null = null;
+  private options: OronBoxClientOptions;
+
+  constructor(options: OronBoxClientOptions = {}) {
+    super();
+    this.options = options;
+  }
 
   get connected(): boolean {
     return this.socket !== null;
@@ -121,8 +143,12 @@ export class OronBoxClient extends EventEmitter {
       ? fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8')
       : null;
     if (!fs.existsSync(CORE_EXE)) throw new Error('找不到 ' + CORE_EXE + '（先在 core/ 下 cargo build --release）');
-    // --fake 是阶段 1 唯一存在的模式；真设备模式等阶段 2~4 的抓包证据
-    const child = spawn(CORE_EXE, ['--fake'], {
+    const args = resolveDaemonArgs({
+      mode: this.options.mode,
+      deviceConfigExists: fs.existsSync(DEVICE_CONFIG_FILE),
+      envMode: process.env.PULSE_CORE_MODE,
+    });
+    const child = spawn(CORE_EXE, args, {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
