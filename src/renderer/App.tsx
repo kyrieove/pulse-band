@@ -32,7 +32,7 @@ export const App: React.FC = () => {
       return 'light';
     }
   });
-  const [showAgents] = useState<boolean>(true);
+  const [showAgents, setShowAgents] = useState<boolean>(true);
   const [state, setState] = useState<PulseOronboxState | null>(null);
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
@@ -138,14 +138,19 @@ export const App: React.FC = () => {
                 connectionState={state?.connection.state}
                 rawError={state?.connection.error}
               />
-              <AgentSection />
+              {showAgents && <AgentSection />}
             </div>
           )}
 
           {page === 'band' && <BandManagementPage />}
 
           {page === 'settings' && (
-            <SettingsPage theme={theme} onThemeChange={handleThemeChange} />
+            <SettingsPage
+              theme={theme}
+              onThemeChange={handleThemeChange}
+              showAgents={showAgents}
+              onShowAgentsChange={setShowAgents}
+            />
           )}
         </ContentArea>
       </div>

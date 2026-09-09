@@ -1,12 +1,21 @@
-import React from 'react';
-import { Palette, Bot, RefreshCw, Wrench, Sun, Moon } from 'lucide-react';
+import React, { useState } from 'react';
+import { Palette, Bot, RefreshCw, Wrench, Sun, Moon, ChevronDown, ChevronUp } from 'lucide-react';
 
 export interface SettingsPageProps {
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
+  showAgents?: boolean;
+  onShowAgentsChange?: (show: boolean) => void;
 }
 
-export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, onThemeChange }) => {
+export const SettingsPage: React.FC<SettingsPageProps> = ({
+  theme,
+  onThemeChange,
+  showAgents = true,
+  onShowAgentsChange,
+}) => {
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+
   return (
     <div className="space-y-5">
       {/* 分组 1：外观设置 */}
@@ -22,7 +31,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, onThemeChange
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-[var(--text-primary)]">主题外观</div>
-              <div className="text-[11px] text-[var(--text-muted)]">Light Theme 为默认原语设计</div>
+              <div className="text-[11px] text-[var(--text-muted)]">Light Theme 为默认原语设计，支持 Dark Midnight 模式</div>
             </div>
             <div className="flex items-center gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)]">
               <button
@@ -55,42 +64,115 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, onThemeChange
       </section>
 
       {/* 分组 2：Agent 监控设置 */}
-      <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-3 transition-colors duration-200">
+      <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-4 transition-colors duration-200">
         <div className="flex items-center gap-2">
-          <Bot className="w-4 h-4 text-[var(--text-muted)]" />
+          <Bot className="w-4 h-4 text-[var(--accent-primary)]" />
           <h3 className="text-sm font-semibold text-[var(--text-primary)]">
             Agent 监控设置
           </h3>
         </div>
-        <p className="text-xs text-[var(--text-secondary)]">
-          支持独立配置各个 AI Agent 的检测状态与页面显示控制（骨架预留）。
-        </p>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-[var(--text-primary)]">显示 Agent 状态</div>
+              <div className="text-[11px] text-[var(--text-muted)]">在桌面悬浮监控条与概览工作区呈现已识别 Agent 的实时运行状态与额度</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showAgents}
+              onClick={() => onShowAgentsChange?.(!showAgents)}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                showAgents ? 'bg-[var(--accent-primary)]' : 'bg-[var(--border-strong)]'
+              }`}
+              title={showAgents ? '关闭 Agent 显示' : '开启 Agent 显示'}
+            >
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                  showAgents ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
       </section>
 
-      {/* 分组 3：手环同步设置 */}
-      <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-3 transition-colors duration-200">
+      {/* 分组 3：手环连接设置 */}
+      <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-4 transition-colors duration-200">
         <div className="flex items-center gap-2">
-          <RefreshCw className="w-4 h-4 text-[var(--text-muted)]" />
+          <RefreshCw className="w-4 h-4 text-[var(--accent-primary)]" />
           <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-            手环同步设置
+            手环连接设置
           </h3>
         </div>
-        <p className="text-xs text-[var(--text-secondary)]">
-          设备重新配置与同步偏好设置（骨架预留）。
-        </p>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between py-1">
+            <div>
+              <div className="text-xs font-medium text-[var(--text-primary)]">自动重新连接</div>
+              <div className="text-[11px] text-[var(--text-muted)]">手环断开后自动尝试建立连接</div>
+            </div>
+            <span className="text-xs px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--bg-app)] border border-[var(--border-default)] text-[var(--text-secondary)]">
+              开启 (默认)
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between py-1 border-t border-[var(--border-default)]/60 pt-3">
+            <div>
+              <div className="text-xs font-medium text-[var(--text-primary)]">同步策略</div>
+              <div className="text-[11px] text-[var(--text-muted)]">状态变更实时推送到手环端快应用</div>
+            </div>
+            <span className="text-xs text-[var(--text-muted)] font-mono">
+              实时同步
+            </span>
+          </div>
+        </div>
       </section>
 
-      {/* 分组 4：高级维护 (最低视觉权重) */}
-      <section className="p-4 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)]/60 text-[var(--text-muted)] space-y-2 transition-colors duration-200">
-        <div className="flex items-center gap-2">
-          <Wrench className="w-3.5 h-3.5" />
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-            高级维护
-          </h4>
-        </div>
-        <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
-          运行诊断、脱敏日志导出与系统维护工具。在非排错场景下保持低权重收敛。
-        </p>
+      {/* 分组 4：高级维护 (最低视觉权重，默认折叠收敛) */}
+      <section className="rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)]/60 text-[var(--text-muted)] transition-colors duration-200 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setMaintenanceOpen(!maintenanceOpen)}
+          className="w-full p-4 flex items-center justify-between hover:bg-[var(--bg-app)] transition-colors text-left"
+        >
+          <div className="flex items-center gap-2">
+            <Wrench className="w-3.5 h-3.5" />
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              高级维护
+            </h4>
+          </div>
+          <div className="flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
+            <span>{maintenanceOpen ? '收起' : '展开'}</span>
+            {maintenanceOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </div>
+        </button>
+
+        {maintenanceOpen && (
+          <div className="px-4 pb-4 pt-1 space-y-3 border-t border-[var(--border-default)]/40 text-xs">
+            <div className="flex items-center justify-between py-1">
+              <div>
+                <div className="font-medium text-[var(--text-secondary)]">运行诊断</div>
+                <div className="text-[11px] text-[var(--text-muted)]">排查网络与手环连接问题，所有敏感凭据已自动脱敏</div>
+              </div>
+              <span className="text-[11px] px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--bg-app)] text-[var(--text-muted)] border border-[var(--border-default)]">
+                只读中心
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-1 border-t border-[var(--border-default)]/40 pt-2">
+              <div>
+                <div className="font-medium text-[var(--text-secondary)]">版本与环境</div>
+                <div className="text-[11px] text-[var(--text-muted)]">Pulse 2.0 桌面端架构基线</div>
+              </div>
+              <span className="text-[11px] font-mono text-[var(--text-muted)]">
+                v1.1.2
+              </span>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );
