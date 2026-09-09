@@ -1,13 +1,17 @@
-export type SetupStepId =
-  | 'prepare'
-  | 'import_log'
-  | 'save_credentials'
-  | 'windows_pairing'
-  | 'rfcomm_auth'
-  | 'install_app'
-  | 'verify_quota';
+import type { SetupStepId, SetupStepStatus } from '../../../common/types';
 
-export type StepStatus = 'pending' | 'active' | 'completed' | 'error';
+export type {
+  SetupStatus,
+  SetupStepId,
+  SetupStepStatus,
+  SetupStepState,
+  SetupError,
+  SetupState,
+  SetupAction,
+} from '../../../common/types';
+
+/** 向后兼容现有 SetupWizard 内部引用的别名 */
+export type StepStatus = SetupStepStatus;
 
 export interface SetupStep {
   id: SetupStepId;
@@ -15,7 +19,7 @@ export interface SetupStep {
   title: string;
   shortLabel: string;
   description: string;
-  status: StepStatus;
+  status: SetupStepStatus;
   error?: string;
 }
 

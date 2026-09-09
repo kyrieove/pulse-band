@@ -49,3 +49,51 @@ export interface MinibarState {
   isExpanded: boolean;
 }
 
+// ============================================================================
+// Pulse 2.0 首次设置向导数据契约 (Setup Data Contracts - Type-only)
+// ============================================================================
+
+export type SetupStatus =
+  | 'idle'
+  | 'running'
+  | 'success'
+  | 'error';
+
+export type SetupStepId =
+  | 'prepare'
+  | 'import_log'
+  | 'save_credentials'
+  | 'windows_pairing'
+  | 'rfcomm_auth'
+  | 'install_app'
+  | 'verify_quota';
+
+export type SetupStepStatus =
+  | 'pending'
+  | 'active'
+  | 'completed'
+  | 'error';
+
+export interface SetupStepState {
+  id: SetupStepId;
+  status: SetupStepStatus;
+  message?: string;
+}
+
+export interface SetupError {
+  code: string;
+  userMessage: string;
+}
+
+export interface SetupState {
+  status: SetupStatus;
+  currentStep: SetupStepId | null;
+  steps: SetupStepState[];
+  error?: SetupError;
+}
+
+export type SetupAction =
+  | { type: 'start' }
+  | { type: 'cancel' }
+  | { type: 'select_log' }
+  | { type: 'retry_step'; step: SetupStepId };
