@@ -258,3 +258,15 @@ export interface InstallProgressEvent {
   percentage?: number;
   error?: string;
 }
+
+// ============================================================================
+// RPK 快应用包元数据契约 (RPK Metadata Contract)
+// ============================================================================
+
+export interface RpkMetadata {
+  fileSize: number;
+  packageId?: string;
+  versionName?: string;
+  versionCode?: number;
+  manifestValid: boolean;
+}
