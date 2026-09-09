@@ -111,11 +111,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         <div className="space-y-3">
           <div className="flex items-center justify-between py-1">
             <div>
-              <div className="text-xs font-medium text-[var(--text-primary)]">自动重新连接</div>
-              <div className="text-[11px] text-[var(--text-muted)]">手环断开后自动尝试建立连接</div>
+              <div className="text-xs font-medium text-[var(--text-primary)]">连接恢复策略</div>
+              <div className="text-[11px] text-[var(--text-muted)]">手环断开后需在概览页手动重新连接</div>
             </div>
             <span className="text-xs px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--bg-app)] border border-[var(--border-default)] text-[var(--text-secondary)]">
-              开启 (默认)
+              手动重新连接
             </span>
           </div>
 
