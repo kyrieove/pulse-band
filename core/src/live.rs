@@ -546,6 +546,64 @@ pub fn handle_downlink(core: &Core, req_id: &serde_json::Value, params: &serde_j
     }
 }
 
+fn read_device_public() -> Result<(String, String, String, String), String> {
+    let base = std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA 不存在")?;
+    let path = std::path::Path::new(&base).join("PulseDev/run/device.json");
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("读 device.json 失败: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 device.json 失败: {e}"))?;
+    let name = v["name"].as_str().unwrap_or("PulseDev Band").to_string();
+    let addr = v["addr"].as_str().unwrap_or("").to_string();
+    let codename = v["codename"].as_str().unwrap_or("").to_string();
+    let connect_type = v["connectType"].as_str().unwrap_or("spp").to_string();
+    Ok((name, addr, codename, connect_type))
+}
+
+fn live_device_json() -> serde_json::Value {
+    match read_device_public() {
+        Ok((name, addr, codename, ct)) => serde_json::json!({
+            "name": name, "addr": addr, "connectType": ct, "codename": codename, "disconnected": false,
+        }),
+        Err(_) => serde_json::json!({
+            "name": "PulseDev Band", "addr": "", "connectType": "spp", "codename": "", "disconnected": false,
+        }),
+    }
+}
+
+/// 真机模式 device.connect：返回真机设备对象 + 广播 device.state connecting→ready（不伪造假 __hs__）。
+pub fn device_connect_live(core: &Core, id: &serde_json::Value) -> String {
+    let dev = live_device_json();
+    core.log("live device.connect → connecting (真机)");
+    core.broadcast("device.state", serde_json::json!({"state":{"currentDevice":dev,"protocolState":"connecting","connecting":true,"error":""}}));
+    core.broadcast("device.state", serde_json::json!({"state":{"currentDevice":dev,"protocolState":"ready","connecting":false,"error":""}}));
+    serde_json::json!({ "id": id, "ok": true, "result": dev }).to_string()
+}
+
+/// 真机模式 device.status。
+pub fn device_status_live(core: &Core, id: &serde_json::Value) -> String {
+    let connected = core.bt.lock().unwrap().is_some();
+    let dev = if connected { live_device_json() } else { serde_json::Value::Null };
+    serde_json::json!({
+        "id": id, "ok": true, "result": {
+            "connected": connected,
+            "protocolState": if connected { "ready" } else { "disconnected" },
+            "device": dev, "error": "",
+        }
+    }).to_string()
+}
+
+/// 真机模式 device.disconnect：关闭蓝牙 + 广播 disconnected。
+pub fn device_disconnect_live(core: &Core, id: &serde_json::Value) -> String {
+    core.log("live device.disconnect");
+    let sock = core.bt.lock().unwrap().as_ref().map(|c| c.sock);
+    if let Some(s) = sock {
+        unsafe { rfcomm::closesocket(s); }
+    }
+    *core.bt.lock().unwrap() = None;
+    core.broadcast("device.state", serde_json::json!({"state":{"currentDevice":serde_json::Value::Null,"protocolState":"disconnected","connecting":false,"error":""}}));
+    serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

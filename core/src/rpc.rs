@@ -102,9 +102,30 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
             (serde_json::json!({ "id": id, "ok": true, "result": result }).to_string(), false)
         }
         "daemon.stop" => (serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string(), true),
-        "device.connect" => (fake::device_connect(core, &id), false),
-        "device.disconnect" => (fake::device_disconnect(core, &id), false),
-        "device.status" => (fake::device_status(core, &id), false),
+        "device.connect" => {
+            let resp = if core.bt.lock().unwrap().is_some() {
+                crate::live::device_connect_live(core, &id)
+            } else {
+                fake::device_connect(core, &id)
+            };
+            (resp, false)
+        }
+        "device.disconnect" => {
+            let resp = if core.bt.lock().unwrap().is_some() {
+                crate::live::device_disconnect_live(core, &id)
+            } else {
+                fake::device_disconnect(core, &id)
+            };
+            (resp, false)
+        }
+        "device.status" => {
+            let resp = if core.bt.lock().unwrap().is_some() {
+                crate::live::device_status_live(core, &id)
+            } else {
+                fake::device_status(core, &id)
+            };
+            (resp, false)
+        }
         "device.interconnect.send" => {
             // 真机数据泵模式下，把客户端回传的 content 构造为下行 id=8 帧发回手环；
             // 否则走 --fake 假手环的自证逻辑。
