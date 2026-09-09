@@ -129,3 +129,19 @@ export interface CredentialSaveState {
   status: CredentialSaveStatus;
   error?: SetupError;
 }
+
+// ============================================================================
+// Windows 配对步骤数据契约 (Windows Pairing Step Data Contract)
+// ============================================================================
+
+export type WindowsPairingStatus =
+  | 'idle'
+  | 'waiting'
+  | 'checking'
+  | 'paired'
+  | 'error';
+
+export interface WindowsPairingState {
+  status: WindowsPairingStatus;
+  error?: SetupError;
+}

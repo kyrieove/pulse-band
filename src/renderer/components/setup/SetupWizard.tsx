@@ -22,6 +22,7 @@ import {
 } from './types';
 import { LogImportStep } from './LogImportStep';
 import { CredentialSaveStep } from './CredentialSaveStep';
+import { WindowsPairingStep } from './WindowsPairingStep';
 
 export interface SetupWizardProps {
   onClose: () => void;
@@ -87,6 +88,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
     if (step.id === 'save_credentials') {
       return <CredentialSaveStep />;
+    }
+
+    if (step.id === 'windows_pairing') {
+      return <WindowsPairingStep />;
     }
 
     return (
