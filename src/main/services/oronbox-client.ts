@@ -20,7 +20,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { resolveCoreExePath, resolveDaemonArgs } from './oronbox-policy';
+import { resolveCoreExePath, resolveDaemonArgs } from './oronbox-policy.ts';
 
 const DEV_CORE_EXE = path.join(import.meta.dirname, '../../core/target/release/pulse-core.exe');
 export const CORE_EXE = resolveCoreExePath(
@@ -206,12 +206,18 @@ export class OronBoxClient extends EventEmitter {
   }
 
   private async connectOnce(): Promise<void> {
-    const ep = this.endpoint ?? (await this.ensureDaemon());
+    if (!this.endpoint) {
+      this.endpoint = await this.ensureDaemon();
+    }
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < CONNECT_RETRIES; attempt++) {
       if (this.disposed) throw new Error('客户端已销毁');
+      // daemon 可能刚写完端点文件或已重启；每次尝试前读取最新端点
+      const fresh = readEndpoint();
+      if (fresh && pidAlive(fresh.pid)) this.endpoint = fresh;
+      const currentEp = this.endpoint;
       try {
-        await this.openSocket(ep);
+        await this.openSocket(currentEp);
         await this.checkProtocolVersion();
         this.reconnectAttempt = 0;
         return;
@@ -220,9 +226,6 @@ export class OronBoxClient extends EventEmitter {
         if (this.disposed) throw err;
         const transient = TRANSIENT_CODES.has(err?.code) || String(err?.message ?? '').includes('超时');
         if (!transient) throw err;
-        // daemon 可能刚写完端点文件还没监听端口；重读端点（端口可能变了）再试
-        const fresh = readEndpoint();
-        if (fresh && pidAlive(fresh.pid)) this.endpoint = fresh;
         await sleep(1_000);
       }
     }

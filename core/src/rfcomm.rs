@@ -160,8 +160,14 @@ pub fn run_probe() -> Result<(), String> {
     }
 
     if sock == INVALID_SOCKET || conn_fail_count >= 3 {
-        println!("\n[保护条款触发] 连接失败达到上限 ({} 次)，停止执行", conn_fail_count);
-        println!("保护条款计数器终值: 连接失败 = {} 次, 发包失败 = {} 次", conn_fail_count, send_fail_count);
+        println!(
+            "\n[保护条款触发] 连接失败达到上限 ({} 次)，停止执行",
+            conn_fail_count
+        );
+        println!(
+            "保护条款计数器终值: 连接失败 = {} 次, 发包失败 = {} 次",
+            conn_fail_count, send_fail_count
+        );
         unsafe { WSACleanup() };
         return Err(format!("连接失败次数达到上限 ({} 次)", conn_fail_count));
     }
@@ -187,7 +193,11 @@ pub fn run_probe() -> Result<(), String> {
         let received = &buf[..n as usize];
         let dump_len = (n as usize).min(128);
         println!("[4b 观察] 收到数据！总长度 = {} 字节", n);
-        println!("[4b 观察] Hexdump (前 {} 字节): {}", dump_len, hex_dump(&received[..dump_len]));
+        println!(
+            "[4b 观察] Hexdump (前 {} 字节): {}",
+            dump_len,
+            hex_dump(&received[..dump_len])
+        );
     } else if n == 0 {
         println!("[4b 观察] 对端断开了连接 (recv 返回 0)");
         send_fail_count += 1;
@@ -220,7 +230,9 @@ pub fn run_probe() -> Result<(), String> {
     }
 
     // 探测 1：前导帧 (ba dc fe)
-    let preamble = [0xba, 0xdc, 0xfe, 0x00, 0xc0, 0x03, 0x00, 0x00, 0x01, 0x00, 0xef];
+    let preamble = [
+        0xba, 0xdc, 0xfe, 0x00, 0xc0, 0x03, 0x00, 0x00, 0x01, 0x00, 0xef,
+    ];
     println!("\n[4c 探测 - 包 1/2: 前导握手帧]");
     println!("  发送长度: {} 字节", preamble.len());
     println!("  发送 Hexdump: {}", hex_dump(&preamble));
@@ -245,7 +257,10 @@ pub fn run_probe() -> Result<(), String> {
             if resp_bytes == expected_preamble_resp {
                 println!("  解析结果: 100% 匹配预期前导帧响应 (14 字节，完全一致)！");
             } else if resp_bytes.starts_with(&[0xba, 0xdc, 0xfe]) {
-                println!("  解析结果: 收到前导帧响应 (ba dc fe 起始，长度 {})", resp_len);
+                println!(
+                    "  解析结果: 收到前导帧响应 (ba dc fe 起始，长度 {})",
+                    resp_len
+                );
             } else {
                 println!("  解析结果: 非预期前导响应");
             }
@@ -264,8 +279,14 @@ pub fn run_probe() -> Result<(), String> {
     }
 
     if send_fail_count >= 5 {
-        println!("\n[保护条款触发] 发包失败达到上限 ({} 次)，停止执行", send_fail_count);
-        println!("保护条款计数器终值: 连接失败 = {} 次, 发包失败 = {} 次", conn_fail_count, send_fail_count);
+        println!(
+            "\n[保护条款触发] 发包失败达到上限 ({} 次)，停止执行",
+            send_fail_count
+        );
+        println!(
+            "保护条款计数器终值: 连接失败 = {} 次, 发包失败 = {} 次",
+            conn_fail_count, send_fail_count
+        );
         unsafe {
             closesocket(sock);
             WSACleanup();
@@ -310,9 +331,15 @@ pub fn run_probe() -> Result<(), String> {
                     if frame.frame_type == 0x01 {
                         println!("  判定: 可区分响应 -> ACK 帧 (seq=0x{:02x})", frame.seq);
                     } else if frame.frame_type == 0x02 {
-                        println!("  判定: 可区分响应 -> 链路协商响应帧 (type=0x02, payload_len={})", frame.payload.len());
+                        println!(
+                            "  判定: 可区分响应 -> 链路协商响应帧 (type=0x02, payload_len={})",
+                            frame.payload.len()
+                        );
                     } else if frame.frame_type == 0x03 {
-                        println!("  判定: 可区分响应 -> 业务数据帧 (type=0x03, payload_len={})", frame.payload.len());
+                        println!(
+                            "  判定: 可区分响应 -> 业务数据帧 (type=0x03, payload_len={})",
+                            frame.payload.len()
+                        );
                     } else {
                         println!("  判定: 非预期帧类型 (type=0x{:02x})", frame.frame_type);
                     }
@@ -344,7 +371,10 @@ pub fn run_probe() -> Result<(), String> {
     }
 
     println!("\n==================================================");
-    println!("保护条款计数器终值: 连接失败 = {} 次, 发包失败 = {} 次", conn_fail_count, send_fail_count);
+    println!(
+        "保护条款计数器终值: 连接失败 = {} 次, 发包失败 = {} 次",
+        conn_fail_count, send_fail_count
+    );
     println!("==================================================");
 
     Ok(())

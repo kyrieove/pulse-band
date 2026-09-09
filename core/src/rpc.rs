@@ -59,14 +59,9 @@ pub fn serve(core: Arc<Core>, stream: TcpStream) {
             if let Ok(w) = handle.writer.lock() {
                 let _ = w.shutdown(std::net::Shutdown::Both);
             }
-            // 清除 core.bt 并显式释放 SPP socket
-            let old_ctx = core.bt.lock().unwrap().take();
-            if let Some(ctx) = old_ctx {
-                unsafe {
-                    crate::rfcomm::closesocket(ctx.sock);
-                    crate::rfcomm::WSACleanup();
-                }
-                core.log("daemon.stop: SPP socket 显式释放 closesocket");
+            // 清除 core.bt 并释放 SPP socket（由 DownlinkCtx 的 Drop 保证 closesocket 与 WSACleanup）
+            if let Some(_ctx) = core.bt.lock().unwrap().take() {
+                core.log("daemon.stop: SPP socket 显式释放");
             }
             let _ = fs::remove_file(core.run_dir.join("core.json"));
             core.log("daemon.stop: 端点文件已删，进程退出");
@@ -130,36 +125,30 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
             true,
         ),
         "device.connect" => {
-            let resp = if core.bt.lock().unwrap().is_some() {
-                crate::live::device_connect_live(core, &id)
-            } else {
-                fake::device_connect(core, &id)
+            let resp = match core.mode {
+                crate::CoreMode::Live => crate::live::device_connect_live(core, &id),
+                crate::CoreMode::Fake => fake::device_connect(core, &id),
             };
             (resp, false)
         }
         "device.disconnect" => {
-            let resp = if core.bt.lock().unwrap().is_some() {
-                crate::live::device_disconnect_live(core, &id)
-            } else {
-                fake::device_disconnect(core, &id)
+            let resp = match core.mode {
+                crate::CoreMode::Live => crate::live::device_disconnect_live(core, &id),
+                crate::CoreMode::Fake => fake::device_disconnect(core, &id),
             };
             (resp, false)
         }
         "device.status" => {
-            let resp = if core.bt.lock().unwrap().is_some() {
-                crate::live::device_status_live(core, &id)
-            } else {
-                fake::device_status(core, &id)
+            let resp = match core.mode {
+                crate::CoreMode::Live => crate::live::device_status_live(core, &id),
+                crate::CoreMode::Fake => fake::device_status(core, &id),
             };
             (resp, false)
         }
         "device.interconnect.send" => {
-            // 真机数据泵模式下，把客户端回传的 content 构造为下行 id=8 帧发回手环；
-            // 否则走 --fake 假手环的自证逻辑。
-            let resp = if core.bt.lock().unwrap().is_some() {
-                crate::live::handle_downlink(core, &id, &params)
-            } else {
-                fake::interconnect_send(core, &id, &params)
+            let resp = match core.mode {
+                crate::CoreMode::Live => crate::live::handle_downlink(core, &id, &params),
+                crate::CoreMode::Fake => fake::interconnect_send(core, &id, &params),
             };
             (resp, false)
         }
@@ -205,4 +194,91 @@ fn endpoint_port(core: &Core) -> u16 {
         .and_then(|v| v["port"].as_u64())
         .map(|p| p as u16)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+
+    fn create_test_core(mode: crate::CoreMode) -> Arc<Core> {
+        Arc::new(Core {
+            mode,
+            token: "test_token".to_string(),
+            run_dir: PathBuf::from("target/test_run_dir"),
+            started: Instant::now(),
+            clients: Mutex::new(Vec::new()),
+            device: Mutex::new(crate::fake::FakeDevice::new()),
+            bt: Mutex::new(None),
+            shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+            desired_connected: std::sync::atomic::AtomicBool::new(false),
+            live_state: Mutex::new(crate::live::LiveStatus::Disconnected),
+        })
+    }
+
+    #[test]
+    fn test_rpc_mode_dispatch_live_vs_fake() {
+        let live_core = create_test_core(crate::CoreMode::Live);
+        let fake_core = create_test_core(crate::CoreMode::Fake);
+
+        // 1. device.status: 处于 Disconnected 时，--live 绝不调用 fake::device_status
+        let live_status_req = serde_json::json!({
+            "id": "s1", "method": "device.status", "token": "test_token"
+        })
+        .to_string();
+        let (resp_live, _) = dispatch(&live_core, &live_status_req);
+        let v_live: serde_json::Value = serde_json::from_str(&resp_live).unwrap();
+        assert_eq!(v_live["result"]["connected"], false);
+        assert_eq!(v_live["result"]["protocolState"], "disconnected");
+        assert!(v_live["result"]["device"].is_null());
+
+        // 2. device.connect: --live 设置 desired_connected=true
+        let live_conn_req = serde_json::json!({
+            "id": "c1", "method": "device.connect", "token": "test_token"
+        })
+        .to_string();
+        let (resp_c, _) = dispatch(&live_core, &live_conn_req);
+        let v_c: serde_json::Value = serde_json::from_str(&resp_c).unwrap();
+        assert_eq!(v_c["ok"], true);
+        assert_eq!(
+            live_core
+                .desired_connected
+                .load(std::sync::atomic::Ordering::SeqCst),
+            true
+        );
+
+        // 3. device.disconnect: --live 设置 desired_connected=false
+        let live_disconn_req = serde_json::json!({
+            "id": "d1", "method": "device.disconnect", "token": "test_token"
+        })
+        .to_string();
+        let (resp_d, _) = dispatch(&live_core, &live_disconn_req);
+        let v_d: serde_json::Value = serde_json::from_str(&resp_d).unwrap();
+        assert_eq!(v_d["ok"], true);
+        assert_eq!(
+            live_core
+                .desired_connected
+                .load(std::sync::atomic::Ordering::SeqCst),
+            false
+        );
+
+        // 4. device.interconnect.send: --live 在未建链时由 live handler 拦截返回 not_live
+        let send_req = serde_json::json!({
+            "id": "tx1", "method": "device.interconnect.send",
+            "params": { "package": "com.codeisland.band", "payload": [1, 2, 3] },
+            "token": "test_token"
+        })
+        .to_string();
+        let (resp_send_live, _) = dispatch(&live_core, &send_req);
+        let v_send_live: serde_json::Value = serde_json::from_str(&resp_send_live).unwrap();
+        assert_eq!(v_send_live["ok"], false);
+        assert_eq!(v_send_live["error"]["code"], "not_live");
+
+        // 而在 --fake 下，走 fake::interconnect_send，不返回 not_live
+        let (resp_send_fake, _) = dispatch(&fake_core, &send_req);
+        let v_send_fake: serde_json::Value = serde_json::from_str(&resp_send_fake).unwrap();
+        assert_ne!(v_send_fake["error"]["code"].as_str(), Some("not_live"));
+    }
 }

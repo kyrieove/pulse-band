@@ -206,6 +206,18 @@ pub struct DownlinkCtx {
     pub seq_out: u8,
 }
 
+impl Drop for DownlinkCtx {
+    fn drop(&mut self) {
+        if self.sock != 0 && self.sock != rfcomm::INVALID_SOCKET {
+            unsafe {
+                rfcomm::closesocket(self.sock);
+                rfcomm::WSACleanup();
+            }
+            self.sock = rfcomm::INVALID_SOCKET;
+        }
+    }
+}
+
 fn read_device_auth_mac() -> Result<([u8; 16], u64), String> {
     let base = std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA 不存在")?;
     let path = std::path::Path::new(&base).join("PulseDev/run/device.json");
@@ -274,10 +286,20 @@ fn connect_rfcomm(mac_u64: u64) -> Result<usize, String> {
     let preamble = [
         0xba, 0xdc, 0xfe, 0x00, 0xc0, 0x03, 0x00, 0x00, 0x01, 0x00, 0xef,
     ];
-    send_all(sock, &preamble)?;
+    if let Err(e) = send_all(sock, &preamble) {
+        unsafe { rfcomm::closesocket(sock) };
+        return Err(e);
+    }
     let mut pre_buf = [0u8; 64];
-    let pre_n = recv_into(sock, &mut pre_buf)?;
+    let pre_n = match recv_into(sock, &mut pre_buf) {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { rfcomm::closesocket(sock) };
+            return Err(e);
+        }
+    };
     if pre_n < 14 || !pre_buf[..14].starts_with(&[0xba, 0xdc, 0xfe]) {
+        unsafe { rfcomm::closesocket(sock) };
         return Err("前导响应异常".to_string());
     }
     let nego = Frame {
@@ -288,7 +310,10 @@ fn connect_rfcomm(mac_u64: u64) -> Result<usize, String> {
             0x00, 0x20, 0x00, 0x04, 0x02, 0x00, 0x10, 0x27,
         ],
     };
-    send_all(sock, &encode(&nego))?;
+    if let Err(e) = send_all(sock, &encode(&nego)) {
+        unsafe { rfcomm::closesocket(sock) };
+        return Err(e);
+    }
     Ok(sock)
 }
 
@@ -309,22 +334,24 @@ fn recv_into(sock: usize, buf: &mut [u8]) -> Result<usize, String> {
     Ok(n as usize)
 }
 
-/// 连接 + 前导/协商 + Session 认证，返回 (socket, enc_key, dec_key, 未消费接收余量, 下一个下行序号)。
-fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8), String> {
-    let (authkey, mac) = read_device_auth_mac()?;
-    unsafe {
-        let mut wsa = std::mem::zeroed::<rfcomm::WsaData>();
-        if rfcomm::WSAStartup(0x0202, &mut wsa) != 0 {
-            return Err("WSAStartup 失败".to_string());
-        }
-    }
+fn do_connect_and_auth(
+    mac: u64,
+    authkey: [u8; 16],
+) -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8), String> {
     let sock = connect_rfcomm(mac)?;
     let mut session = Session::new(authkey);
-    let step1 = session
-        .start_auth(None)
-        .map_err(|e| format!("start_auth: {e}"))?;
+    let step1 = match session.start_auth(None) {
+        Ok(s) => s,
+        Err(e) => {
+            unsafe { rfcomm::closesocket(sock) };
+            return Err(format!("start_auth: {e}"));
+        }
+    };
     let mut last_tx_seq = step1.seq;
-    send_all(sock, &encode(&step1))?;
+    if let Err(e) = send_all(sock, &encode(&step1)) {
+        unsafe { rfcomm::closesocket(sock) };
+        return Err(e);
+    }
 
     let mut rx = Vec::new();
     let mut raw = [0u8; 1024];
@@ -364,32 +391,36 @@ fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8)
                         continue;
                     }
                     if frame.frame_type == 0x02 {
-                        ack_frame(sock, frame.seq).map_err(|e| {
+                        if let Err(e) = ack_frame(sock, frame.seq) {
                             unsafe { rfcomm::closesocket(sock) };
-                            e
-                        })?;
+                            return Err(e);
+                        }
                         continue;
                     }
                     if frame.frame_type != 0x03 {
                         continue;
                     }
-                    // 数据帧：先回传输层 ACK（seq 回显），再喂状态机（对齐 run_auth_3times 行为）。
-                    ack_frame(sock, frame.seq).map_err(|e| {
+                    if let Err(e) = ack_frame(sock, frame.seq) {
                         unsafe { rfcomm::closesocket(sock) };
-                        e
-                    })?;
+                        return Err(e);
+                    }
                     match session.process_frame(&frame) {
                         Ok(Some(step3)) => {
                             last_tx_seq = step3.seq;
-                            send_all(sock, &encode(&step3)).map_err(|e| {
+                            if let Err(e) = send_all(sock, &encode(&step3)) {
                                 unsafe { rfcomm::closesocket(sock) };
-                                e
-                            })?;
+                                return Err(e);
+                            }
                         }
                         Ok(None) => {
                             if let SessionState::Authenticated { .. } = session.state() {
-                                let (dk, ek) =
-                                    session.business_keys().map_err(|e| format!("密钥: {e}"))?;
+                                let (dk, ek) = match session.business_keys() {
+                                    Ok(k) => k,
+                                    Err(e) => {
+                                        unsafe { rfcomm::closesocket(sock) };
+                                        return Err(format!("密钥: {e}"));
+                                    }
+                                };
                                 dec_key = dk;
                                 enc_key = ek;
                                 authed = true;
@@ -415,6 +446,26 @@ fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8)
     }
     let next_seq = last_tx_seq.wrapping_add(1);
     Ok((sock, enc_key, dec_key, rx, next_seq))
+}
+
+/// 连接 + 前导/协商 + Session 认证，返回 (socket, enc_key, dec_key, 未消费接收余量, 下一个下行序号)。
+/// 保证：每次成功 WSAStartup 后，所有失败路径最终都执行一次 WSACleanup；
+/// 成功连接交给调用者管理并在释放 socket 后执行一次 WSACleanup。
+fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8), String> {
+    let (authkey, mac) = read_device_auth_mac()?;
+    unsafe {
+        let mut wsa = std::mem::zeroed::<rfcomm::WsaData>();
+        if rfcomm::WSAStartup(0x0202, &mut wsa) != 0 {
+            return Err("WSAStartup 失败".to_string());
+        }
+    }
+    match do_connect_and_auth(mac, authkey) {
+        Ok(res) => Ok(res),
+        Err(e) => {
+            unsafe { rfcomm::WSACleanup() };
+            Err(e)
+        }
+    }
 }
 
 fn broadcast_interconnect(core: &Core, content: &[u8]) {
@@ -514,15 +565,33 @@ fn run_pump_loop(core: &Core, sock: usize, dec_key: &[u8; 16], rx: &mut Vec<u8>)
         {
             return "shutdown_requested";
         }
+        if !core
+            .desired_connected
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return "disconnect_requested";
+        }
         let n = unsafe { rfcomm::recv(sock, raw.as_mut_ptr(), raw.len() as i32, 0) };
         if n > 0 {
             rx.extend_from_slice(&raw[..n as usize]);
         } else if n < 0 {
             let err = unsafe { rfcomm::WSAGetLastError() };
-            if err != rfcomm::WSAETIMEDOUT {
-                return "socket_error";
+            if err == rfcomm::WSAETIMEDOUT {
+                if core
+                    .shutdown_requested
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return "shutdown_requested";
+                }
+                if !core
+                    .desired_connected
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return "disconnect_requested";
+                }
+                continue;
             }
-            continue;
+            return "socket_error";
         } else {
             return "peer_closed";
         }
@@ -606,63 +675,39 @@ fn run_pump_loop(core: &Core, sock: usize, dec_key: &[u8; 16], rx: &mut Vec<u8>)
     }
 }
 
-/// 阶段 7 数据泵入口：支持有限重连自愈与优雅退出控制。
+/// 阶段 7 数据泵入口：支持有限重连自愈、意图门禁与优雅退出控制。
 pub fn run_live(core: &Core) -> Result<(), String> {
-    let mut policy = ReconnectPolicy::new(MAX_CONNECT_RETRIES);
-
     while !core
         .shutdown_requested
         .load(std::sync::atomic::Ordering::SeqCst)
     {
-        let attempt = match policy.next_attempt() {
-            Some(a) => a,
-            None => {
-                core.log(&format!(
-                    "live: 已达最大重连次数 {}，停止重连",
-                    policy.max_retries
-                ));
-                *core.live_state.lock().unwrap() = LiveStatus::Error;
-                broadcast_device_state(
-                    core,
-                    "error",
-                    false,
-                    &format!("连接失败达到上限 ({} 次)", policy.max_retries),
-                );
-                return Err(format!("重试上限已达 ({} 次)", policy.max_retries));
-            }
-        };
-
-        core.log(&format!(
-            "live: 正在建立连接与认证 (尝试 #{attempt}/{})",
-            policy.max_retries
-        ));
-        {
-            *core.live_state.lock().unwrap() = if attempt == 1 {
-                LiveStatus::Connecting
-            } else {
-                LiveStatus::Reconnecting
-            };
-        }
-        broadcast_device_state(core, "connecting", true, "");
-
-        let auth_res = connect_and_authenticate();
-        if core
-            .shutdown_requested
+        // 门禁：启动或断开后等待用户显式发起连接（device.connect）
+        if !core
+            .desired_connected
             .load(std::sync::atomic::Ordering::SeqCst)
         {
-            core.log("live: 收到退出请求，中止重连");
-            break;
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
         }
 
-        let (sock, enc_key, dec_key, mut rx, next_seq) = match auth_res {
-            Ok(tuple) => tuple,
-            Err(e) => {
-                core.log(&format!("live: 连接认证失败 (尝试 #{attempt}): {e}"));
-                if attempt >= policy.max_retries {
+        let mut policy = ReconnectPolicy::new(MAX_CONNECT_RETRIES);
+
+        while core
+            .desired_connected
+            .load(std::sync::atomic::Ordering::SeqCst)
+            && !core
+                .shutdown_requested
+                .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            let attempt = match policy.next_attempt() {
+                Some(a) => a,
+                None => {
                     core.log(&format!(
                         "live: 已达最大重连次数 {}，停止重连",
                         policy.max_retries
                     ));
+                    core.desired_connected
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
                     *core.live_state.lock().unwrap() = LiveStatus::Error;
                     broadcast_device_state(
                         core,
@@ -670,79 +715,136 @@ pub fn run_live(core: &Core) -> Result<(), String> {
                         false,
                         &format!("连接失败达到上限 ({} 次)", policy.max_retries),
                     );
-                    return Err(format!("重试上限已达: {e}"));
+                    break;
                 }
-                let sleep_start = std::time::Instant::now();
-                while sleep_start.elapsed() < RECONNECT_INTERVAL {
-                    if core
-                        .shutdown_requested
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                    {
+            };
+
+            core.log(&format!(
+                "live: 正在建立连接与认证 (尝试 #{attempt}/{})",
+                policy.max_retries
+            ));
+            {
+                *core.live_state.lock().unwrap() = if attempt == 1 {
+                    LiveStatus::Connecting
+                } else {
+                    LiveStatus::Reconnecting
+                };
+            }
+            broadcast_device_state(core, "connecting", true, "");
+
+            let auth_res = connect_and_authenticate();
+
+            let (sock, enc_key, dec_key, mut rx, next_seq) = match auth_res {
+                Ok(tuple) => tuple,
+                Err(e) => {
+                    core.log(&format!("live: 连接认证失败 (尝试 #{attempt}): {e}"));
+                    if attempt >= policy.max_retries {
+                        core.log(&format!(
+                            "live: 已达最大重连次数 {}，停止重连",
+                            policy.max_retries
+                        ));
+                        core.desired_connected
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                        *core.live_state.lock().unwrap() = LiveStatus::Error;
+                        broadcast_device_state(
+                            core,
+                            "error",
+                            false,
+                            &format!("连接失败达到上限 ({} 次)", policy.max_retries),
+                        );
                         break;
                     }
-                    std::thread::sleep(Duration::from_millis(100));
+                    let sleep_start = std::time::Instant::now();
+                    while sleep_start.elapsed() < RECONNECT_INTERVAL {
+                        if !core
+                            .desired_connected
+                            .load(std::sync::atomic::Ordering::SeqCst)
+                            || core
+                                .shutdown_requested
+                                .load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    continue;
                 }
-                continue;
-            }
-        };
+            };
 
-        // 连接认证成功：重置重连计数
-        policy.reset();
-        core.log("live: 连接认证成功，建立业务数据泵");
-        unsafe {
-            rfcomm::setsockopt(
-                sock,
-                rfcomm::SOL_SOCKET,
-                rfcomm::SO_RCVTIMEO,
-                &300u32 as *const u32 as *const u8,
-                4,
-            );
-        }
-        {
-            let mut bt = core.bt.lock().unwrap();
-            *bt = Some(DownlinkCtx {
+            let ctx = DownlinkCtx {
                 sock,
                 enc_key,
                 basic: None,
                 seq_out: next_seq,
-            });
-        }
-        *core.live_state.lock().unwrap() = LiveStatus::Ready;
-        broadcast_device_state(core, "ready", false, "");
+            };
 
-        // 运行业务数据泵循环
-        let pump_err = run_pump_loop(core, sock, &dec_key, &mut rx);
-        core.log(&format!("live: 业务数据泵退出 (原因: {pump_err})"));
-
-        // 并发安全：取出旧 DownlinkCtx 并释放 socket
-        let old_ctx = core.bt.lock().unwrap().take();
-        if let Some(ctx) = old_ctx {
-            unsafe {
-                rfcomm::closesocket(ctx.sock);
-                rfcomm::WSACleanup();
-            }
-        }
-
-        if core
-            .shutdown_requested
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
-            core.log("live: 收到退出请求，退出重连循环");
-            break;
-        }
-
-        *core.live_state.lock().unwrap() = LiveStatus::Reconnecting;
-        broadcast_device_state(core, "connecting", true, "对端断开，正在重连");
-
-        let sleep_start = std::time::Instant::now();
-        while sleep_start.elapsed() < RECONNECT_INTERVAL {
-            if core
-                .shutdown_requested
+            if !core
+                .desired_connected
                 .load(std::sync::atomic::Ordering::SeqCst)
+                || core
+                    .shutdown_requested
+                    .load(std::sync::atomic::Ordering::SeqCst)
             {
+                core.log("live: 收到退出或断开请求，中止进入数据泵");
+                drop(ctx);
+                *core.live_state.lock().unwrap() = LiveStatus::Disconnected;
+                broadcast_device_state(core, "disconnected", false, "");
                 break;
             }
-            std::thread::sleep(Duration::from_millis(100));
+
+            policy.reset();
+            core.log("live: 连接认证成功，建立业务数据泵");
+            unsafe {
+                rfcomm::setsockopt(
+                    sock,
+                    rfcomm::SOL_SOCKET,
+                    rfcomm::SO_RCVTIMEO,
+                    &300u32 as *const u32 as *const u8,
+                    4,
+                );
+            }
+            {
+                let mut bt = core.bt.lock().unwrap();
+                *bt = Some(ctx);
+            }
+            *core.live_state.lock().unwrap() = LiveStatus::Ready;
+            broadcast_device_state(core, "ready", false, "");
+
+            let pump_err = run_pump_loop(core, sock, &dec_key, &mut rx);
+            core.log(&format!("live: 业务数据泵退出 (原因: {pump_err})"));
+
+            // 释放 DownlinkCtx（Drop 特征自动执行 closesocket 与 WSACleanup）
+            let _ = core.bt.lock().unwrap().take();
+
+            if !core
+                .desired_connected
+                .load(std::sync::atomic::Ordering::SeqCst)
+                || core
+                    .shutdown_requested
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                *core.live_state.lock().unwrap() = LiveStatus::Disconnected;
+                broadcast_device_state(core, "disconnected", false, "");
+                core.log("live: 用户主动断开或退出，保持 Disconnected，不自动重连");
+                break;
+            }
+
+            *core.live_state.lock().unwrap() = LiveStatus::Reconnecting;
+            broadcast_device_state(core, "connecting", true, "对端断开，正在重连");
+
+            let sleep_start = std::time::Instant::now();
+            while sleep_start.elapsed() < RECONNECT_INTERVAL {
+                if !core
+                    .desired_connected
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    || core
+                        .shutdown_requested
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
     }
 
@@ -807,14 +909,17 @@ fn live_device_json() -> serde_json::Value {
     }
 }
 
-/// 真机模式 device.connect：返回真机设备对象 + 广播 device.state connecting→ready（不伪造假 __hs__）。
+/// 真机模式 device.connect：设置 desired_connected=true + 广播 device.state connecting（若已 ready 则广播 ready）。
 pub fn device_connect_live(core: &Core, id: &serde_json::Value) -> String {
     let dev = live_device_json();
+    core.desired_connected
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let state = *core.live_state.lock().unwrap();
     core.log(&format!("live device.connect (state={state:?})"));
     if state == LiveStatus::Ready {
         broadcast_device_state(core, "ready", false, "");
     } else {
+        *core.live_state.lock().unwrap() = LiveStatus::Connecting;
         broadcast_device_state(core, "connecting", true, "");
     }
     serde_json::json!({ "id": id, "ok": true, "result": dev }).to_string()
@@ -829,32 +934,28 @@ pub fn device_status_live(core: &Core, id: &serde_json::Value) -> String {
     } else {
         serde_json::Value::Null
     };
-    let protocol_state = match state {
-        LiveStatus::Ready => "ready",
-        LiveStatus::Connecting | LiveStatus::Reconnecting => "connecting",
-        LiveStatus::Error => "error",
-        LiveStatus::Disconnected => "disconnected",
+    let (protocol_state, err_str) = match state {
+        LiveStatus::Ready => ("ready", ""),
+        LiveStatus::Connecting | LiveStatus::Reconnecting => ("connecting", ""),
+        LiveStatus::Error => ("error", "连接失败达到上限"),
+        LiveStatus::Disconnected => ("disconnected", ""),
     };
     serde_json::json!({
         "id": id, "ok": true, "result": {
             "connected": connected,
             "protocolState": protocol_state,
-            "device": dev, "error": "",
+            "device": dev, "error": err_str,
         }
     })
     .to_string()
 }
 
-/// 真机模式 device.disconnect：关闭蓝牙 + 广播 disconnected。
+/// 真机模式 device.disconnect：设置 desired_connected=false，释放链路，保持 Disconnected。
 pub fn device_disconnect_live(core: &Core, id: &serde_json::Value) -> String {
     core.log("live device.disconnect: 显式释放链路");
-    let old_ctx = core.bt.lock().unwrap().take();
-    if let Some(ctx) = old_ctx {
-        unsafe {
-            rfcomm::closesocket(ctx.sock);
-            rfcomm::WSACleanup();
-        }
-    }
+    core.desired_connected
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let _ = core.bt.lock().unwrap().take();
     *core.live_state.lock().unwrap() = LiveStatus::Disconnected;
     broadcast_device_state(core, "disconnected", false, "");
     serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string()
@@ -968,5 +1069,140 @@ mod tests {
         assert_eq!(policy.next_attempt(), Some(2));
         policy.reset();
         assert_eq!(policy.next_attempt(), Some(1));
+    }
+
+    #[test]
+    fn test_device_status_live_states() {
+        use std::path::PathBuf;
+        use std::sync::{Arc, Mutex};
+        use std::time::Instant;
+
+        let core = Arc::new(Core {
+            mode: crate::CoreMode::Live,
+            token: "test-token".to_string(),
+            run_dir: PathBuf::from("target/test-run"),
+            started: Instant::now(),
+            clients: Mutex::new(Vec::new()),
+            device: Mutex::new(crate::fake::FakeDevice::new()),
+            bt: Mutex::new(None),
+            shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+            desired_connected: std::sync::atomic::AtomicBool::new(false),
+            live_state: Mutex::new(LiveStatus::Disconnected),
+        });
+
+        // 1. Disconnected: connected=false, protocolState="disconnected", device=null
+        let s = device_status_live(&core, &serde_json::json!("1"));
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["result"]["connected"], false);
+        assert_eq!(v["result"]["protocolState"], "disconnected");
+        assert!(v["result"]["device"].is_null());
+
+        // 2. Connecting: connected=false, protocolState="connecting", device=null
+        *core.live_state.lock().unwrap() = LiveStatus::Connecting;
+        let s = device_status_live(&core, &serde_json::json!("2"));
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["result"]["connected"], false);
+        assert_eq!(v["result"]["protocolState"], "connecting");
+        assert!(v["result"]["device"].is_null());
+
+        // 3. Reconnecting: connected=false, protocolState="connecting", device=null
+        *core.live_state.lock().unwrap() = LiveStatus::Reconnecting;
+        let s = device_status_live(&core, &serde_json::json!("3"));
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["result"]["connected"], false);
+        assert_eq!(v["result"]["protocolState"], "connecting");
+        assert!(v["result"]["device"].is_null());
+
+        // 4. Error: connected=false, protocolState="error", error="连接失败达到上限"
+        *core.live_state.lock().unwrap() = LiveStatus::Error;
+        let s = device_status_live(&core, &serde_json::json!("4"));
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["result"]["connected"], false);
+        assert_eq!(v["result"]["protocolState"], "error");
+        assert_eq!(v["result"]["error"], "连接失败达到上限");
+        assert!(v["result"]["device"].is_null());
+
+        // 5. Ready but bt is None: connected=false
+        *core.live_state.lock().unwrap() = LiveStatus::Ready;
+        let s = device_status_live(&core, &serde_json::json!("5"));
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["result"]["connected"], false);
+
+        // 6. Ready with bt: connected=true, device is not null
+        *core.bt.lock().unwrap() = Some(DownlinkCtx {
+            sock: 0,
+            enc_key: [0u8; 16],
+            basic: None,
+            seq_out: 0,
+        });
+        let s = device_status_live(&core, &serde_json::json!("6"));
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["result"]["connected"], true);
+        assert_eq!(v["result"]["protocolState"], "ready");
+        assert!(!v["result"]["device"].is_null());
+        assert_ne!(
+            v["result"]["device"]["name"].as_str(),
+            Some("PulseDev Fake Band")
+        );
+    }
+
+    #[test]
+    fn test_desired_connected_lifecycle() {
+        use std::path::PathBuf;
+        use std::sync::{Arc, Mutex};
+        use std::time::Instant;
+
+        let core = Arc::new(Core {
+            mode: crate::CoreMode::Live,
+            token: "test-token".to_string(),
+            run_dir: PathBuf::from("target/test-run"),
+            started: Instant::now(),
+            clients: Mutex::new(Vec::new()),
+            device: Mutex::new(crate::fake::FakeDevice::new()),
+            bt: Mutex::new(None),
+            shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+            desired_connected: std::sync::atomic::AtomicBool::new(false),
+            live_state: Mutex::new(LiveStatus::Disconnected),
+        });
+
+        assert_eq!(
+            core.desired_connected
+                .load(std::sync::atomic::Ordering::SeqCst),
+            false
+        );
+
+        // device.connect 设置 desired_connected=true
+        let resp = device_connect_live(&core, &serde_json::json!("c1"));
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(
+            core.desired_connected
+                .load(std::sync::atomic::Ordering::SeqCst),
+            true
+        );
+        assert_eq!(*core.live_state.lock().unwrap(), LiveStatus::Connecting);
+
+        // device.disconnect 设置 desired_connected=false
+        let resp = device_disconnect_live(&core, &serde_json::json!("d1"));
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(
+            core.desired_connected
+                .load(std::sync::atomic::Ordering::SeqCst),
+            false
+        );
+        assert_eq!(*core.live_state.lock().unwrap(), LiveStatus::Disconnected);
+    }
+
+    #[test]
+    fn test_downlink_ctx_drop_cleanup() {
+        // 验证 DownlinkCtx 在 sock=0 时不触发 closesocket/WSACleanup，析构安全无 panic
+        let ctx = DownlinkCtx {
+            sock: 0,
+            enc_key: [0u8; 16],
+            basic: None,
+            seq_out: 0,
+        };
+        drop(ctx);
     }
 }

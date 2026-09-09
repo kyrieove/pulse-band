@@ -31,7 +31,14 @@ use rpc::ClientHandle;
 /// checkProtocolVersion），不是端点文件里这个。两处都写 6，但只有返回值才算数。
 pub const PROTOCOL_VERSION: u64 = 6;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoreMode {
+    Fake,
+    Live,
+}
+
 pub struct Core {
+    pub mode: CoreMode,
     pub token: String,
     pub run_dir: PathBuf,
     pub started: Instant,
@@ -39,6 +46,7 @@ pub struct Core {
     pub device: Mutex<FakeDevice>,
     pub bt: Mutex<Option<live::DownlinkCtx>>,
     pub shutdown_requested: std::sync::atomic::AtomicBool,
+    pub desired_connected: std::sync::atomic::AtomicBool,
     pub live_state: Mutex<live::LiveStatus>,
 }
 
@@ -164,6 +172,7 @@ fn main() {
         };
         let port = listener.local_addr().expect("local addr").port();
         let core = Arc::new(Core {
+            mode: CoreMode::Live,
             token: random_token(),
             run_dir: run_dir.clone(),
             started: Instant::now(),
@@ -171,6 +180,7 @@ fn main() {
             device: Mutex::new(FakeDevice::new()),
             bt: Mutex::new(None),
             shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+            desired_connected: std::sync::atomic::AtomicBool::new(false),
             live_state: Mutex::new(live::LiveStatus::Disconnected),
         });
         let endpoint = serde_json::json!({
@@ -228,6 +238,7 @@ fn main() {
     };
     let port = listener.local_addr().expect("local addr").port();
     let core = Arc::new(Core {
+        mode: CoreMode::Fake,
         token: random_token(),
         run_dir: run_dir.clone(),
         started: Instant::now(),
@@ -235,6 +246,7 @@ fn main() {
         device: Mutex::new(FakeDevice::new()),
         bt: Mutex::new(None),
         shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+        desired_connected: std::sync::atomic::AtomicBool::new(false),
         live_state: Mutex::new(live::LiveStatus::Disconnected),
     });
 

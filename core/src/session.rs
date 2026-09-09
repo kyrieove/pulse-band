@@ -250,7 +250,9 @@ impl Session {
             return Err(err.clone());
         }
         if self.state == SessionState::Disconnected {
-            return Err(SessionError::InvalidStateTransition("会话已处于 Disconnected"));
+            return Err(SessionError::InvalidStateTransition(
+                "会话已处于 Disconnected",
+            ));
         }
 
         // 会话握手帧要求 type=0x03 且 payload 前缀为 01 01
@@ -334,11 +336,7 @@ impl Session {
     }
 
     /// 内部解析与校验 Step 2，并生成 Step 3 帧
-    fn handle_step2(
-        &mut self,
-        p_nonce: [u8; 16],
-        data: &[u8],
-    ) -> Result<Frame, SessionError> {
+    fn handle_step2(&mut self, p_nonce: [u8; 16], data: &[u8]) -> Result<Frame, SessionError> {
         let cmd = parse_protobuf(data)?;
         let msg_type = extract_one_varint(&cmd, 1)?;
         let msg_id = extract_one_varint(&cmd, 2)?;
@@ -355,14 +353,18 @@ impl Session {
 
         let w_nonce_bytes = extract_one_bytes(&device_verify, 1)?;
         if w_nonce_bytes.len() != 16 {
-            return Err(SessionError::ProtobufFieldMissing("device_random 长度必须为 16B"));
+            return Err(SessionError::ProtobufFieldMissing(
+                "device_random 长度必须为 16B",
+            ));
         }
         let mut w_nonce = [0u8; 16];
         w_nonce.copy_from_slice(w_nonce_bytes);
 
         let received_device_sign = extract_one_bytes(&device_verify, 2)?;
         if received_device_sign.len() != 32 {
-            return Err(SessionError::ProtobufFieldMissing("device_sign 长度必须为 32B"));
+            return Err(SessionError::ProtobufFieldMissing(
+                "device_sign 长度必须为 32B",
+            ));
         }
 
         // 密钥派生：
@@ -393,7 +395,8 @@ impl Session {
         // AAD = 空
         let mut nonce12 = [0u8; 12];
         nonce12[0..4].copy_from_slice(&enc_nonce_cm);
-        let encrypt_companion_device = ccm_encrypt_4b_tag(&enc_key, &nonce12, &plaintext_companion)?;
+        let encrypt_companion_device =
+            ccm_encrypt_4b_tag(&enc_key, &nonce12, &plaintext_companion)?;
 
         let step3_payload = build_step3_payload(&app_sign, &encrypt_companion_device);
         let frame = Frame {
@@ -578,7 +581,11 @@ pub fn build_companion_device_plaintext(
     let mut out = Vec::new();
     out.extend_from_slice(&encode_field(1, 0, &encode_varint_bytes(device_type)));
     out.extend_from_slice(&encode_field(3, 2, device_name.as_bytes()));
-    out.extend_from_slice(&encode_field(4, 0, &encode_varint_bytes(app_capability as u64)));
+    out.extend_from_slice(&encode_field(
+        4,
+        0,
+        &encode_varint_bytes(app_capability as u64),
+    ));
     out
 }
 
@@ -694,7 +701,9 @@ pub fn extract_one_varint(
             WireValue::Varint(v) => Ok(*v),
             _ => Err(SessionError::ProtobufFieldMissing("字段类型非 Varint")),
         },
-        _ => Err(SessionError::ProtobufFieldMissing("未找到唯一的 Varint 字段")),
+        _ => Err(SessionError::ProtobufFieldMissing(
+            "未找到唯一的 Varint 字段",
+        )),
     }
 }
 
@@ -705,9 +714,13 @@ pub fn extract_one_bytes<'a>(
     match map.get(&field) {
         Some(list) if list.len() == 1 => match &list[0] {
             WireValue::LengthDelimited(v) => Ok(v.as_slice()),
-            _ => Err(SessionError::ProtobufFieldMissing("字段类型非 LengthDelimited")),
+            _ => Err(SessionError::ProtobufFieldMissing(
+                "字段类型非 LengthDelimited",
+            )),
         },
-        _ => Err(SessionError::ProtobufFieldMissing("未找到唯一的 LengthDelimited 字段")),
+        _ => Err(SessionError::ProtobufFieldMissing(
+            "未找到唯一的 LengthDelimited 字段",
+        )),
     }
 }
 
@@ -721,7 +734,11 @@ fn desensitize_hexdump(frame_type: u8, payload: &[u8]) -> String {
         return "(ACK帧 无载荷)".to_string();
     }
     if frame_type == 0x02 {
-        return payload.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+        return payload
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
     }
     if payload.len() >= 2 && &payload[0..2] == [0x01, 0x01] {
         if payload.len() == 29 {
@@ -729,10 +746,12 @@ fn desensitize_hexdump(frame_type: u8, payload: &[u8]) -> String {
             return "01 01 08 01 10 1a 1a 15 f2 01 12 0a 10 <P:16B>".to_string();
         } else if payload.len() == 63 {
             // Step 2: 01 01 08 01 10 1a 1a 37 f2 01 34 0a 10 <W:16B> 12 20 <device_sign:32B>
-            return "01 01 08 01 10 1a 1a 37 f2 01 34 0a 10 <W:16B> 12 20 <device_sign:32B>".to_string();
+            return "01 01 08 01 10 1a 1a 37 f2 01 34 0a 10 <W:16B> 12 20 <device_sign:32B>"
+                .to_string();
         } else if payload.len() == 68 {
             // Step 3: 01 01 08 01 10 1b 1a 3c 82 02 39 0a 20 <app_sign:32B> 12 15 <cm-cipher:21B>
-            return "01 01 08 01 10 1b 1a 3c 82 02 39 0a 20 <app_sign:32B> 12 15 <cm-cipher:21B>".to_string();
+            return "01 01 08 01 10 1b 1a 3c 82 02 39 0a 20 <app_sign:32B> 12 15 <cm-cipher:21B>"
+                .to_string();
         } else if payload.len() == 22 {
             // Step 4: 01 01 08 01 10 1b 1a 0e 8a 02 0b 08 01 10 ... <capabilities:8B>
             return "01 01 08 01 10 1b 1a 0e 8a 02 0b 08 01 (confirm_result=true) <capabilities:8B>".to_string();
@@ -747,8 +766,8 @@ pub fn run_auth_3times() -> Result<(), String> {
     println!("pulse-core 阶段 5D: 真机受控认证验收（三次独立断开重连，不含失败对照）");
     println!("================================================================================");
 
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .map_err(|e| format!("LOCALAPPDATA 环境变量不存在: {e}"))?;
+    let local_app_data =
+        std::env::var("LOCALAPPDATA").map_err(|e| format!("LOCALAPPDATA 环境变量不存在: {e}"))?;
     let dev_path = std::path::Path::new(&local_app_data)
         .join("PulseDev")
         .join("run")
@@ -756,13 +775,18 @@ pub fn run_auth_3times() -> Result<(), String> {
 
     let raw = std::fs::read_to_string(&dev_path)
         .map_err(|e| format!("读取 device.json 失败 {dev_path:?}: {e}"))?;
-    let val: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("解析 device.json 失败: {e}"))?;
+    let val: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 device.json 失败: {e}"))?;
 
     let addr_str = val["addr"].as_str().ok_or("device.json 缺少 addr 字段")?;
-    let authkey_hex = val["authkey"].as_str().ok_or("device.json 缺少 authkey 字段")?;
+    let authkey_hex = val["authkey"]
+        .as_str()
+        .ok_or("device.json 缺少 authkey 字段")?;
     if authkey_hex.len() != 32 {
-        return Err(format!("authkey hex 长度必须为 32, 实际为 {}", authkey_hex.len()));
+        return Err(format!(
+            "authkey hex 长度必须为 32, 实际为 {}",
+            authkey_hex.len()
+        ));
     }
 
     let mut authkey = [0u8; 16];
@@ -772,8 +796,8 @@ pub fn run_auth_3times() -> Result<(), String> {
     }
 
     let mac_clean = addr_str.replace(':', "");
-    let target_mac_u64 = u64::from_str_radix(&mac_clean, 16)
-        .map_err(|e| format!("MAC 地址格式解析错误: {e}"))?;
+    let target_mac_u64 =
+        u64::from_str_radix(&mac_clean, 16).map_err(|e| format!("MAC 地址格式解析错误: {e}"))?;
 
     println!("[配置读取] 目标设备: <mac>, authkey: <authkey:16B>");
     println!("[前置检查] 保护条款计数器初值: 连接失败 = 0 次 (历史 0 + 本阶段 0), 发包失败 = 0 次 (历史 0 + 本阶段 0)");
@@ -804,9 +828,13 @@ pub fn run_auth_3times() -> Result<(), String> {
     };
 
     for attempt in 1..=3 {
-        println!("\n--------------------------------------------------------------------------------");
+        println!(
+            "\n--------------------------------------------------------------------------------"
+        );
         println!(">>> [尝试 {}/3] 发起独立物理连接与受控认证", attempt);
-        println!("--------------------------------------------------------------------------------");
+        println!(
+            "--------------------------------------------------------------------------------"
+        );
 
         let s = unsafe {
             crate::rfcomm::socket(
@@ -854,7 +882,10 @@ pub fn run_auth_3times() -> Result<(), String> {
             );
             unsafe { crate::rfcomm::closesocket(s) };
             if conn_fail_count >= 3 {
-                println!("  [保护条款触发] 连接失败累计达到上限 ({} 次)，终止执行", conn_fail_count);
+                println!(
+                    "  [保护条款触发] 连接失败累计达到上限 ({} 次)，终止执行",
+                    conn_fail_count
+                );
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(3));
@@ -865,10 +896,11 @@ pub fn run_auth_3times() -> Result<(), String> {
 
         // 步骤 2：发非 A5A5 前导帧并校验响应
         println!("  [步骤 2/5 · 前导握手] 发送非 A5A5 前导帧 (11 字节)...");
-        let preamble_tx = [0xba, 0xdc, 0xfe, 0x00, 0xc0, 0x03, 0x00, 0x00, 0x01, 0x00, 0xef];
-        let sent_p = unsafe {
-            crate::rfcomm::send(s, preamble_tx.as_ptr(), preamble_tx.len() as i32, 0)
-        };
+        let preamble_tx = [
+            0xba, 0xdc, 0xfe, 0x00, 0xc0, 0x03, 0x00, 0x00, 0x01, 0x00, 0xef,
+        ];
+        let sent_p =
+            unsafe { crate::rfcomm::send(s, preamble_tx.as_ptr(), preamble_tx.len() as i32, 0) };
         if sent_p != preamble_tx.len() as i32 {
             send_fail_count += 1;
             println!("  [发送失败] 前导帧发送不完整: sent = {sent_p}");
@@ -916,14 +948,13 @@ pub fn run_auth_3times() -> Result<(), String> {
             frame_type: 0x02,
             seq: 0x00,
             payload: vec![
-                0x01, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0xfc, 0x03,
-                0x02, 0x00, 0x20, 0x00, 0x04, 0x02, 0x00, 0x10, 0x27,
+                0x01, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0xfc, 0x03, 0x02,
+                0x00, 0x20, 0x00, 0x04, 0x02, 0x00, 0x10, 0x27,
             ],
         };
         let nego_bytes = crate::frame::encode(&nego_frame);
-        let sent_n = unsafe {
-            crate::rfcomm::send(s, nego_bytes.as_ptr(), nego_bytes.len() as i32, 0)
-        };
+        let sent_n =
+            unsafe { crate::rfcomm::send(s, nego_bytes.as_ptr(), nego_bytes.len() as i32, 0) };
         if sent_n != nego_bytes.len() as i32 {
             send_fail_count += 1;
             println!("  [链路协商 - 发送失败] sent = {sent_n}");
@@ -944,7 +975,9 @@ pub fn run_auth_3times() -> Result<(), String> {
         let mut session = Session::new(authkey);
         println!("  [状态机初始状态] {:?}", session.state());
 
-        let step1_frame = session.start_auth(None).expect("start_auth 构造 Step 1 成功");
+        let step1_frame = session
+            .start_auth(None)
+            .expect("start_auth 构造 Step 1 成功");
         let step1_chk = crate::crc::crc16_arc(&step1_frame.payload);
         let step1_bytes = crate::frame::encode(&step1_frame);
 
@@ -958,9 +991,8 @@ pub fn run_auth_3times() -> Result<(), String> {
         );
         println!("  [状态转移] -> {:?}", session.state());
 
-        let sent_s1 = unsafe {
-            crate::rfcomm::send(s, step1_bytes.as_ptr(), step1_bytes.len() as i32, 0)
-        };
+        let sent_s1 =
+            unsafe { crate::rfcomm::send(s, step1_bytes.as_ptr(), step1_bytes.len() as i32, 0) };
         if sent_s1 != step1_bytes.len() as i32 {
             send_fail_count += 1;
             println!("  [Step 1 发送失败] sent = {sent_s1}");
@@ -982,9 +1014,8 @@ pub fn run_auth_3times() -> Result<(), String> {
         let loop_timeout = std::time::Duration::from_secs(10);
 
         while start_time.elapsed() < loop_timeout {
-            let n = unsafe {
-                crate::rfcomm::recv(s, raw_buf.as_mut_ptr(), raw_buf.len() as i32, 0)
-            };
+            let n =
+                unsafe { crate::rfcomm::recv(s, raw_buf.as_mut_ptr(), raw_buf.len() as i32, 0) };
             if n > 0 {
                 rx_buf.extend_from_slice(&raw_buf[..n as usize]);
             } else if n == 0 {
@@ -1021,10 +1052,19 @@ pub fn run_auth_3times() -> Result<(), String> {
                                 frame.seq, frame.payload.len(), f_chk
                             );
                             // 回送传输层 ACK
-                            let ack_frame = Frame { frame_type: 0x01, seq: frame.seq, payload: vec![] };
+                            let ack_frame = Frame {
+                                frame_type: 0x01,
+                                seq: frame.seq,
+                                payload: vec![],
+                            };
                             let ack_bytes = crate::frame::encode(&ack_frame);
                             unsafe {
-                                crate::rfcomm::send(s, ack_bytes.as_ptr(), ack_bytes.len() as i32, 0);
+                                crate::rfcomm::send(
+                                    s,
+                                    ack_bytes.as_ptr(),
+                                    ack_bytes.len() as i32,
+                                    0,
+                                );
                             }
                         } else if frame.frame_type == 0x03 {
                             println!(
@@ -1037,10 +1077,19 @@ pub fn run_auth_3times() -> Result<(), String> {
                             );
 
                             // 回送传输层 ACK
-                            let ack_frame = Frame { frame_type: 0x01, seq: frame.seq, payload: vec![] };
+                            let ack_frame = Frame {
+                                frame_type: 0x01,
+                                seq: frame.seq,
+                                payload: vec![],
+                            };
                             let ack_bytes = crate::frame::encode(&ack_frame);
                             unsafe {
-                                crate::rfcomm::send(s, ack_bytes.as_ptr(), ack_bytes.len() as i32, 0);
+                                crate::rfcomm::send(
+                                    s,
+                                    ack_bytes.as_ptr(),
+                                    ack_bytes.len() as i32,
+                                    0,
+                                );
                             }
 
                             // 喂给状态机驱动
@@ -1057,11 +1106,19 @@ pub fn run_auth_3times() -> Result<(), String> {
                                     );
                                     println!(
                                         "  [Step 3 - 脱敏 Hexdump] {}",
-                                        desensitize_hexdump(step3_frame.frame_type, &step3_frame.payload)
+                                        desensitize_hexdump(
+                                            step3_frame.frame_type,
+                                            &step3_frame.payload
+                                        )
                                     );
 
                                     let sent_s3 = unsafe {
-                                        crate::rfcomm::send(s, s3_bytes.as_ptr(), s3_bytes.len() as i32, 0)
+                                        crate::rfcomm::send(
+                                            s,
+                                            s3_bytes.as_ptr(),
+                                            s3_bytes.len() as i32,
+                                            0,
+                                        )
                                     };
                                     if sent_s3 != s3_bytes.len() as i32 {
                                         send_fail_count += 1;
@@ -1099,7 +1156,8 @@ pub fn run_auth_3times() -> Result<(), String> {
                 }
             }
 
-            if auth_success || session.state() == &SessionState::Failed(SessionError::HmacMismatch) {
+            if auth_success || session.state() == &SessionState::Failed(SessionError::HmacMismatch)
+            {
                 break;
             }
         }
@@ -1144,15 +1202,20 @@ pub fn run_auth_3times() -> Result<(), String> {
     println!("\n================================================================================");
     if conn_fail_count == 0 && send_fail_count == 0 {
         println!("阶段 5D 三次独立断开重连认证全部成功完成！(3/3 PASS)");
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
         Ok(())
     } else {
-        println!("阶段 5D 验收存在未通过项！连接失败 = {conn_fail_count}, 发包失败 = {send_fail_count}");
-        println!("================================================================================");
+        println!(
+            "阶段 5D 验收存在未通过项！连接失败 = {conn_fail_count}, 发包失败 = {send_fail_count}"
+        );
+        println!(
+            "================================================================================"
+        );
         Err("三次认证验收存在失败项".to_string())
     }
 }
-
 
 // -----------------------------------------------------------------------------
 // 单元测试模块（纯内存，不触网，不连设备，不读真实凭据）
@@ -1241,14 +1304,8 @@ mod tests {
         // 对应 Python 输出：
         // dec_key: 17ec07aff31e1fb42eb0a8930a64494b
         // enc_key: 2d4e8798e486733127812cc83da9da58
-        assert_eq!(
-            to_hex(&dec_key),
-            "17ec07aff31e1fb42eb0a8930a64494b"
-        );
-        assert_eq!(
-            to_hex(&enc_key),
-            "2d4e8798e486733127812cc83da9da58"
-        );
+        assert_eq!(to_hex(&dec_key), "17ec07aff31e1fb42eb0a8930a64494b");
+        assert_eq!(to_hex(&enc_key), "2d4e8798e486733127812cc83da9da58");
 
         let device_sign = compute_hmac_sign(&dec_key, &w, &p);
         let app_sign = compute_hmac_sign(&enc_key, &p, &w);
@@ -1304,7 +1361,9 @@ mod tests {
 
         // 喂入合法的 Step 2 帧
         let step2_frame = make_test_step2_frame(&authkey, &p_nonce, &w_nonce, 0x00, false);
-        let maybe_step3 = session.process_frame(&step2_frame).expect("Step 2 处理成功");
+        let maybe_step3 = session
+            .process_frame(&step2_frame)
+            .expect("Step 2 处理成功");
         let step3_frame = maybe_step3.expect("必须产出 Step 3 帧");
 
         // 校验产出的 Step 3 帧
@@ -1321,11 +1380,16 @@ mod tests {
 
         // 喂入 confirm_result == true 的 Step 4 帧
         let step4_frame = make_test_step4_frame(true, 0x01, false);
-        let resp = session.process_frame(&step4_frame).expect("Step 4 处理成功");
+        let resp = session
+            .process_frame(&step4_frame)
+            .expect("Step 4 处理成功");
         assert!(resp.is_none(), "Step 4 后无需再回发握手包");
 
         // 断言最终状态为 Authenticated
-        assert!(matches!(session.state(), SessionState::Authenticated { .. }));
+        assert!(matches!(
+            session.state(),
+            SessionState::Authenticated { .. }
+        ));
         assert!(session.business_keys().is_ok());
     }
 
@@ -1442,7 +1506,10 @@ mod tests {
         let authkey = [0x55u8; 16];
         let mut session1 = Session::new(authkey);
         session1.handle_timeout();
-        assert_eq!(session1.state(), &SessionState::Failed(SessionError::Timeout));
+        assert_eq!(
+            session1.state(),
+            &SessionState::Failed(SessionError::Timeout)
+        );
 
         let mut session2 = Session::new(authkey);
         session2.handle_disconnect();

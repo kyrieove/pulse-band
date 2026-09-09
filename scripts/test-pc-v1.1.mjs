@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
+import { spawn } from 'node:child_process';
+import { OronBoxClient } from '../src/main/services/oronbox-client.ts';
 import {
   canConnectBand,
   shouldConnectBand,
@@ -156,5 +159,186 @@ test('packaged win-unpacked resources contains pulse-core.exe and CORE_EXE resol
   const resolved = resolveCoreExePath(unpackedResources, (p) => fs.existsSync(p), 'fallback');
   assert.equal(resolved.replace(/\\/g, '/'), packagedExe.replace(/\\/g, '/'));
 });
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('OronBoxClient: connectOnce switches to new port and token when fresh endpoint appears during retries', async () => {
+  let receivedToken = null;
+  const server = net.createServer((socket) => {
+    socket.on('data', (data) => {
+      for (const line of data.toString('utf-8').split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const req = JSON.parse(line);
+          receivedToken = req.token;
+          if (req.method === 'daemon.info') {
+            socket.write(
+              JSON.stringify({
+                id: req.id,
+                ok: true,
+                result: {
+                  protocolVersion: 6,
+                  pid: process.pid,
+                  platform: 'windows',
+                  endpoint: `127.0.0.1:${server.address().port}`,
+                  uptimeSeconds: 1,
+                },
+              }) + '\n',
+            );
+          }
+        } catch {}
+      }
+    });
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const newPort = server.address().port;
+
+  // 找一个当前未监听的死端口
+  const closedServer = net.createServer();
+  await new Promise((resolve) => closedServer.listen(0, '127.0.0.1', resolve));
+  const deadPort = closedServer.address().port;
+  await new Promise((resolve) => closedServer.close(resolve));
+
+  const epDir = path.join(process.env.LOCALAPPDATA || '.', 'PulseDev', 'run');
+  fs.mkdirSync(epDir, { recursive: true });
+  const epFile = path.join(epDir, 'core.json');
+  const backup = fs.existsSync(epFile) ? fs.readFileSync(epFile, 'utf-8') : null;
+
+  try {
+    // 初始写入 deadPort 和旧 token
+    fs.writeFileSync(
+      epFile,
+      JSON.stringify({
+        port: deadPort,
+        token: 'old_token_initial',
+        pid: process.pid,
+        protocolVersion: 6,
+      }),
+    );
+
+    const client = new OronBoxClient();
+
+    // 延迟 400ms 后（处于重试等待期间）将 core.json 刷新为有效 newPort 和新 token
+    const timer = setTimeout(() => {
+      fs.writeFileSync(
+        epFile,
+        JSON.stringify({
+          port: newPort,
+          token: 'fresh_token_switched',
+          pid: process.pid,
+          protocolVersion: 6,
+        }),
+      );
+    }, 400);
+
+    const connected = await client.connectIfRunning();
+    clearTimeout(timer);
+
+    assert.equal(connected, true, 'client 成功连上新端口');
+    assert.equal(client.connected, true);
+    assert.equal(client.endpointInfo?.port, newPort, '端点端口已刷新为新端口');
+    assert.equal(client.endpointInfo?.token, 'fresh_token_switched', '端点token已刷新为新token');
+    assert.equal(receivedToken, 'fresh_token_switched', '服务器收到的RPC请求携带新token');
+
+    client.dispose();
+  } finally {
+    server.close();
+    if (backup) {
+      fs.writeFileSync(epFile, backup);
+    } else {
+      fs.rmSync(epFile, { force: true });
+    }
+  }
+});
+
+test('pulse-core --live: starts in disconnected state and does not reconnect after active disconnect', async () => {
+  const coreExe = path.resolve('core/target/release/pulse-core.exe');
+  if (!fs.existsSync(coreExe)) return;
+
+  const epDir = path.join(process.env.LOCALAPPDATA || '.', 'PulseDev', 'run');
+  fs.mkdirSync(epDir, { recursive: true });
+  const epFile = path.join(epDir, 'core.json');
+  fs.rmSync(epFile, { force: true });
+
+  const proc = spawn(coreExe, ['--live'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    let ep = null;
+    for (let i = 0; i < 40; i++) {
+      await sleep(100);
+      try {
+        ep = JSON.parse(fs.readFileSync(epFile, 'utf-8'));
+        if (ep?.port) break;
+      } catch {}
+    }
+    assert.ok(ep?.port, 'pulse-core --live 成功启动并写入端点');
+
+    const client = net.connect(ep.port, '127.0.0.1');
+    await new Promise((r) => client.once('connect', r));
+
+    let seq = 0;
+    const callRpc = (method, params = {}) =>
+      new Promise((resolve) => {
+        const id = 'r' + ++seq;
+        const handler = (data) => {
+          for (const line of data.toString('utf-8').split('\n')) {
+            if (!line.trim()) continue;
+            try {
+              const resp = JSON.parse(line);
+              if (resp.id === id) {
+                client.off('data', handler);
+                resolve(resp);
+                return;
+              }
+            } catch {}
+          }
+        };
+        client.on('data', handler);
+        client.write(JSON.stringify({ id, method, params, token: ep.token }) + '\n');
+      });
+
+    // 1. 验证仅启动 daemon、未调用 device.connect 时，保持 Disconnected，不建立蓝牙连接
+    const st0 = await callRpc('device.status');
+    assert.equal(st0.result.connected, false, '启动后未收到 connect 请求前 connected=false');
+    assert.equal(st0.result.protocolState, 'disconnected', '启动后 protocolState 为 disconnected');
+    assert.equal(st0.result.device, null, '未连接时 device 为 null（不伪造假设备）');
+
+    // 保持静默 1.2 秒，确认状态未发生自发改变
+    await sleep(1200);
+    const st1 = await callRpc('device.status');
+    assert.equal(st1.result.connected, false);
+    assert.equal(st1.result.protocolState, 'disconnected');
+
+    // 2. 模拟调用 device.connect（设置 desired_connected=true）
+    const connResp = await callRpc('device.connect');
+    assert.equal(connResp.ok, true);
+
+    // 3. 模拟用户主动调用 device.disconnect
+    const disconnResp = await callRpc('device.disconnect');
+    assert.equal(disconnResp.ok, true);
+
+    const stAfterDisconn = await callRpc('device.status');
+    assert.equal(stAfterDisconn.result.connected, false);
+    assert.equal(stAfterDisconn.result.protocolState, 'disconnected');
+
+    // 4. 等待 3.5 秒（超过 3 秒的重连周期），断言不会自发重连
+    await sleep(3500);
+    const stAfterWait = await callRpc('device.status');
+    assert.equal(stAfterWait.result.connected, false, '主动断开 3 秒后依然保持 disconnected，不会自动重连');
+    assert.equal(stAfterWait.result.protocolState, 'disconnected');
+
+    // 5. 验证 daemon.stop 干净退出
+    await callRpc('daemon.stop');
+    await sleep(500);
+    assert.equal(proc.exitCode, 0, 'daemon.stop 后进程退出码为 0');
+    assert.equal(fs.existsSync(epFile), false, 'daemon.stop 后端点文件已清理');
+    client.destroy();
+  } finally {
+    if (proc.exitCode === null) {
+      proc.kill();
+    }
+  }
+});
+
 
 
