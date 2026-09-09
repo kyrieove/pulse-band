@@ -1,3 +1,9 @@
+/**
+ * @deprecated [Pulse 2.0 隔离说明]
+ * 本组件为 Pulse PC v1.1.0 遗留设置页（已由 SettingsPage.tsx 完全接管）。
+ * 根据 Pulse 2.0 规范保持代码隔离不接入主路由，保留此文件不重构删除，
+ * 内部包含的旧版 RPK 安装入口（installBundled / installRpk）在 Pulse 2.0 中彻底停用。
+ */
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Clock3, Download, KeyRound, Package, Settings2, Upload, Wrench } from 'lucide-react';
 import type { PulseOronboxState } from '../../../main/services/oronbox-bridge';
