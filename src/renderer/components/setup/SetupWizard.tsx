@@ -24,6 +24,8 @@ import { LogImportStep } from './LogImportStep';
 import { CredentialSaveStep } from './CredentialSaveStep';
 import { WindowsPairingStep } from './WindowsPairingStep';
 import { RfcommAuthStep } from './RfcommAuthStep';
+import { InstallAppStep } from './InstallAppStep';
+import { VerifyQuotaStep } from './VerifyQuotaStep';
 
 export interface SetupWizardProps {
   onClose: () => void;
@@ -97,6 +99,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
     if (step.id === 'rfcomm_auth') {
       return <RfcommAuthStep />;
+    }
+
+    if (step.id === 'install_app') {
+      return <InstallAppStep />;
+    }
+
+    if (step.id === 'verify_quota') {
+      return <VerifyQuotaStep />;
     }
 
     return (

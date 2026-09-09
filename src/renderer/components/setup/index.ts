@@ -3,6 +3,8 @@ export { LogImportStep, type LogImportStepProps } from './LogImportStep';
 export { CredentialSaveStep, type CredentialSaveStepProps } from './CredentialSaveStep';
 export { WindowsPairingStep, type WindowsPairingStepProps } from './WindowsPairingStep';
 export { RfcommAuthStep, type RfcommAuthStepProps } from './RfcommAuthStep';
+export { InstallAppStep, type InstallAppStepProps } from './InstallAppStep';
+export { VerifyQuotaStep, type VerifyQuotaStepProps } from './VerifyQuotaStep';
 export {
   type SetupStatus,
   type SetupStepId,
@@ -19,6 +21,10 @@ export {
   type WindowsPairingState,
   type RfcommAuthStatus,
   type RfcommAuthState,
+  type InstallAppStatus,
+  type InstallAppState,
+  type VerifyQuotaStatus,
+  type VerifyQuotaState,
   type StepStatus,
   type SetupStep,
   INITIAL_SETUP_STEPS,

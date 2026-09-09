@@ -161,3 +161,33 @@ export interface RfcommAuthState {
   status: RfcommAuthStatus;
   error?: SetupError;
 }
+
+// ============================================================================
+// 快应用安装步骤数据契约 (Install App Step Data Contract)
+// ============================================================================
+
+export type InstallAppStatus =
+  | 'idle'
+  | 'installing'
+  | 'installed'
+  | 'error';
+
+export interface InstallAppState {
+  status: InstallAppStatus;
+  error?: SetupError;
+}
+
+// ============================================================================
+// 额度验证步骤数据契约 (Verify Quota Step Data Contract)
+// ============================================================================
+
+export type VerifyQuotaStatus =
+  | 'idle'
+  | 'checking'
+  | 'verified'
+  | 'error';
+
+export interface VerifyQuotaState {
+  status: VerifyQuotaStatus;
+  error?: SetupError;
+}
