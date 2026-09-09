@@ -42,7 +42,7 @@
   - type=0x01 为 ACK（len 恒 0），seq 回显对端 type=0x03
   - type=0x02 为协商帧（len=22），type=0x03 为数据帧（len 6~68）
 - 已实现的编解码器：`core/src/frame.rs`（12/12 测试全过）、`core/src/crc.rs`。
-- 手环：Xiaomi Smart Band 10，MAC `04:34:C3:97:9A:06`，Windows 侧已配对（注册表 `BTHPORT\Parameters\Devices\0434c3979a06`）。
+- 手环：Xiaomi Smart Band 10，MAC `<mac>`，Windows 侧已配对（注册表 `BTHPORT\Parameters\Devices\<mac-no-separators>`）。
 - **保护条款计数器初始值**：连接失败 0 次，发包失败 0 次（本阶段首次生效）。
 
 ---
@@ -74,7 +74,7 @@ Get-Process Pulse,oronbox -ErrorAction SilentlyContinue
 - `socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM)`
 - `SOCKADDR_BTH { btAddr = 0x069A97C33404, serviceClassId = SPP UUID {00001101-0000-1000-8000-00805F9B34FB}, port = 0 }`
   （`port=0` 让系统通过 SDP 自动解析 RFCOMM 通道号）
-- MAC 地址 `04:34:C3:97:9A:06` 转为 `u64` 大端：`0x069A97C33404`
+- MAC 地址 `<mac>` 转为 Winsock `btAddr` 所需的 `u64`。
 - SPP UUID：标准串口仿真 UUID
 
 **Rust 实现建议**：

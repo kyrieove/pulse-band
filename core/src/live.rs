@@ -242,7 +242,7 @@ fn read_device_auth_mac() -> Result<([u8; 16], u64), String> {
     for i in 0..6 {
         mac[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| "MAC 解析失败")?;
     }
-    // BTH_ADDR 按大端组合（与 rfcomm::run_probe 的 0x0434c3979a06 同构）。
+    // BTH_ADDR 按设备地址的十六进制字节顺序组合。
     let mac_u64 = mac.iter().fold(0u64, |acc, b| (acc << 8) | (*b as u64));
     Ok((authkey, mac_u64))
 }

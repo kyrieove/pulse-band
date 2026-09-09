@@ -89,7 +89,7 @@ Get-Process Pulse,oronbox -ErrorAction SilentlyContinue
 2. 启动 tshark 从 `TCP@localhost:24352` 落盘到 `.gitignore` 覆盖的路径，
    文件名带日期与序号（如 `baseline-2026-09-08-01.pcapng`）。
    继续前先确认文件在增长：贴两次相隔几秒的文件大小。
-3. 请用户启动 OronBox 并连接手环（`04:34:C3:97:9A:06` · Xiaomi Smart Band 10）。
+3. 请用户启动 OronBox 并连接手环（`<mac>` · Xiaomi Smart Band 10）。
    **手环是否已配对以 Windows 蓝牙设置的实际状态为准，不许凭 STATUS.md 断定。**
 4. 连上并稳定后，请用户在 OronBox 里断开手环、正常退出 OronBox，确认 SPP 链路已释放。
 5. 停止 tshark 和 btvs。记录 pcapng 的**绝对路径、字节大小、sha256、总包数**（四项都要）。

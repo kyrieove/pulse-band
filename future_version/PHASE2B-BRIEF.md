@@ -45,8 +45,8 @@
   （10.0.25146.1001）。**两者都已安装，不要重装。**
 - **进程现状**：`btvs.exe` PID 24328 与 `Wireshark.exe` PID 9580 **仍在运行**（抓包已停止）。
   Pulse、oronbox、dumpcap 均无存活进程。
-- 手环：Xiaomi Smart Band 10，`04:34:C3:97:9A:06`，Windows 侧已配对
-  （注册表 `BTHPORT\Parameters\Devices\0434c3979a06`）。
+- 手环：Xiaomi Smart Band 10，`<mac>`，Windows 侧已配对
+  （注册表 `BTHPORT\Parameters\Devices\<mac-no-separators>`）。
 
 ### 已确认的传输层事实（可当前提直接用，出处见 transport.md）
 

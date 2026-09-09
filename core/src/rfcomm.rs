@@ -1,6 +1,6 @@
 //! RFCOMM 连接与首包探测模块（阶段 4 实证）
 //!
-//! 硬件目标：Xiaomi Smart Band 10 (MAC: 04:34:C3:97:9A:06)
+//! 硬件目标：Xiaomi Smart Band 10（地址从本地 device.json 读取）
 //! 协议规范：docs/protocol/transport.md 与 future_version/PHASE4-BRIEF.md
 //! 保护条款：
 //! - 连接失败 >= 3 次 -> 立即停止，写 STATUS.md
@@ -68,9 +68,23 @@ pub fn hex_dump(data: &[u8]) -> String {
 }
 
 pub fn run_probe() -> Result<(), String> {
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map_err(|e| format!("LOCALAPPDATA 环境变量不存在: {e}"))?;
+    let device_path = std::path::Path::new(&local_app_data).join("PulseDev/run/device.json");
+    let raw = std::fs::read_to_string(&device_path)
+        .map_err(|e| format!("读取 device.json 失败 {device_path:?}: {e}"))?;
+    let device: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 device.json 失败: {e}"))?;
+    let mac = device["addr"]
+        .as_str()
+        .ok_or("device.json 缺少 addr 字段")?
+        .replace(':', "");
+    let target_mac_u64 =
+        u64::from_str_radix(&mac, 16).map_err(|e| format!("MAC 地址格式解析错误: {e}"))?;
+
     println!("==================================================");
     println!("pulse-core 阶段 4: RFCOMM 连接与首包探测 (带保护条款)");
-    println!("目标 MAC: 04:34:C3:97:9A:06");
+    println!("目标设备: <mac>");
     println!("==================================================");
 
     let mut conn_fail_count = 0usize;
@@ -92,7 +106,6 @@ pub fn run_probe() -> Result<(), String> {
         data4: [0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB],
     };
 
-    let target_mac_u64: u64 = 0x0434c3979a06;
     let sockaddr = SockAddrBth {
         address_family: AF_BTH as u16,
         bt_addr: target_mac_u64,
@@ -125,7 +138,7 @@ pub fn run_probe() -> Result<(), String> {
         }
 
         println!(
-            "[4a 链路] 连接中... (尝试 {}/3, 目标 04:34:c3:97:9a:06, port=0 SDP)",
+            "[4a 链路] 连接中... (尝试 {}/3, 目标 <mac>, port=0 SDP)",
             conn_fail_count + 1
         );
         let ret = unsafe {
