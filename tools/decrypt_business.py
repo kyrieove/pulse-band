@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 # 导入 verify_auth 的基础数据提取逻辑
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
-from tools.verify_auth import frames, fields, one, mac, BASELINES
+from tools.verify_auth import frames, fields, one, mac, crc16, BASELINES
 
 
 def get_authkey():
@@ -67,17 +67,46 @@ def dump_proto_fields(field_map, indent="      "):
                 except Exception:
                     pass
                 if not is_nested:
-                    # 检查是否为可打印公开标识符（如已知公开包名）
+                    # 检查是否为 JSON (如 FastApp interconnect fetch 载荷)
+                    is_json = False
                     try:
-                        s = val.decode("utf-8")
-                        if s in ("com.codeisland.band", "com.bandbbs.ebook.plus", "Pulse", "OronBox"):
-                            lines.append(f"{indent}field {f_num} [string, {len(val)}B]: \"{s}\" (public identifier)")
-                        elif s.isprintable() and len(s) > 0:
-                            lines.append(f"{indent}field {f_num} [string, {len(val)}B]: <printable_str:{len(val)}B>")
-                        else:
-                            lines.append(f"{indent}field {f_num} [bytes, {len(val)}B]: <bytes:{len(val)}B>")
+                        j = json.loads(val.decode("utf-8"))
+                        if isinstance(j, dict):
+                            keys = list(j.keys())
+                            tag = j.get("tag")
+                            req_id = j.get("id")
+                            desc = f"{indent}field {f_num} [json, {len(val)}B]: keys={keys}"
+                            if tag:
+                                desc += f", tag=\"{tag}\""
+                            if req_id:
+                                desc += f", id=\"{req_id}\""
+                            if "url" in j:
+                                u = str(j["url"])
+                                # 脱敏 URL 中的 query 参数
+                                base_url = u.split("?")[0] if "?" in u else u
+                                desc += f", url=\"{base_url}?...\","
+                            if "options" in j and isinstance(j["options"], dict):
+                                method = j["options"].get("method", "GET")
+                                desc += f", method=\"{method}\""
+                            if "resp" in j and isinstance(j["resp"], dict):
+                                r = j["resp"]
+                                desc += f", resp.ok={r.get('ok')}, resp.status={r.get('status')}, resp.body=<quota-json:{len(str(r.get('body', '')))}B>"
+                            lines.append(desc)
+                            is_json = True
                     except Exception:
-                        lines.append(f"{indent}field {f_num} [bytes, {len(val)}B]: <bytes:{len(val)}B>")
+                        pass
+                    if not is_json:
+                        # 检查是否为可打印公开标识符（如已知公开包名）
+                        try:
+                            s = val.decode("utf-8")
+                            if s in ("com.codeisland.band", "com.bandbbs.ebook.plus", "Pulse", "OronBox"):
+                                lines.append(f"{indent}field {f_num} [string, {len(val)}B]: \"{s}\" (public identifier)")
+                            elif s.isprintable() and len(s) > 0:
+                                lines.append(f"{indent}field {f_num} [string, {len(val)}B]: <printable_str:{len(val)}B>")
+                            else:
+                                lines.append(f"{indent}field {f_num} [bytes, {len(val)}B]: <bytes:{len(val)}B>")
+                        except Exception:
+                            lines.append(f"{indent}field {f_num} [bytes, {len(val)}B]: <bytes:{len(val)}B>")
     return lines
 
 
@@ -123,8 +152,14 @@ def analyze_pcapng(pcap_path, authkey):
         feature = f"{type_name} (id={msg_id})"
         if msg_type == 20 and msg_id == 0:
             feature += " [QuickApp Installed List Query/Response]"
-        elif msg_type == 20 and msg_id in (8, 9):
-            feature += " [QuickApp Interconnect Message/Fetch]"
+        elif msg_type == 20 and msg_id == 6:
+            feature += " [QuickApp Connect Request (REQUEST_PHONE_APP_STATUS)]"
+        elif msg_type == 20 and msg_id == 7:
+            feature += " [QuickApp Connect Response (SYNC_PHONE_APP_STATUS)]"
+        elif msg_type == 20 and msg_id == 8:
+            feature += " [QuickApp Host->Band Downlink (SEND_PHONE_MESSAGE)]"
+        elif msg_type == 20 and msg_id == 9:
+            feature += " [QuickApp Band->Host Uplink (SEND_WEAR_MESSAGE)]"
         elif msg_type == 2 and msg_id == 1:
             feature += " [Heartbeat Ping/Pong]"
         elif msg_type == 10:
@@ -147,7 +182,8 @@ def analyze_pcapng(pcap_path, authkey):
         
         # 打印非心跳消息的完整结构树（跳过大量心跳 ping pong 以保证日志可读性）
         if not (msg_type == 2 and msg_id == 1):
-            print(f"\n[Pkt #{number:03d}] {dir_label} | offset={offset} | len={len(payload)}B | {feature}")
+            crc_val = crc16(payload)
+            print(f"\n[Pkt #{number:03d}] {dir_label} | offset={offset} | len={len(payload)}B | CRC=0x{crc_val:04x} | {feature}")
             print(f"    WearPacket: type={msg_type} (wire=0), id={msg_id} (wire=0), payload_field={nested_num}")
             if nested_num and nested_num != 100:
                 raw_sub = one(cmd, nested_num, 2)

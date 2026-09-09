@@ -17,13 +17,20 @@
   - 证实快应用列表查询与上报（`type=20, id=0`），成功解析出包名 `"com.codeisland.band"`、应用名称 `"Pulse"`、版本号 26、及 20 字节应用指纹。
   - 结合公开协议依据（`wear_thirdparty_app.proto` 与 `thirdparty_app_system.dart`），完整推导快应用互联通信协议（`type=20, id=8` / `SEND_PHONE_MESSAGE`）及其与客户端 `device.interconnect` RPC 的 1:1 映射契约。
   - 产出完整取证文档 `docs/protocol/business.md`。
+- **本次完成（阶段 6B-PRE 真机 fetch 抓包取证）**：
+  - 用户提权运行 `btvs.exe -Mode Wireshark`，并在物理手环上点开 Pulse 快应用，成功生成 `fetchevidence-2026-09-09.pcapng`（594 帧，39084 字节，SHA256: `a2624ebbe4c1e5dde0227df183124814f1f4f30b0de75855b2940dde2a60cef7`）。
+  - 成功解密新抓包全部业务报文，证实点开应用后完整的通信链路：
+    - 应用建链握手：手环上行 `type=20, id=6 (REQUEST_PHONE_APP_STATUS)`，主机下行 `type=20, id=7 (SYNC_PHONE_APP_STATUS)`（status=1 CONNECTED）；
+    - 快应用互联协商：手环上行 `type=20, id=9 (SEND_WEAR_MESSAGE)` 发送 `__hs__`（count:0, caps），主机下行 `type=20, id=8 (SEND_PHONE_MESSAGE)` 回复 `__hs__`（count:1, caps）；
+    - 真实 fetch 请求上报：手环上行 `type=20, id=9 (SEND_WEAR_MESSAGE)`，载荷为 `MessageContent`，`content` 证实为 JSON `{"tag":"fetch","id":"r1","url":"http://127.0.0.1:8765/api/status/compact?all=1","options":{"method":"GET"}}`，并捕获连续 12 次重试（`r1`~`r12`）。
+  - 修正了推断模型中的 ID 语义与方向：上行为 `id=9`（`SEND_WEAR_MESSAGE`），下行为 `id=8`（`SEND_PHONE_MESSAGE`）。
+  - 判定结论：上行 fetch 请求 / 建链 / 握手已由真机抓包实证，并纠正方向（上行 id=9、下行 id=8）；但**下行 fetch 响应与真实额度结构未实证**（主机未运行 8765 Pulse 服务，未回响应），额度往返闭环未达成；需在阶段 6B 用自研后端回响应实测验证。不得宣称证据链 100% 完整。
 - **限制与未确认项（客观边界）**：
-  - 两份抓包在手环配对初始化阶段录制，快应用安装但未在手环屏幕点开，抓包中无运行时的实际 `fetch` 数据流（运行时 fetch 报文结构来自公开协议推导与客户端契约对齐，现为仍需真机抓包证实的假设，不得当作已确认事实）。
-  - 快应用在前台运行时是否向主机主动发送 `SYNC_PHONE_APP_STATUS`（`id=7`）会话握手仍待真机运行时捕获证实。
+  - 本次抓包中由于主机未启动 8765 端口的 Pulse 服务，手环未收到下行 fetch 响应（带真实额度的 `resp.body` JSON），下行数据通路已由 `__hs__` 证实，但真实额度在手环屏幕上的渲染闭环将在阶段 6B 实施中验证。
 - **当前状态与下一步**：
-  - **阶段 6A 部分完成**（业务帧解密、快应用列表与包名路由已实证；fetch/额度结构仍属推断、未抓包实证）；**尚未进入阶段 6B 真机交互**。
-  - 未连接手环，未发送任何网络或蓝牙数据，未运行任何 `cargo run` 命令。
-  - 敏感信息（authkey/会话密钥/明文凭证/MAC）保持严格脱敏，未泄露。
-  - 下一步应为：补一次真机 fetch 抓包取证（手环点开 Pulse 快应用触发真实 fetch），确认 fetch/额度结构后再决定是否进入阶段 6B。此前不得开始 6B 数据泵实现。
+  - **阶段 6B-PRE 部分完成**（上行 fetch 请求 / 建链 / 握手 / 方向修正已实证；下行 fetch 响应与真实额度结构未实证）；**可开始阶段 6B 上行数据泵实现，但「手环显示真实额度数字」的闭环未达成、未达标**。
+  - 未覆盖旧抓包，敏感信息严格脱敏，未执行 `git push`。
+  - 等待用户验收报告并批准开始阶段 6B。
+
 
 
