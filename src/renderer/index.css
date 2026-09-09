@@ -3,73 +3,106 @@
 @config "../../tailwind.config.js";
 
 /* ==========================================================================
-   Pulse 2.0 设计令牌
+   Pulse 2.0 设计令牌 (Semantic Design Tokens)
    ========================================================================== */
 :root {
-  --pulse-bg-base: #0d0f14;
-  --pulse-bg-sidebar: #090b0e;
-  --pulse-bg-surface: #13161f;
-  --pulse-bg-elevated: #1a1e2b;
-  --pulse-bg-subtle: #222738;
-  --pulse-bg-input: #0a0c10;
-  --pulse-bg-overlay: rgba(13, 15, 20, 0.85);
+  /* 基础画布与表面色 (Light Theme 默认) */
+  --bg-app: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
 
-  --pulse-border-subtle: rgba(255, 255, 255, 0.08);
-  --pulse-border-default: rgba(255, 255, 255, 0.12);
-  --pulse-border-hover: rgba(255, 255, 255, 0.22);
-  --pulse-border-focus: #38bdf8;
+  /* 文字系统 (WCAG 2.1 AA+ 实测达标) */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
 
-  --pulse-font-sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --pulse-font-mono: "Cascadia Code", "Consolas", "Fira Code", monospace;
+  /* 边框与轮廓 */
+  --border-default: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.16);
 
-  --pulse-text-primary: #f8fafc;
-  --pulse-text-secondary: #94a3b8;
-  --pulse-text-muted: #64748b;
-  --pulse-text-dim: #475569;
+  /* 品牌重点色 */
+  --accent-primary: #0284c7;
+  --accent-hover: #0369a1;
 
-  --pulse-status-success: #10b981;
-  --pulse-status-success-bg: rgba(16, 185, 129, 0.12);
-  --pulse-status-success-border: rgba(16, 185, 129, 0.32);
+  /* 状态与额度色谱 */
+  --status-success: #16a34a;
+  --status-working: #0284c7;
+  --status-warning: #d97706;
+  --status-error: #dc2626;
+  --status-idle: #64748b;
 
-  --pulse-status-warning: #f59e0b;
-  --pulse-status-warning-bg: rgba(245, 158, 11, 0.14);
-  --pulse-status-warning-border: rgba(245, 158, 11, 0.38);
+  --quota-normal: #16a34a;
+  --quota-warning: #d97706;
+  --quota-critical: #dc2626;
 
-  --pulse-status-danger: #ef4444;
-  --pulse-status-danger-bg: rgba(239, 68, 68, 0.12);
-  --pulse-status-danger-border: rgba(239, 68, 68, 0.35);
+  /* 几何与阴影令牌 */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 9999px;
 
-  --pulse-status-neutral: #64748b;
-  --pulse-status-neutral-bg: rgba(100, 116, 139, 0.12);
-  --pulse-status-neutral-border: rgba(100, 116, 139, 0.25);
+  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.05);
+  --shadow-card: 0 1px 3px 0 rgba(15, 23, 42, 0.08), 0 1px 2px -1px rgba(15, 23, 42, 0.04);
+  --shadow-elevated: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.03);
 
-  --pulse-brand-claude: #D97757;
-  --pulse-brand-claude-bg: rgba(217, 119, 87, 0.14);
-  --pulse-brand-claude-border: rgba(217, 119, 87, 0.35);
+  /* 历史兼容变量 (向后兼容原有组件) */
+  --pulse-bg-base: var(--bg-app);
+  --pulse-bg-sidebar: var(--bg-surface);
+  --pulse-bg-surface: var(--bg-surface);
+  --pulse-bg-elevated: var(--bg-elevated);
+  --pulse-border-default: var(--border-default);
+  --pulse-border-hover: var(--border-strong);
+  --pulse-text-primary: var(--text-primary);
+  --pulse-text-secondary: var(--text-secondary);
+  --pulse-text-muted: var(--text-muted);
+}
 
-  --pulse-brand-codex: #10A37F;
-  --pulse-brand-codex-bg: rgba(16, 163, 127, 0.14);
-  --pulse-brand-codex-border: rgba(16, 163, 127, 0.35);
+.dark {
+  /* 基础画布与表面色 (Dark Midnight) */
+  --bg-app: #0b0d13;
+  --bg-surface: #141824;
+  --bg-elevated: #1d2333;
 
-  --pulse-brand-antigravity: #4285F4;
-  --pulse-brand-antigravity-bg: rgba(66, 133, 244, 0.14);
-  --pulse-brand-antigravity-border: rgba(66, 133, 244, 0.35);
+  /* 文字系统 (WCAG 2.1 AA+ 实测达标) */
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
 
-  --pulse-accent: #38bdf8;
-  --pulse-accent-hover: #0ea5e9;
-  --pulse-accent-subtle: rgba(56, 189, 248, 0.12);
-  --pulse-accent-border: rgba(56, 189, 248, 0.3);
+  /* 边框与轮廓 */
+  --border-default: rgba(248, 250, 252, 0.08);
+  --border-strong: rgba(248, 250, 252, 0.18);
 
-  --pulse-radius-xs: 4px;
-  --pulse-radius-sm: 6px;
-  --pulse-radius-md: 10px;
-  --pulse-radius-lg: 14px;
-  --pulse-radius-xl: 18px;
-  --pulse-radius-full: 9999px;
+  /* 品牌重点色 */
+  --accent-primary: #38bdf8;
+  --accent-hover: #0ea5e9;
 
-  --pulse-shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--pulse-border-default);
-  --pulse-shadow-elevated: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--pulse-border-hover);
-  --pulse-shadow-glow: 0 0 20px rgba(56, 189, 248, 0.2);
+  /* 状态与额度色谱 */
+  --status-success: #22c55e;
+  --status-working: #38bdf8;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
+  --status-idle: #94a3b8;
+
+  --quota-normal: #22c55e;
+  --quota-warning: #f59e0b;
+  --quota-critical: #ef4444;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border-default);
+  --shadow-elevated: 0 12px 32px -4px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--border-strong);
+
+  /* 历史兼容变量 */
+  --pulse-bg-base: var(--bg-app);
+  --pulse-bg-sidebar: var(--bg-surface);
+  --pulse-bg-surface: var(--bg-surface);
+  --pulse-bg-elevated: var(--bg-elevated);
+  --pulse-border-default: var(--border-default);
+  --pulse-border-hover: var(--border-strong);
+  --pulse-text-primary: var(--text-primary);
+  --pulse-text-secondary: var(--text-secondary);
+  --pulse-text-muted: var(--text-muted);
 }
 
 .tabular-nums {
@@ -87,24 +120,14 @@
   -webkit-app-region: no-drag;
 }
 
-/* 非权威本地估算警示斜纹（diagnostics 卡片用） */
-.stripe-pattern-warning {
-  background-image: repeating-linear-gradient(
-    -45deg,
-    rgba(245, 158, 11, 0.03),
-    rgba(245, 158, 11, 0.03) 8px,
-    rgba(245, 158, 11, 0.08) 8px,
-    rgba(245, 158, 11, 0.08) 16px
-  );
-}
-
 html, body, #root {
   width: 100%;
   height: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: var(--pulse-bg-base);
+  background-color: var(--bg-app);
+  color: var(--text-primary);
 }
 
 body {
