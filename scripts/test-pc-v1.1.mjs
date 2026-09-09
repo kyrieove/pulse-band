@@ -22,7 +22,7 @@ import {
 import { resolveMiniBarVisibility } from '../src/main/services/minibar-preference.ts';
 import { isVersionNewer } from '../src/main/services/version-check.ts';
 
-// 记录真实环境状态，用于断言测试期间绝对未被触碰或修改
+// 记录真实环境状态元数据（只记录存在性、大小与修改时间，严禁读取/解析真实文件内容）
 const REAL_RUN_DIR = path.join(
   process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
   'PulseDev',
@@ -31,10 +31,9 @@ const REAL_RUN_DIR = path.join(
 const REAL_CORE_FILE = path.join(REAL_RUN_DIR, 'core.json');
 const REAL_DEVICE_FILE = path.join(REAL_RUN_DIR, 'device.json');
 const INITIAL_CORE_EXISTS = fs.existsSync(REAL_CORE_FILE);
-const INITIAL_CORE_CONTENT = INITIAL_CORE_EXISTS ? fs.readFileSync(REAL_CORE_FILE, 'utf-8') : null;
+const INITIAL_CORE_STAT = INITIAL_CORE_EXISTS ? fs.statSync(REAL_CORE_FILE) : null;
 const INITIAL_DEVICE_EXISTS = fs.existsSync(REAL_DEVICE_FILE);
 const INITIAL_DEVICE_STAT = INITIAL_DEVICE_EXISTS ? fs.statSync(REAL_DEVICE_FILE) : null;
-const INITIAL_DEVICE_CONTENT = INITIAL_DEVICE_EXISTS ? fs.readFileSync(REAL_DEVICE_FILE, 'utf-8') : null;
 
 test('only an explicit connect action may connect the band', () => {
   assert.equal(shouldConnectBand('startup'), false);
@@ -63,9 +62,9 @@ test('a failed connection stays retryable', () => {
 
 test('support text removes credentials, complete MACs, and user paths', () => {
   const input =
-    'authkey=e9c3e378a217c27156075f19bc41e01b token=abc123 04:34:C3:97:9A:06 C:\\Users\\ASUS\\secret.log';
+    'authkey=0123456789abcdef0123456789abcdef token=abc123 00:11:22:33:44:55 C:\\Users\\TestUser\\secret.log';
   const output = redactSupportText(input);
-  assert.doesNotMatch(output, /e9c3e378|abc123|04:34:C3:97:9A:06|ASUS/);
+  assert.doesNotMatch(output, /0123456789abcdef|abc123|00:11:22:33:44:55|TestUser/);
   assert.match(output, /<redacted>/);
 });
 
@@ -650,18 +649,20 @@ test('audit: real environment files (%LOCALAPPDATA%/PulseDev/run) were not modif
     INITIAL_CORE_EXISTS,
     '真实 core.json 存在性未被改变',
   );
-  if (INITIAL_CORE_EXISTS) {
-    assert.equal(fs.readFileSync(REAL_CORE_FILE, 'utf-8'), INITIAL_CORE_CONTENT);
+  if (INITIAL_CORE_EXISTS && INITIAL_CORE_STAT) {
+    const stat = fs.statSync(REAL_CORE_FILE);
+    assert.equal(stat.size, INITIAL_CORE_STAT.size, '真实 core.json size 未被改变');
+    assert.equal(stat.mtimeMs, INITIAL_CORE_STAT.mtimeMs, '真实 core.json mtime 未被改变');
   }
   assert.equal(
     fs.existsSync(REAL_DEVICE_FILE),
     INITIAL_DEVICE_EXISTS,
     '真实 device.json 存在性未被改变',
   );
-  if (INITIAL_DEVICE_EXISTS) {
+  if (INITIAL_DEVICE_EXISTS && INITIAL_DEVICE_STAT) {
     const currentStat = fs.statSync(REAL_DEVICE_FILE);
+    assert.equal(currentStat.size, INITIAL_DEVICE_STAT.size, '真实 device.json size 未被改变');
     assert.equal(currentStat.mtimeMs, INITIAL_DEVICE_STAT.mtimeMs, '真实 device.json mtime 未被改变');
-    assert.equal(fs.readFileSync(REAL_DEVICE_FILE, 'utf-8'), INITIAL_DEVICE_CONTENT, '真实 device.json 内容未被改变');
   }
 });
 
