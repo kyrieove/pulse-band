@@ -20,7 +20,10 @@ import type {
   InstallCancelRequest,
   InstallProgressEvent,
 } from '../../common/types';
+import { inspectRpk } from './rpk-inspector.ts';
+import { calculateFileHash } from './app-install-reader.ts';
 
+export { calculateFileHash } from './app-install-reader.ts';
 export const MIN_CHUNK_SIZE = 256;
 export const MAX_CHUNK_SIZE = 64 * 1024; // 64 KiB
 export const DEFAULT_CHUNK_SIZE = 512;
@@ -54,6 +57,10 @@ export interface InstallSession {
   totalChunks: number;
   receivedBytes: number;
   receivedChunks: Set<number>;
+  sourcePath: string;
+  packageId?: string;
+  versionName?: string;
+  versionCode?: number;
   expectedHash: string;
   createdAt: number;
 }
@@ -140,6 +147,10 @@ export class AppInstallService {
       totalChunks,
       receivedBytes: 0,
       receivedChunks: new Set<number>(),
+      sourcePath: '',
+      packageId: req.packageId,
+      versionName: req.versionName,
+      versionCode: req.versionCode,
       expectedHash: req.hash.trim(),
       createdAt: Date.now(),
     };
@@ -158,6 +169,78 @@ export class AppInstallService {
       installId,
       status: 'preparing',
       fileSize: req.fileSize,
+      chunkSize,
+      totalChunks,
+    };
+  }
+
+  async prepareFromFile(
+    filePath: string,
+    chunkSize: number = DEFAULT_CHUNK_SIZE
+  ): Promise<InstallPrepareResult> {
+    if (
+      this.session &&
+      (this.session.status === 'preparing' ||
+        this.session.status === 'transferring' ||
+        this.session.status === 'verifying')
+    ) {
+      throw new Error('已有正在进行的安装会话');
+    }
+
+    if (!filePath || typeof filePath !== 'string') {
+      throw new Error('无效的文件路径');
+    }
+
+    if (
+      typeof chunkSize !== 'number' ||
+      chunkSize < MIN_CHUNK_SIZE ||
+      chunkSize > MAX_CHUNK_SIZE
+    ) {
+      throw new Error(
+        `无效的 chunkSize: 必须在 [${MIN_CHUNK_SIZE}, ${MAX_CHUNK_SIZE}] 范围内`
+      );
+    }
+
+    const meta = inspectRpk(filePath);
+    if (!meta.manifestValid) {
+      throw new Error('RPK manifest 无效或不是合法 ZIP 容器');
+    }
+
+    const hash = await calculateFileHash(filePath);
+    const totalChunks = Math.ceil(meta.fileSize / chunkSize);
+    const installId =
+      'inst_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 8);
+
+    this.session = {
+      installId,
+      status: 'preparing',
+      fileSize: meta.fileSize,
+      chunkSize,
+      totalChunks,
+      receivedBytes: 0,
+      receivedChunks: new Set<number>(),
+      sourcePath: filePath,
+      packageId: meta.packageId,
+      versionName: meta.versionName,
+      versionCode: meta.versionCode,
+      expectedHash: hash,
+      createdAt: Date.now(),
+    };
+
+    this.broadcastProgress({
+      messageType: 'event',
+      event: 'device.app.install.progress',
+      installId,
+      status: 'preparing',
+      fileSize: meta.fileSize,
+      transferredBytes: 0,
+      percentage: 0,
+    });
+
+    return {
+      installId,
+      status: 'preparing',
+      fileSize: meta.fileSize,
       chunkSize,
       totalChunks,
     };

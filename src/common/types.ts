@@ -270,3 +270,11 @@ export interface RpkMetadata {
   versionCode?: number;
   manifestValid: boolean;
 }
+
+// ============================================================================
+// 快应用安装源数据契约 (Install Source Contract)
+// ============================================================================
+
+export interface InstallSource {
+  filePath: string;
+}
