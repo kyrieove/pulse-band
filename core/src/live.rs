@@ -261,8 +261,8 @@ fn recv_into(sock: usize, buf: &mut [u8]) -> Result<usize, String> {
     Ok(n as usize)
 }
 
-/// 连接 + 前导/协商 + Session 认证，返回 (socket, enc_key, dec_key)。
-fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16]), String> {
+/// 连接 + 前导/协商 + Session 认证，返回 (socket, enc_key, dec_key, 未消费接收余量, 下一个下行序号)。
+fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16], Vec<u8>, u8), String> {
     let (authkey, mac) = read_device_auth_mac()?;
     unsafe {
         let mut wsa = std::mem::zeroed::<rfcomm::WsaData>();
@@ -273,6 +273,7 @@ fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16]), String> {
     let sock = connect_rfcomm(mac)?;
     let mut session = Session::new(authkey);
     let step1 = session.start_auth(None).map_err(|e| format!("start_auth: {e}"))?;
+    let mut last_tx_seq = step1.seq;
     send_all(sock, &encode(&step1))?;
 
     let mut rx = Vec::new();
@@ -305,16 +306,19 @@ fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16]), String> {
                         continue;
                     }
                     if frame.frame_type == 0x02 {
-                        let ack = Frame { frame_type: 0x01, seq: frame.seq, payload: vec![] };
-                        send_all(sock, &encode(&ack))
+                        ack_frame(sock, frame.seq)
                             .map_err(|e| { unsafe { rfcomm::closesocket(sock) }; e })?;
                         continue;
                     }
                     if frame.frame_type != 0x03 {
                         continue;
                     }
+                    // 数据帧：先回传输层 ACK（seq 回显），再喂状态机（对齐 run_auth_3times 行为）。
+                    ack_frame(sock, frame.seq)
+                        .map_err(|e| { unsafe { rfcomm::closesocket(sock) }; e })?;
                     match session.process_frame(&frame) {
                         Ok(Some(step3)) => {
+                            last_tx_seq = step3.seq;
                             send_all(sock, &encode(&step3)).map_err(|e| {
                                 unsafe { rfcomm::closesocket(sock) };
                                 e
@@ -347,7 +351,8 @@ fn connect_and_authenticate() -> Result<(usize, [u8; 16], [u8; 16]), String> {
         unsafe { rfcomm::closesocket(sock) };
         return Err("认证超时/未完成".to_string());
     }
-    Ok((sock, enc_key, dec_key))
+    let next_seq = last_tx_seq.wrapping_add(1);
+    Ok((sock, enc_key, dec_key, rx, next_seq))
 }
 
 fn broadcast_interconnect(core: &Core, content: &[u8]) {
@@ -362,14 +367,66 @@ fn broadcast_interconnect(core: &Core, content: &[u8]) {
     );
 }
 
+/// 构造 __hs__ 握手应答 content（count+1，caps 采用真机抓包 #338 实测的下行协商值）。
+fn build_hs_ack(raw_content: &[u8]) -> Vec<u8> {
+    let v: serde_json::Value =
+        serde_json::from_slice(raw_content).unwrap_or(serde_json::Value::Null);
+    let count = v["count"].as_u64().unwrap_or(0);
+    serde_json::json!({
+        "tag": "__hs__",
+        "count": count + 1,
+        "caps": {
+            "version": 3, "chunk": true, "maxChunkSize": 768,
+            "encodings": ["base64", "text", "hex"], "compressions": ["none"],
+            "ack": true, "ackWindow": 4,
+        },
+    })
+    .to_string()
+    .into_bytes()
+}
+
+fn ack_frame(sock: usize, seq: u8) -> Result<(), String> {
+    let ack = Frame { frame_type: 0x01, seq, payload: vec![] };
+    send_all(sock, &encode(&ack))
+}
+
+/// 解析手环上行 type=20 id=6（REQUEST_PHONE_APP_STATUS）→ 返回 BasicInfo；非该消息返回 None。
+fn parse_app_status_request(decoded: &[u8]) -> Result<Option<BasicInfo>, String> {
+    let wp = parse_protobuf(decoded).map_err(|e| format!("WearPacket 解析失败: {e}"))?;
+    let msg_type = extract_one_varint(&wp, 1).map_err(|_| "缺 type")?;
+    let msg_id = extract_one_varint(&wp, 2).map_err(|_| "缺 id")?;
+    if msg_type != 20 || msg_id != 6 {
+        return Ok(None);
+    }
+    let thirdparty = parse_protobuf(extract_one_bytes(&wp, 22).map_err(|_| "缺 field22")?)
+        .map_err(|e| format!("ThirdpartyApp 解析失败: {e}"))?;
+    let basic = parse_basic_info(extract_one_bytes(&thirdparty, 5).map_err(|_| "缺 field5")?)?;
+    Ok(Some(basic))
+}
+
+/// 构造 type=20 id=7（SYNC_PHONE_APP_STATUS, status=CONNECTED=1）的 WearPacket 明文。
+pub fn build_app_status_payload(basic: &BasicInfo) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(&encode_field(1, 2, basic.package_name.as_bytes()));
+    b.extend_from_slice(&encode_field(2, 2, &basic.fingerprint));
+    let mut phone_status = Vec::new();
+    phone_status.extend_from_slice(&encode_field(1, 2, &b));
+    phone_status.extend_from_slice(&encode_field(2, 0, &encode_varint_bytes(1)));
+    let thirdparty = encode_field(8, 2, &phone_status);
+    let mut wp = Vec::new();
+    wp.extend_from_slice(&encode_field(1, 0, &encode_varint_bytes(20)));
+    wp.extend_from_slice(&encode_field(2, 0, &encode_varint_bytes(7)));
+    wp.extend_from_slice(&encode_field(22, 2, &thirdparty));
+    wp
+}
+
 /// 阶段 6B 数据泵入口：连接真机、认证、而后进入业务收循环，把上行 fetch/快应用消息转发给客户端。
 pub fn run_live(core: &Core) -> Result<(), String> {
-    let (sock, enc_key, dec_key) = connect_and_authenticate()?;
+    let (sock, enc_key, dec_key, mut rx, next_seq) = connect_and_authenticate()?;
     unsafe { rfcomm::setsockopt(sock, rfcomm::SOL_SOCKET, rfcomm::SO_RCVTIMEO, &300u32 as *const u32 as *const u8, 4) };
-    *core.bt.lock().unwrap() = Some(DownlinkCtx { sock, enc_key, basic: None, seq_out: 0 });
+    *core.bt.lock().unwrap() = Some(DownlinkCtx { sock, enc_key, basic: None, seq_out: next_seq });
     core.log("阶段 6B 数据泵：已认证，进入业务转发循环（脱敏）");
 
-    let mut rx = Vec::new();
     let mut raw = [0u8; 1024];
     loop {
         let n = unsafe { rfcomm::recv(sock, raw.as_mut_ptr(), raw.len() as i32, 0) };
@@ -390,25 +447,69 @@ pub fn run_live(core: &Core) -> Result<(), String> {
             match decode(&rx) {
                 Ok((frame, consumed)) => {
                     rx.drain(..consumed);
-                    if frame.frame_type == 0x02 {
-                        let ack = Frame { frame_type: 0x01, seq: frame.seq, payload: vec![] };
-                        let _ = send_all(sock, &encode(&ack));
+                    if frame.frame_type == 0x01 {
                         continue;
                     }
-                    if frame.frame_type != 0x03 || !frame.payload.starts_with(&BIZ_PREFIX) {
+                    if frame.frame_type == 0x02 {
+                        let _ = ack_frame(sock, frame.seq);
+                        continue;
+                    }
+                    if frame.frame_type != 0x03 {
+                        continue;
+                    }
+                    // 业务/握手数据帧：先回传输层 ACK（seq 回显），再处理。
+                    let _ = ack_frame(sock, frame.seq);
+                    if !frame.payload.starts_with(&BIZ_PREFIX) {
                         continue;
                     }
                     if let Some(plain) = decrypted_business_payload(&dec_key, &frame.payload) {
                         if let Ok(Some(up)) = parse_uplink(&plain) {
-                            let tag: String = String::from_utf8_lossy(&up.content).chars().take(12).collect();
-                            core.log(&format!("数据泵上行 id=9 content tag≈ {tag}(脱敏) len={}", up.content.len()));
                             {
                                 let mut bt = core.bt.lock().unwrap();
                                 if let Some(ctx) = bt.as_mut() {
                                     ctx.basic = Some(up.basic.clone());
                                 }
                             }
-                            broadcast_interconnect(core, &up.content);
+                            let v: serde_json::Value =
+                                serde_json::from_slice(&up.content).unwrap_or(serde_json::Value::Null);
+                            let tag = v["tag"].as_str().unwrap_or("");
+                            if tag == "__hs__" {
+                                let ack = build_hs_ack(&up.content);
+                                core.log("数据泵上行 __hs__ 握手 → 自动应答");
+                                let mut bt = core.bt.lock().unwrap();
+                                if let Some(ctx) = bt.as_mut() {
+                                    let frame = build_downlink_frame(
+                                        &ctx.enc_key, &up.basic, &ack, ctx.seq_out,
+                                    );
+                                    ctx.seq_out = ctx.seq_out.wrapping_add(1);
+                                    let raw = encode(&frame);
+                                    let _ = send_all(ctx.sock, &raw);
+                                }
+                            } else if tag == "fetch" {
+                                core.log(&format!(
+                                    "数据泵上行 fetch id={:?} (脱敏) len={}",
+                                    v["id"],
+                                    up.content.len()
+                                ));
+                                broadcast_interconnect(core, &up.content);
+                            } else {
+                                core.log(&format!("数据泵上行 tag={tag:?} (脱敏)"));
+                            }
+                        } else if let Ok(Some(basic)) = parse_app_status_request(&plain) {
+                            core.log("数据泵上行 id=6 状态查询 → 应答 id=7 CONNECTED");
+                            let pl = build_app_status_payload(&basic);
+                            let mut bt = core.bt.lock().unwrap();
+                            if let Some(ctx) = bt.as_mut() {
+                                ctx.basic = Some(basic);
+                                let frame = Frame {
+                                    frame_type: 0x03,
+                                    seq: ctx.seq_out,
+                                    payload: business_frame_payload(&ctx.enc_key, &pl),
+                                };
+                                ctx.seq_out = ctx.seq_out.wrapping_add(1);
+                                let raw = encode(&frame);
+                                let _ = send_all(ctx.sock, &raw);
+                            }
                         }
                     }
                 }
@@ -462,6 +563,21 @@ mod tests {
     fn fetch_content(id: &str) -> Vec<u8> {
         format!(r#"{{"tag":"fetch","id":"{id}","url":"http://127.0.0.1:8765/api/status/compact?all=1","options":{{"method":"GET"}}}}"#)
             .into_bytes()
+    }
+
+    #[test]
+    fn test_app_status_payload_roundtrip() {
+        let basic = basic();
+        let wp = build_app_status_payload(&basic);
+        let m = parse_protobuf(&wp).unwrap();
+        assert_eq!(extract_one_varint(&m, 1).unwrap(), 20);
+        assert_eq!(extract_one_varint(&m, 2).unwrap(), 7);
+        let thirdparty = parse_protobuf(extract_one_bytes(&m, 22).unwrap()).unwrap();
+        let ps = parse_protobuf(extract_one_bytes(&thirdparty, 8).unwrap()).unwrap();
+        assert_eq!(extract_one_varint(&ps, 2).unwrap(), 1); // status = CONNECTED
+        let b = parse_basic_info(extract_one_bytes(&ps, 1).unwrap()).unwrap();
+        assert_eq!(b.package_name, "com.codeisland.band");
+        assert_eq!(b.fingerprint, vec![0x22u8; 20]);
     }
 
     #[test]
