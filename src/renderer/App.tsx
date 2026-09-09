@@ -25,8 +25,33 @@ const getInitialScreen = (): AppScreen => {
 export const App: React.FC = () => {
   const [screen] = useState<AppScreen>(getInitialScreen);
   const [page, setPage] = useState<PulsePage>(screen === 'minibar' ? 'overview' : screen);
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      return (localStorage.getItem('pulse-theme') as 'light' | 'dark') || 'light';
+    } catch {
+      return 'light';
+    }
+  });
+  const [showAgents] = useState<boolean>(true);
   const [state, setState] = useState<PulseOronboxState | null>(null);
+
+  const handleThemeChange = (newTheme: 'light' | 'dark') => {
+    setTheme(newTheme);
+    try {
+      localStorage.setItem('pulse-theme', newTheme);
+    } catch {}
+  };
+
+  // 跨窗口主题同步：主窗口状态作为唯一源，MiniBar窗口通过storage事件响应
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'pulse-theme' && (e.newValue === 'light' || e.newValue === 'dark')) {
+        setTheme(e.newValue);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   // MiniBar 独立窗口适配
   useEffect(() => {
@@ -73,7 +98,7 @@ export const App: React.FC = () => {
 
   // 如果处于 MiniBar 独立小窗
   if (screen === 'minibar') {
-    return <MiniBar />;
+    return <MiniBar theme={theme} showAgents={showAgents} />;
   }
 
   const handleNavigate = (newPage: PulsePage) => {
@@ -96,7 +121,11 @@ export const App: React.FC = () => {
   return (
     <div className="w-full h-full flex flex-col bg-[var(--bg-app)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200">
       {/* 顶部自绘标题栏 */}
-      <TopBar subtitle={getSubtitle()} theme={theme} onToggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} />
+      <TopBar
+        subtitle={getSubtitle()}
+        theme={theme}
+        onToggleTheme={() => handleThemeChange(theme === 'light' ? 'dark' : 'light')}
+      />
 
       {/* 主体工作区布局：左侧导航 + 右侧主内容 */}
       <div className="flex-1 flex overflow-hidden">
@@ -116,7 +145,7 @@ export const App: React.FC = () => {
           {page === 'band' && <BandManagementPage />}
 
           {page === 'settings' && (
-            <SettingsPage theme={theme} onThemeChange={setTheme} />
+            <SettingsPage theme={theme} onThemeChange={handleThemeChange} />
           )}
         </ContentArea>
       </div>
