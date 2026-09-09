@@ -4,6 +4,7 @@ dist-electron/
 release/
 .vite/
 .cache/
+.zcode/
 *.log
 
 # 手环端构建产物与签名密钥 —— 签名密钥绝不入库
