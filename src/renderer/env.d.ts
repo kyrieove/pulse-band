@@ -23,8 +23,8 @@ import type { DiagnosticReport } from '../main/services/diagnostics';
 export interface AppInstallBridge {
   prepare: (req: InstallPrepareRequest) => Promise<InstallPrepareResult>;
   sendChunk: (req: InstallChunkRequest) => Promise<InstallChunkResult>;
-  commit: (req: InstallCommitRequest) => Promise<{ ok: boolean; error?: string }>;
-  cancel: (req: InstallCancelRequest) => Promise<{ ok: boolean; error?: string }>;
+  commit: (req: InstallCommitRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus; error?: string }>;
+  cancel: (req: InstallCancelRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus }>;
   onProgress: (cb: (event: InstallProgressEvent) => void) => () => void;
 }
 

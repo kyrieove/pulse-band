@@ -80,12 +80,16 @@ contextBridge.exposeInMainWorld('pulse', {
   uninstallHook: () => ipcRenderer.invoke('hook:uninstall'),
   // Electron ≥32 移除了 File.path，拖拽文件的本地绝对路径只能在 preload 用 webUtils 取
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
-  // device.app.install 契约占位（阶段契约：仅占位，禁止绑定真实 IPC 通道）
+  // device.app.install 真实 IPC 桥接（阶段契约闭环）
   appInstall: {
-    prepare: () => Promise.reject(new Error('device.app.install.prepare not implemented')),
-    sendChunk: () => Promise.reject(new Error('device.app.install.chunk not implemented')),
-    commit: () => Promise.reject(new Error('device.app.install.commit not implemented')),
-    cancel: () => Promise.reject(new Error('device.app.install.cancel not implemented')),
-    onProgress: (_callback: (event: any) => void) => () => {},
+    prepare: (req: any) => ipcRenderer.invoke('pulse:app-install:prepare', req),
+    sendChunk: (req: any) => ipcRenderer.invoke('pulse:app-install:chunk', req),
+    commit: (req: any) => ipcRenderer.invoke('pulse:app-install:commit', req),
+    cancel: (req: any) => ipcRenderer.invoke('pulse:app-install:cancel', req),
+    onProgress: (callback: (event: any) => void) => {
+      const subscription = (_: any, ev: any) => callback(ev);
+      ipcRenderer.on('pulse:app-install-progress', subscription);
+      return () => ipcRenderer.removeListener('pulse:app-install-progress', subscription);
+    },
   },
 });

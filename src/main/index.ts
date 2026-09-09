@@ -14,6 +14,7 @@ import { OronBoxBridge } from './services/oronbox-bridge';
 import { createTray } from './tray';
 import { createMiniBarWindow, disposeMiniBar, toggleMiniBar, isMiniBarVisible } from './minibar-window';
 import { isVersionNewer } from './services/version-check';
+import { AppInstallService, registerAppInstallIpc } from './services/app-install-service';
 
 // Ensure single instance
 const gotLock = app.requestSingleInstanceLock();
@@ -50,6 +51,7 @@ const oronboxBridge = new OronBoxBridge(
   oronbox,
   path.join(app.getPath('userData'), 'pulse-bridge-mode.json'),
 );
+const appInstallService = new AppInstallService();
 oronbox.on('daemon-spawned', (pid) => console.log('[OronBox] daemon 已拉起 pid=' + pid));
 oronbox.on('degraded', (info) =>
   console.warn('[OronBox] protocolVersion 不匹配，进入降级（继续用旧链路）:', JSON.stringify(info))
@@ -141,6 +143,7 @@ function createWindow() {
   });
 
   oronboxBridge.attach(win);
+  appInstallService.attach(win);
 
   tray = createTray(
     win,
@@ -217,6 +220,7 @@ app.whenReady().then(async () => {
   createMiniBarWindow(sessionManager, statusServer);
   registerClaudeHookInstall();
   registerBandKeyExtract();
+  registerAppInstallIpc(appInstallService, ipcMain, () => win);
 
   // Start background monitoring services
   codexTailer.start();
