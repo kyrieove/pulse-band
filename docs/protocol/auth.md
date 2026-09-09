@@ -120,10 +120,33 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 后续自研状态机应要求：处于等待确认阶段、已验证 Step 2、已生成并发送 Step 3、收到正确方向和 type/id/Account 分支且显式 confirm_result=true。false、字段缺失、乱序、重复、超时、断链都不能升级为成功。超时时长应沿用项目已有配置或单独确定，不从两份抓包臆造。
 
-## 5. 当前交付与下一步
+## 5. 阶段 5D 真机三次断开重连认证验收（2026-09-09 实测）
 
-本次完成公开源码调查、两会话离线复现、旧脚本证据审计和文档更新；未连接设备、未发包、未修改 `session.rs`、未修改凭据/pcapng。收工时用户已授权将文档、脱敏输出及验证脚本提交推送。
+依据用户明确授权，在解封真机后执行受控真机认证，使用自研 `core/src/session.rs` 会话状态机驱动，连续完成三次独立建立连接、前导握手、链路协商、Step 1~4 认证握手及显式 `closesocket` 释放链路。失败对照本轮未获授权执行，直接跳过。
 
-算法和成功字段的离线证据已足以准备下一步会话层设计与纯离线测试；真实失败响应仍作为单独的实测缺口保留。按当前闸门，不自动启动产品认证或真机测试。
+- **执行命令**：
+  ```powershell
+  cd C:\dev\pulse-band2\core
+  cargo run -- --auth
+  ```
+- **测试环境与保护计数器**：
+  - 目标设备：Xiaomi Smart Band 10 (`<mac>`)，凭据载入自 `%LOCALAPPDATA%\PulseDev\run\device.json`（内存持有，未落盘未泄露）。
+  - 保护计数器终值：连接失败 = 0 次 (历史 0 + 本阶段 0), 发包失败 = 0 次 (历史 0 + 本阶段 0)。
+- **三次认证实测记录**：
 
-下一步最小工作：以本文件公式编写会话状态机设计和合成数据测试向量，覆盖 HMAC 不匹配、CCM 标签损坏、confirm=false/缺失、乱序确认、超时与断链。随后在原有真机闸门明确解除后，才执行项目阶段 5 的受控认证及三次重连验收；不得把本次离线成功标成阶段 5 已完成。
+| 尝试号 | 前导握手 (TX 11B / RX 14B) | 协商帧 (TX 22B / RX 22B) | Step 1 TX (29B) | Step 2 RX (63B) | Step 3 TX (68B) | Step 4 RX (22B) | 最终状态 | closesocket |
+|---|---|---|---|---|---|---|---|---|
+| 1/3 | 100% 匹配 | 100% 匹配 (CRC 0xc700) | seq=0x00, CRC=0x3429 | HMAC PASS (CRC=0xa164) | seq=0x01, CRC=0x7fa3 | confirm=true (CRC=0xdcf1) | `Authenticated` | 成功释放 (fd 316) |
+| 2/3 | 100% 匹配 | 100% 匹配 (CRC 0xc700) | seq=0x00, CRC=0xde7e | HMAC PASS (CRC=0x7f7c) | seq=0x01, CRC=0xdadc | confirm=true (CRC=0xdcf1) | `Authenticated` | 成功释放 (fd 316) |
+| 3/3 | 100% 匹配 | 100% 匹配 (CRC 0xc700) | seq=0x00, CRC=0xa1a8 | HMAC PASS (CRC=0x5a43) | seq=0x01, CRC=0x3cab | confirm=true (CRC=0xdcf1) | `Authenticated` | 成功释放 (fd 316) |
+
+- **可区分响应判定**：
+  收到 Step 4 `Account` 字段 33 且 `confirm_result == true`，状态机成功进入 `Authenticated`，并协商获得双方业务会话密钥 `<dec_key:16B>`, `<enc_key:16B>`。
+- **未覆盖缺口**：
+  - 真实失败对照未执行（设备收到非法 Step 3 时的具体断链/超时行为仍是假设）。
+  - 业务流 `01 02` CTR 传输层双向交互尚未进入持续业务泵。
+
+## 6. 当前交付与结论
+
+阶段 5（会话认证与状态机）已完成自研状态机编写、7 类离线合成测试闭环，以及真机三次独立断开重连受控认证验收（3/3 PASS）。阶段 5 达标完成。未进入阶段 6。
+

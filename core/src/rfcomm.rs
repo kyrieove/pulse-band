@@ -39,25 +39,25 @@ pub struct WsaData {
     pub vendor_info: *mut u8,
 }
 
-const AF_BTH: i32 = 32;
-const BTHPROTO_RFCOMM: i32 = 3;
-const SOCK_STREAM: i32 = 1;
-const SOL_SOCKET: i32 = 0xFFFF;
-const SO_RCVTIMEO: i32 = 0x1006;
-const INVALID_SOCKET: usize = !0;
-const WSAETIMEDOUT: i32 = 10060;
+pub const AF_BTH: i32 = 32;
+pub const BTHPROTO_RFCOMM: i32 = 3;
+pub const SOCK_STREAM: i32 = 1;
+pub const SOL_SOCKET: i32 = 0xFFFF;
+pub const SO_RCVTIMEO: i32 = 0x1006;
+pub const INVALID_SOCKET: usize = !0;
+pub const WSAETIMEDOUT: i32 = 10060;
 
 #[link(name = "ws2_32")]
 extern "system" {
-    fn WSAStartup(version_requested: u16, data: *mut WsaData) -> i32;
-    fn WSACleanup() -> i32;
-    fn WSAGetLastError() -> i32;
-    fn socket(af: i32, type_: i32, protocol: i32) -> usize;
-    fn connect(s: usize, name: *const SockAddrBth, namelen: i32) -> i32;
-    fn send(s: usize, buf: *const u8, len: i32, flags: i32) -> i32;
-    fn recv(s: usize, buf: *mut u8, len: i32, flags: i32) -> i32;
-    fn setsockopt(s: usize, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
-    fn closesocket(s: usize) -> i32;
+    pub fn WSAStartup(version_requested: u16, data: *mut WsaData) -> i32;
+    pub fn WSACleanup() -> i32;
+    pub fn WSAGetLastError() -> i32;
+    pub fn socket(af: i32, type_: i32, protocol: i32) -> usize;
+    pub fn connect(s: usize, name: *const SockAddrBth, namelen: i32) -> i32;
+    pub fn send(s: usize, buf: *const u8, len: i32, flags: i32) -> i32;
+    pub fn recv(s: usize, buf: *mut u8, len: i32, flags: i32) -> i32;
+    pub fn setsockopt(s: usize, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
+    pub fn closesocket(s: usize) -> i32;
 }
 
 pub fn hex_dump(data: &[u8]) -> String {

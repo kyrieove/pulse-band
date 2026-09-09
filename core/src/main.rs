@@ -126,6 +126,13 @@ fn main() {
         }
         return;
     }
+    if args.iter().any(|a| a == "--auth") {
+        if let Err(e) = session::run_auth_3times() {
+            eprintln!("pulse-core auth failed: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if !args.iter().any(|a| a == "--fake") {
         eprintln!("pulse-core: 真设备模式尚未实现（蓝牙层要等阶段 2~4 的抓包证据），请用 --fake 启动");
         std::process::exit(2);

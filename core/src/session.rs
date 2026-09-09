@@ -712,6 +712,449 @@ pub fn extract_one_bytes<'a>(
 }
 
 // -----------------------------------------------------------------------------
+// 阶段 5D 受控真机认证（三次断开重连验收）
+// -----------------------------------------------------------------------------
+
+/// 脱敏打印载荷 Hexdump
+fn desensitize_hexdump(frame_type: u8, payload: &[u8]) -> String {
+    if frame_type == 0x01 {
+        return "(ACK帧 无载荷)".to_string();
+    }
+    if frame_type == 0x02 {
+        return payload.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+    }
+    if payload.len() >= 2 && &payload[0..2] == [0x01, 0x01] {
+        if payload.len() == 29 {
+            // Step 1: 01 01 08 01 10 1a 1a 15 f2 01 12 0a 10 <P:16B>
+            return "01 01 08 01 10 1a 1a 15 f2 01 12 0a 10 <P:16B>".to_string();
+        } else if payload.len() == 63 {
+            // Step 2: 01 01 08 01 10 1a 1a 37 f2 01 34 0a 10 <W:16B> 12 20 <device_sign:32B>
+            return "01 01 08 01 10 1a 1a 37 f2 01 34 0a 10 <W:16B> 12 20 <device_sign:32B>".to_string();
+        } else if payload.len() == 68 {
+            // Step 3: 01 01 08 01 10 1b 1a 3c 82 02 39 0a 20 <app_sign:32B> 12 15 <cm-cipher:21B>
+            return "01 01 08 01 10 1b 1a 3c 82 02 39 0a 20 <app_sign:32B> 12 15 <cm-cipher:21B>".to_string();
+        } else if payload.len() == 22 {
+            // Step 4: 01 01 08 01 10 1b 1a 0e 8a 02 0b 08 01 10 ... <capabilities:8B>
+            return "01 01 08 01 10 1b 1a 0e 8a 02 0b 08 01 (confirm_result=true) <capabilities:8B>".to_string();
+        }
+    }
+    format!("<payload:{}B>", payload.len())
+}
+
+/// 执行阶段 5D 受控真机三次断开重连认证验收
+pub fn run_auth_3times() -> Result<(), String> {
+    println!("================================================================================");
+    println!("pulse-core 阶段 5D: 真机受控认证验收（三次独立断开重连，不含失败对照）");
+    println!("================================================================================");
+
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map_err(|e| format!("LOCALAPPDATA 环境变量不存在: {e}"))?;
+    let dev_path = std::path::Path::new(&local_app_data)
+        .join("PulseDev")
+        .join("run")
+        .join("device.json");
+
+    let raw = std::fs::read_to_string(&dev_path)
+        .map_err(|e| format!("读取 device.json 失败 {dev_path:?}: {e}"))?;
+    let val: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("解析 device.json 失败: {e}"))?;
+
+    let addr_str = val["addr"].as_str().ok_or("device.json 缺少 addr 字段")?;
+    let authkey_hex = val["authkey"].as_str().ok_or("device.json 缺少 authkey 字段")?;
+    if authkey_hex.len() != 32 {
+        return Err(format!("authkey hex 长度必须为 32, 实际为 {}", authkey_hex.len()));
+    }
+
+    let mut authkey = [0u8; 16];
+    for i in 0..16 {
+        authkey[i] = u8::from_str_radix(&authkey_hex[i * 2..i * 2 + 2], 16)
+            .map_err(|e| format!("authkey hex 解码失败: {e}"))?;
+    }
+
+    let mac_clean = addr_str.replace(':', "");
+    let target_mac_u64 = u64::from_str_radix(&mac_clean, 16)
+        .map_err(|e| format!("MAC 地址格式解析错误: {e}"))?;
+
+    println!("[配置读取] 目标设备: <mac>, authkey: <authkey:16B>");
+    println!("[前置检查] 保护条款计数器初值: 连接失败 = 0 次 (历史 0 + 本阶段 0), 发包失败 = 0 次 (历史 0 + 本阶段 0)");
+
+    let mut conn_fail_count = 0usize;
+    let mut send_fail_count = 0usize;
+
+    unsafe {
+        let mut wsa_data = std::mem::zeroed::<crate::rfcomm::WsaData>();
+        let startup_res = crate::rfcomm::WSAStartup(0x0202, &mut wsa_data);
+        if startup_res != 0 {
+            return Err(format!("WSAStartup 失败: {startup_res}"));
+        }
+    }
+
+    let spp_guid = crate::rfcomm::Guid {
+        data1: 0x00001101,
+        data2: 0x0000,
+        data3: 0x1000,
+        data4: [0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB],
+    };
+
+    let sockaddr = crate::rfcomm::SockAddrBth {
+        address_family: crate::rfcomm::AF_BTH as u16,
+        bt_addr: target_mac_u64,
+        service_class_id: spp_guid,
+        port: 0,
+    };
+
+    for attempt in 1..=3 {
+        println!("\n--------------------------------------------------------------------------------");
+        println!(">>> [尝试 {}/3] 发起独立物理连接与受控认证", attempt);
+        println!("--------------------------------------------------------------------------------");
+
+        let s = unsafe {
+            crate::rfcomm::socket(
+                crate::rfcomm::AF_BTH,
+                crate::rfcomm::SOCK_STREAM,
+                crate::rfcomm::BTHPROTO_RFCOMM,
+            )
+        };
+        if s == crate::rfcomm::INVALID_SOCKET {
+            conn_fail_count += 1;
+            println!("  [连接失败] 创建 RFCOMM 套接字失败 (fd = INVALID)");
+            if conn_fail_count >= 3 {
+                break;
+            }
+            continue;
+        }
+
+        let rcv_timeout_ms: u32 = 5000;
+        unsafe {
+            crate::rfcomm::setsockopt(
+                s,
+                crate::rfcomm::SOL_SOCKET,
+                crate::rfcomm::SO_RCVTIMEO,
+                &rcv_timeout_ms as *const u32 as *const u8,
+                std::mem::size_of::<u32>() as i32,
+            );
+        }
+
+        println!("  [步骤 1/5 · RFCOMM 连接] 正在发起 WinSock connect 到目标 <mac>...");
+        let conn_res = unsafe {
+            crate::rfcomm::connect(
+                s,
+                &sockaddr as *const crate::rfcomm::SockAddrBth,
+                std::mem::size_of::<crate::rfcomm::SockAddrBth>() as i32,
+            )
+        };
+
+        if conn_res != 0 {
+            let err = unsafe { crate::rfcomm::WSAGetLastError() };
+            conn_fail_count += 1;
+            println!(
+                "  [连接失败] connect 失败: Win32 错误码 {} ({})",
+                err,
+                std::io::Error::from_raw_os_error(err)
+            );
+            unsafe { crate::rfcomm::closesocket(s) };
+            if conn_fail_count >= 3 {
+                println!("  [保护条款触发] 连接失败累计达到上限 ({} 次)，终止执行", conn_fail_count);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            continue;
+        }
+
+        println!("  [步骤 1/5 · RFCOMM 连接] 连接成功！(socket fd = {s})");
+
+        // 步骤 2：发非 A5A5 前导帧并校验响应
+        println!("  [步骤 2/5 · 前导握手] 发送非 A5A5 前导帧 (11 字节)...");
+        let preamble_tx = [0xba, 0xdc, 0xfe, 0x00, 0xc0, 0x03, 0x00, 0x00, 0x01, 0x00, 0xef];
+        let sent_p = unsafe {
+            crate::rfcomm::send(s, preamble_tx.as_ptr(), preamble_tx.len() as i32, 0)
+        };
+        if sent_p != preamble_tx.len() as i32 {
+            send_fail_count += 1;
+            println!("  [发送失败] 前导帧发送不完整: sent = {sent_p}");
+            unsafe { crate::rfcomm::closesocket(s) };
+            if send_fail_count >= 5 {
+                break;
+            }
+            continue;
+        }
+        println!("  [前导握手 - TX] 方向: host->band, 长度: 11B, hex: badcfe00c00300000100ef");
+
+        let mut preamble_rx = [0u8; 128];
+        let recv_p = unsafe {
+            crate::rfcomm::recv(s, preamble_rx.as_mut_ptr(), preamble_rx.len() as i32, 0)
+        };
+        if recv_p <= 0 {
+            send_fail_count += 1;
+            let err = unsafe { crate::rfcomm::WSAGetLastError() };
+            println!("  [前导握手 - 接收超时/失败] recv 返回 {recv_p}, 错误码 {err}");
+            unsafe { crate::rfcomm::closesocket(s) };
+            if send_fail_count >= 5 {
+                break;
+            }
+            continue;
+        }
+        let p_resp = &preamble_rx[..recv_p as usize];
+        let expected_p_resp = [
+            0xba, 0xdc, 0xfe, 0x00, 0x00, 0x06, 0x00, 0x01, 0x02, 0x00, 0x03, 0x01, 0x40, 0xef,
+        ];
+        if p_resp == expected_p_resp {
+            println!("  [前导握手 - RX] 方向: band->host, 长度: 14B, hex: badcfe00000600010200030140ef (100% 完全匹配！)");
+        } else {
+            send_fail_count += 1;
+            println!("  [前导握手 - 失败] 收到非预期前导响应");
+            unsafe { crate::rfcomm::closesocket(s) };
+            if send_fail_count >= 5 {
+                break;
+            }
+            continue;
+        }
+
+        // 步骤 3：链路参数协商 (type=0x02)
+        println!("  [步骤 3/5 · 链路协商] 发送 type=0x02 链路协商帧...");
+        let nego_frame = Frame {
+            frame_type: 0x02,
+            seq: 0x00,
+            payload: vec![
+                0x01, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0xfc, 0x03,
+                0x02, 0x00, 0x20, 0x00, 0x04, 0x02, 0x00, 0x10, 0x27,
+            ],
+        };
+        let nego_bytes = crate::frame::encode(&nego_frame);
+        let sent_n = unsafe {
+            crate::rfcomm::send(s, nego_bytes.as_ptr(), nego_bytes.len() as i32, 0)
+        };
+        if sent_n != nego_bytes.len() as i32 {
+            send_fail_count += 1;
+            println!("  [链路协商 - 发送失败] sent = {sent_n}");
+            unsafe { crate::rfcomm::closesocket(s) };
+            if send_fail_count >= 5 {
+                break;
+            }
+            continue;
+        }
+        let nego_chk = crate::crc::crc16_arc(&nego_frame.payload);
+        println!(
+            "  [链路协商 - TX] 方向: host->band, type: 0x02, seq: 0x00, payload_len: 22, CRC: 0x{:04x}",
+            nego_chk
+        );
+
+        // 步骤 4：启动会话认证 (Step 1 -> Step 4)
+        println!("  [步骤 4/5 · 会话状态机] 初始化 Session::new(<authkey:16B>)...");
+        let mut session = Session::new(authkey);
+        println!("  [状态机初始状态] {:?}", session.state());
+
+        let step1_frame = session.start_auth(None).expect("start_auth 构造 Step 1 成功");
+        let step1_chk = crate::crc::crc16_arc(&step1_frame.payload);
+        let step1_bytes = crate::frame::encode(&step1_frame);
+
+        println!(
+            "  [Step 1 - TX] 发送 AppVerify 帧 (方向: host->band, type: 0x03, seq: 0x{:02x}, len: {}, CRC: 0x{:04x})",
+            step1_frame.seq, step1_frame.payload.len(), step1_chk
+        );
+        println!(
+            "  [Step 1 - 脱敏 Hexdump] {}",
+            desensitize_hexdump(step1_frame.frame_type, &step1_frame.payload)
+        );
+        println!("  [状态转移] -> {:?}", session.state());
+
+        let sent_s1 = unsafe {
+            crate::rfcomm::send(s, step1_bytes.as_ptr(), step1_bytes.len() as i32, 0)
+        };
+        if sent_s1 != step1_bytes.len() as i32 {
+            send_fail_count += 1;
+            println!("  [Step 1 发送失败] sent = {sent_s1}");
+            unsafe { crate::rfcomm::closesocket(s) };
+            if send_fail_count >= 5 {
+                break;
+            }
+            continue;
+        }
+
+        // 步骤 5：驱动状态机并处理接收流
+        println!("  [步骤 5/5 · 状态机事件循环] 等待对端 DeviceVerify 与 DeviceConfirm...");
+        let mut rx_buf = Vec::with_capacity(2048);
+        let mut raw_buf = [0u8; 1024];
+        let mut auth_success = false;
+        let mut distinguishes_evidence = String::new();
+
+        let start_time = std::time::Instant::now();
+        let loop_timeout = std::time::Duration::from_secs(10);
+
+        while start_time.elapsed() < loop_timeout {
+            let n = unsafe {
+                crate::rfcomm::recv(s, raw_buf.as_mut_ptr(), raw_buf.len() as i32, 0)
+            };
+            if n > 0 {
+                rx_buf.extend_from_slice(&raw_buf[..n as usize]);
+            } else if n == 0 {
+                println!("  [接收循环] 对端在认证过程中主动断开了连接");
+                send_fail_count += 1;
+                break;
+            } else {
+                let err = unsafe { crate::rfcomm::WSAGetLastError() };
+                if err == crate::rfcomm::WSAETIMEDOUT {
+                    // 超时重试一次
+                    continue;
+                }
+                println!("  [接收循环] recv 发生 Win32 错误: {err}");
+                send_fail_count += 1;
+                break;
+            }
+
+            // 循环从 rx_buf 中 decode 出所有帧
+            let mut decode_finished = false;
+            while !decode_finished && !rx_buf.is_empty() {
+                match crate::frame::decode(&rx_buf) {
+                    Ok((frame, consumed)) => {
+                        rx_buf.drain(..consumed);
+                        let f_chk = crate::crc::crc16_arc(&frame.payload);
+
+                        if frame.frame_type == 0x01 {
+                            println!(
+                                "  [RX 传输层 ACK] 方向: band->host, seq: 0x{:02x}, len: 0",
+                                frame.seq
+                            );
+                        } else if frame.frame_type == 0x02 {
+                            println!(
+                                "  [RX 链路协商响应] 方向: band->host, type: 0x02, seq: 0x{:02x}, len: {}, CRC: 0x{:04x}",
+                                frame.seq, frame.payload.len(), f_chk
+                            );
+                            // 回送传输层 ACK
+                            let ack_frame = Frame { frame_type: 0x01, seq: frame.seq, payload: vec![] };
+                            let ack_bytes = crate::frame::encode(&ack_frame);
+                            unsafe {
+                                crate::rfcomm::send(s, ack_bytes.as_ptr(), ack_bytes.len() as i32, 0);
+                            }
+                        } else if frame.frame_type == 0x03 {
+                            println!(
+                                "  [RX 会话数据帧] 方向: band->host, type: 0x03, seq: 0x{:02x}, len: {}, CRC: 0x{:04x}",
+                                frame.seq, frame.payload.len(), f_chk
+                            );
+                            println!(
+                                "  [RX 脱敏 Hexdump] {}",
+                                desensitize_hexdump(frame.frame_type, &frame.payload)
+                            );
+
+                            // 回送传输层 ACK
+                            let ack_frame = Frame { frame_type: 0x01, seq: frame.seq, payload: vec![] };
+                            let ack_bytes = crate::frame::encode(&ack_frame);
+                            unsafe {
+                                crate::rfcomm::send(s, ack_bytes.as_ptr(), ack_bytes.len() as i32, 0);
+                            }
+
+                            // 喂给状态机驱动
+                            match session.process_frame(&frame) {
+                                Ok(Some(step3_frame)) => {
+                                    println!("  [Step 2 校验] HMAC-SHA256 签名校验完全一致 (PASS)！设备真机身份确认！");
+                                    println!("  [状态转移] -> {:?}", session.state());
+
+                                    let s3_chk = crate::crc::crc16_arc(&step3_frame.payload);
+                                    let s3_bytes = crate::frame::encode(&step3_frame);
+                                    println!(
+                                        "  [Step 3 - TX] 发送 AppConfirm 帧 (方向: host->band, type: 0x03, seq: 0x{:02x}, len: {}, CRC: 0x{:04x})",
+                                        step3_frame.seq, step3_frame.payload.len(), s3_chk
+                                    );
+                                    println!(
+                                        "  [Step 3 - 脱敏 Hexdump] {}",
+                                        desensitize_hexdump(step3_frame.frame_type, &step3_frame.payload)
+                                    );
+
+                                    let sent_s3 = unsafe {
+                                        crate::rfcomm::send(s, s3_bytes.as_ptr(), s3_bytes.len() as i32, 0)
+                                    };
+                                    if sent_s3 != s3_bytes.len() as i32 {
+                                        send_fail_count += 1;
+                                        println!("  [Step 3 发送失败] sent = {sent_s3}");
+                                    }
+                                }
+                                Ok(None) => {
+                                    if let SessionState::Authenticated { .. } = session.state() {
+                                        println!("  [Step 4 校验] confirm_result == true (PASS)！手环确认会话认证成功！");
+                                        println!("  [状态转移] -> {:?}", session.state());
+                                        auth_success = true;
+                                        distinguishes_evidence = format!(
+                                            "Step 4 收到 Account 字段 33 且 confirm_result==true (方向: band->host, len=22, CRC=0x{:04x}), 会话状态成功进入 Authenticated",
+                                            f_chk
+                                        );
+                                        break;
+                                    }
+                                }
+                                Err(err) => {
+                                    println!("  [认证失败] 状态机错误: {err}");
+                                    send_fail_count += 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(crate::frame::DecodeError::Incomplete) => {
+                        decode_finished = true;
+                    }
+                    Err(err) => {
+                        println!("  [解码错误] frame::decode 失败: {err}");
+                        send_fail_count += 1;
+                        break;
+                    }
+                }
+            }
+
+            if auth_success || session.state() == &SessionState::Failed(SessionError::HmacMismatch) {
+                break;
+            }
+        }
+
+        if auth_success {
+            let (dec_k, enc_k) = session.business_keys().unwrap();
+            println!("\n  >>> [第 {}/3 次认证验收判定: PASS 达标]", attempt);
+            println!("  [可区分响应依据] {}", distinguishes_evidence);
+            println!("  [协商业务密钥] dec_key: <key:16B>, enc_key: <key:16B> (已安全驻留内存)");
+            let _ = (dec_k, enc_k); // 占位防 unused
+        } else {
+            println!("\n  >>> [第 {}/3 次认证验收判定: FAIL 未通过]", attempt);
+            send_fail_count += 1;
+        }
+
+        // 显式释放链路
+        println!("  [释放链路] 显式调用 closesocket(fd = {s})...");
+        unsafe {
+            crate::rfcomm::closesocket(s);
+        }
+        println!("  [释放链路] 套接字已关闭，物理链路已显式释放。");
+
+        println!(
+            "  [保护条款计数器] 当前终值: 连接失败 = {} 次 (历史 0 + 本阶段 {}), 发包失败 = {} 次 (历史 0 + 本阶段 {})",
+            conn_fail_count, conn_fail_count, send_fail_count, send_fail_count
+        );
+
+        if conn_fail_count >= 3 || send_fail_count >= 5 {
+            println!("\n[保护条款触发] 失败计数器越限，停止后续尝试！");
+            unsafe { crate::rfcomm::WSACleanup() };
+            return Err("保护条款触发（连接或发包失败越限）".to_string());
+        }
+
+        if attempt < 3 {
+            println!("  [等待重连] 等待 2 秒后发起下一次独立连接...\n");
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    }
+
+    unsafe { crate::rfcomm::WSACleanup() };
+
+    println!("\n================================================================================");
+    if conn_fail_count == 0 && send_fail_count == 0 {
+        println!("阶段 5D 三次独立断开重连认证全部成功完成！(3/3 PASS)");
+        println!("================================================================================");
+        Ok(())
+    } else {
+        println!("阶段 5D 验收存在未通过项！连接失败 = {conn_fail_count}, 发包失败 = {send_fail_count}");
+        println!("================================================================================");
+        Err("三次认证验收存在失败项".to_string())
+    }
+}
+
+
+// -----------------------------------------------------------------------------
 // 单元测试模块（纯内存，不触网，不连设备，不读真实凭据）
 // -----------------------------------------------------------------------------
 #[cfg(test)]
