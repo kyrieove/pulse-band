@@ -178,14 +178,129 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
             };
             (error_resp(&id, "method_not_found", msg).to_string(), false)
         }
-        // Pulse 2.0 原生快应用安装 RPC 契约占位（未实现真实安装，返回 method_not_implemented）
-        "device.app.install.prepare"
-        | "device.app.install.chunk"
-        | "device.app.install.commit"
-        | "device.app.install.cancel" => (
-            error_resp(&id, "method_not_implemented", "快应用安装能力正在开发中").to_string(),
-            false,
-        ),
+        "device.app.install.prepare" => {
+            let metadata_res: std::result::Result<crate::app_install::InstallMetadata, _> =
+                serde_json::from_value(params.clone());
+            match metadata_res {
+                Ok(meta) => {
+                    use crate::app_install::AppInstallTransport;
+                    let mut transport = crate::app_install::GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
+                    match transport.prepare(meta) {
+                        Ok(session) => (
+                            serde_json::json!({
+                                "id": id,
+                                "ok": true,
+                                "result": {
+                                    "status": session.status,
+                                    "sessionId": session.session_id,
+                                    "fileSize": session.file_size,
+                                    "chunkSize": session.chunk_size,
+                                    "totalChunks": session.total_chunks,
+                                }
+                            })
+                            .to_string(),
+                            false,
+                        ),
+                        Err(e) => (
+                            error_resp(&id, "install_prepare_failed", &e).to_string(),
+                            false,
+                        ),
+                    }
+                }
+                Err(e) => (
+                    error_resp(&id, "invalid_params", &format!("无效参数: {e}")).to_string(),
+                    false,
+                ),
+            }
+        }
+        "device.app.install.chunk" => {
+            let chunk_res: std::result::Result<crate::app_install::InstallChunk, _> =
+                serde_json::from_value(params.clone());
+            match chunk_res {
+                Ok(chunk) => {
+                    use crate::app_install::AppInstallTransport;
+                    let mut transport = crate::app_install::GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
+                    match transport.send_chunk(chunk) {
+                        Ok(ack) => (
+                            serde_json::json!({
+                                "id": id,
+                                "ok": true,
+                                "result": {
+                                    "status": "transferring",
+                                    "sessionId": ack.session_id,
+                                    "index": ack.index,
+                                    "receivedBytes": ack.received_bytes,
+                                }
+                            })
+                            .to_string(),
+                            false,
+                        ),
+                        Err(e) => (
+                            error_resp(&id, "install_chunk_failed", &e).to_string(),
+                            false,
+                        ),
+                    }
+                }
+                Err(e) => (
+                    error_resp(&id, "invalid_params", &format!("无效参数: {e}")).to_string(),
+                    false,
+                ),
+            }
+        }
+        "device.app.install.commit" => {
+            let session_id = params["sessionId"]
+                .as_str()
+                .or_else(|| params["session_id"].as_str())
+                .unwrap_or("")
+                .to_string();
+            if session_id.is_empty() {
+                (
+                    error_resp(&id, "invalid_params", "缺少 sessionId").to_string(),
+                    false,
+                )
+            } else {
+                use crate::app_install::AppInstallTransport;
+                let mut transport = crate::app_install::GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
+                match transport.commit(session_id) {
+                    Ok(res) => (
+                        serde_json::json!({
+                            "id": id,
+                            "ok": true,
+                            "result": {
+                                "status": res.status,
+                            }
+                        })
+                        .to_string(),
+                        false,
+                    ),
+                    Err(e) => (
+                        error_resp(&id, "install_commit_failed", &e).to_string(),
+                        false,
+                    ),
+                }
+            }
+        }
+        "device.app.install.cancel" => {
+            let session_id = params["sessionId"]
+                .as_str()
+                .or_else(|| params["session_id"].as_str())
+                .unwrap_or("")
+                .to_string();
+            use crate::app_install::AppInstallTransport;
+            let mut transport = crate::app_install::GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
+            let _ = transport.cancel(session_id);
+            (
+                serde_json::json!({
+                    "id": id,
+                    "ok": true,
+                    "result": {
+                        "status": "cancelled",
+                    }
+                })
+                .to_string(),
+                false,
+            )
+        }
         other => (
             error_resp(&id, "method_not_found", &format!("未知方法 {other}")).to_string(),
             false,
@@ -288,5 +403,80 @@ mod tests {
         let (resp_send_fake, _) = dispatch(&fake_core, &send_req);
         let v_send_fake: serde_json::Value = serde_json::from_str(&resp_send_fake).unwrap();
         assert_ne!(v_send_fake["error"]["code"].as_str(), Some("not_live"));
+    }
+
+    #[test]
+    fn test_rpc_app_install_endpoints() {
+        let fake_core = create_test_core(crate::CoreMode::Fake);
+
+        // 1. prepare
+        let prep_req = serde_json::json!({
+            "id": "p1",
+            "method": "device.app.install.prepare",
+            "token": "test_token",
+            "params": {
+                "packageId": "com.codeisland.band",
+                "versionName": "1.0.1",
+                "versionCode": 26,
+                "fileSize": 255523,
+                "hash": "test_hash"
+            }
+        })
+        .to_string();
+        let (prep_resp, _) = dispatch(&fake_core, &prep_req);
+        let prep_val: serde_json::Value = serde_json::from_str(&prep_resp).unwrap();
+        assert_eq!(prep_val["ok"], true);
+        assert_eq!(prep_val["result"]["status"], "preparing");
+        let session_id = prep_val["result"]["sessionId"].as_str().unwrap().to_string();
+
+        // 2. chunk
+        let chunk_req = serde_json::json!({
+            "id": "c1",
+            "method": "device.app.install.chunk",
+            "token": "test_token",
+            "params": {
+                "sessionId": session_id,
+                "index": 0,
+                "size": 512,
+                "data": []
+            }
+        })
+        .to_string();
+        let (chunk_resp, _) = dispatch(&fake_core, &chunk_req);
+        let chunk_val: serde_json::Value = serde_json::from_str(&chunk_resp).unwrap();
+        assert_eq!(chunk_val["ok"], true);
+        assert_eq!(chunk_val["result"]["status"], "transferring");
+        assert_eq!(chunk_val["result"]["receivedBytes"], 512);
+
+        // 3. commit
+        let commit_req = serde_json::json!({
+            "id": "m1",
+            "method": "device.app.install.commit",
+            "token": "test_token",
+            "params": {
+                "sessionId": session_id
+            }
+        })
+        .to_string();
+        let (commit_resp, _) = dispatch(&fake_core, &commit_req);
+        let commit_val: serde_json::Value = serde_json::from_str(&commit_resp).unwrap();
+        assert_eq!(commit_val["ok"], true);
+        assert_eq!(commit_val["result"]["status"], "verifying");
+        assert_ne!(commit_val["result"]["status"], "completed");
+
+        // 4. cancel
+        let cancel_req = serde_json::json!({
+            "id": "x1",
+            "method": "device.app.install.cancel",
+            "token": "test_token",
+            "params": {
+                "sessionId": session_id
+            }
+        })
+        .to_string();
+        let (cancel_resp, _) = dispatch(&fake_core, &cancel_req);
+        let cancel_val: serde_json::Value = serde_json::from_str(&cancel_resp).unwrap();
+        assert_eq!(cancel_val["ok"], true);
+        assert_eq!(cancel_val["result"]["status"], "cancelled");
     }
 }
