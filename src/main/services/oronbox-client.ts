@@ -28,18 +28,24 @@ export const CORE_EXE = resolveCoreExePath(
   (p) => fs.existsSync(p),
   DEV_CORE_EXE,
 );
-export const DAEMON_ENDPOINT_FILE = path.join(
-  process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
-  'PulseDev',
-  'run',
-  'core.json',
-);
-export const DEVICE_CONFIG_FILE = path.join(
-  process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
-  'PulseDev',
-  'run',
-  'device.json',
-);
+export function getDaemonEndpointFile(): string {
+  return path.join(
+    process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
+    'PulseDev',
+    'run',
+    'core.json',
+  );
+}
+export function getDeviceConfigFile(): string {
+  return path.join(
+    process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
+    'PulseDev',
+    'run',
+    'device.json',
+  );
+}
+export const DAEMON_ENDPOINT_FILE = getDaemonEndpointFile();
+export const DEVICE_CONFIG_FILE = getDeviceConfigFile();
 export const EXPECTED_PROTOCOL_VERSION = 6;
 
 const SPAWN_WAIT_MS = 20_000;
@@ -75,9 +81,9 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-function readEndpoint(): DaemonEndpoint | null {
+export function readEndpoint(file = getDaemonEndpointFile()): DaemonEndpoint | null {
   try {
-    const ep = JSON.parse(fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8'));
+    const ep = JSON.parse(fs.readFileSync(file, 'utf-8'));
     return Number.isInteger(ep?.port) && typeof ep?.token === 'string' ? ep : null;
   } catch {
     return null;
@@ -89,6 +95,8 @@ const TRANSIENT_CODES = new Set(['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'ECO
 
 export interface OronBoxClientOptions {
   mode?: 'live' | 'fake';
+  endpointFile?: string;
+  deviceConfigFile?: string;
 }
 
 export class OronBoxClient extends EventEmitter {
@@ -104,12 +112,23 @@ export class OronBoxClient extends EventEmitter {
   private disposed = false;
   private degradedInfo: Degradation | null = null;
   private options: OronBoxClientOptions;
+  private _bandConnectionDesired = false;
+  private lastConnectedPid: number | null = null;
 
   constructor(options: OronBoxClientOptions = {}) {
     super();
     this.options = options;
   }
 
+  get bandConnectionDesired(): boolean {
+    return this._bandConnectionDesired;
+  }
+  get endpointFile(): string {
+    return this.options.endpointFile || getDaemonEndpointFile();
+  }
+  get deviceConfigFile(): string {
+    return this.options.deviceConfigFile || getDeviceConfigFile();
+  }
   get connected(): boolean {
     return this.socket !== null;
   }
@@ -134,18 +153,18 @@ export class OronBoxClient extends EventEmitter {
   }
 
   private async doEnsureDaemon(): Promise<DaemonEndpoint> {
-    const ep = readEndpoint();
+    const ep = readEndpoint(this.endpointFile);
     if (ep && pidAlive(ep.pid)) {
       this.endpoint = ep;
       return ep;
     }
-    const oldRaw = fs.existsSync(DAEMON_ENDPOINT_FILE)
-      ? fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8')
+    const oldRaw = fs.existsSync(this.endpointFile)
+      ? fs.readFileSync(this.endpointFile, 'utf-8')
       : null;
     if (!fs.existsSync(CORE_EXE)) throw new Error('找不到 ' + CORE_EXE + '（先在 core/ 下 cargo build --release）');
     const args = resolveDaemonArgs({
       mode: this.options.mode,
-      deviceConfigExists: fs.existsSync(DEVICE_CONFIG_FILE),
+      deviceConfigExists: fs.existsSync(this.deviceConfigFile),
       envMode: process.env.PULSE_CORE_MODE,
     });
     const child = spawn(CORE_EXE, args, {
@@ -163,13 +182,13 @@ export class OronBoxClient extends EventEmitter {
       }
       let raw: string | null = null;
       try {
-        raw = fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8');
+        raw = fs.readFileSync(this.endpointFile, 'utf-8');
       } catch {
         /* 文件尚未出现 */
       }
       // 等内容变化（或文件新出现），不是等文件存在 —— 端点文件会残留陈旧内容
       if (raw === null || raw === oldRaw) continue;
-      const fresh = readEndpoint();
+      const fresh = readEndpoint(this.endpointFile);
       if (fresh) {
         this.endpoint = fresh;
         return fresh;
@@ -186,7 +205,7 @@ export class OronBoxClient extends EventEmitter {
 
   /** 仅连接已经在运行的 daemon；不存在时绝不拉起新进程。 */
   async connectIfRunning(): Promise<boolean> {
-    const ep = readEndpoint();
+    const ep = readEndpoint(this.endpointFile);
     if (!ep || !pidAlive(ep.pid)) return false;
     this.disposed = false;
     this.endpoint = ep;
@@ -213,12 +232,13 @@ export class OronBoxClient extends EventEmitter {
     for (let attempt = 0; attempt < CONNECT_RETRIES; attempt++) {
       if (this.disposed) throw new Error('客户端已销毁');
       // daemon 可能刚写完端点文件或已重启；每次尝试前读取最新端点
-      const fresh = readEndpoint();
+      const fresh = readEndpoint(this.endpointFile);
       if (fresh && pidAlive(fresh.pid)) this.endpoint = fresh;
       const currentEp = this.endpoint;
       try {
         await this.openSocket(currentEp);
         await this.checkProtocolVersion();
+        this.lastConnectedPid = this.endpoint?.pid ?? null;
         this.reconnectAttempt = 0;
         return;
       } catch (err: any) {
@@ -277,8 +297,36 @@ export class OronBoxClient extends EventEmitter {
       this.reconnectTimer = null;
       if (this.disposed || this.socket) return;
       (async () => {
+        const previousPid = this.lastConnectedPid;
         await this.ensureDaemon(); // daemon 若已死会重新拉起；端点变了会拿到新端口
         await this.connectOnce();
+        const currentPid = this.endpoint?.pid ?? null;
+        this.lastConnectedPid = currentPid;
+
+        // 重新连通后恢复用户手环连接意图
+        if (this._bandConnectionDesired) {
+          const isNewDaemon = previousPid !== null && currentPid !== previousPid;
+          if (isNewDaemon) {
+            try {
+              await this.sendDirect('device.connect', {}, 60_000);
+            } catch {
+              /* 补发失败由后续状态刷新处理 */
+            }
+          } else {
+            try {
+              const status = await this.sendDirect<{ connected: boolean; protocolState?: string }>(
+                'device.status',
+                {},
+                10_000,
+              );
+              if (status && (!status.connected || status.protocolState === 'disconnected')) {
+                await this.sendDirect('device.connect', {}, 60_000);
+              }
+            } catch {
+              /* 状态查询失败 */
+            }
+          }
+        }
       })().catch((err) => {
         this.emit('reconnect-failed', err);
         this.scheduleReconnect();
@@ -288,7 +336,7 @@ export class OronBoxClient extends EventEmitter {
 
   private async checkProtocolVersion(): Promise<void> {
     try {
-      const info = await this.call('daemon.info', {}, 10_000);
+      const info = await this.sendDirect('daemon.info', {}, 10_000);
       const actual = Number(info?.protocolVersion);
       if (actual === EXPECTED_PROTOCOL_VERSION) {
         if (this.degradedInfo) {
@@ -310,13 +358,12 @@ export class OronBoxClient extends EventEmitter {
     if (changed) this.emit('degraded', this.degradedInfo);
   }
 
-  /** 发起一次 RPC；断线期间调用会先等重连。 */
-  async call<T = any>(
+  /** 直接向当前已连接 socket 发送 RPC，不经过 ensureConnected 门禁，避免重入 */
+  private sendDirect<T = any>(
     method: string,
     params: Record<string, unknown> = {},
     timeoutMs = REQUEST_TIMEOUT_MS,
   ): Promise<T> {
-    await this.ensureConnected();
     const socket = this.socket;
     if (!socket) throw new Error('daemon 未连接');
     const id = 'r' + ++this.seq;
@@ -331,8 +378,26 @@ export class OronBoxClient extends EventEmitter {
     });
   }
 
+  /** 发起一次 RPC；断线期间调用会先等重连。维护用户手环连接意图状态。 */
+  async call<T = any>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
+    await this.ensureConnected();
+    const res = await this.sendDirect<T>(method, params, timeoutMs);
+    if (method === 'device.connect') {
+      this._bandConnectionDesired = true;
+    } else if (method === 'device.disconnect') {
+      this._bandConnectionDesired = false;
+    }
+    return res;
+  }
+
   /** 请求 daemon 自行退出（仅托盘「彻底退出」允许调用；protocolVersion 不匹配时禁止 —— 硬约束 6）。 */
   async stopDaemon(): Promise<void> {
+    this._bandConnectionDesired = false;
+    this.lastConnectedPid = null;
     // 先正经断开手环，再停 daemon。直接停 daemon 的话手环那头不知道链路已经没了，
     // 会继续占着，手机要在手环上手动点「连接新手机」才连得回去（2026-09-05 实测）。
     // 空参数 = 断开当前设备（local_command_bus.dart:1227 `_disconnect(null)`）。
@@ -358,6 +423,8 @@ export class OronBoxClient extends EventEmitter {
   /** 只断开本地连接，daemon 继续常驻（普通退出用）。 */
   dispose(): void {
     this.disposed = true;
+    this._bandConnectionDesired = false;
+    this.lastConnectedPid = null;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

@@ -28,11 +28,7 @@ pub struct FakeDevice {
 
 impl FakeDevice {
     pub fn new() -> Self {
-        FakeDevice {
-            connected: false,
-            fetch_seq: 0,
-            pending_fetch_id: None,
-        }
+        FakeDevice { connected: false, fetch_seq: 0, pending_fetch_id: None }
     }
 }
 
@@ -89,11 +85,7 @@ fn send_interconnect(core: &Core, packet: &serde_json::Value) {
 
 fn compact(v: &serde_json::Value) -> String {
     let s = v.to_string();
-    if s.len() > 120 {
-        format!("{}…({}B)", &s[..120], s.len())
-    } else {
-        s
-    }
+    if s.len() > 120 { format!("{}…({}B)", &s[..120], s.len()) } else { s }
 }
 
 pub fn device_connect(core: &Arc<Core>, id: &serde_json::Value) -> String {
@@ -140,11 +132,7 @@ pub fn device_status(core: &Arc<Core>, id: &serde_json::Value) -> String {
     serde_json::json!({ "id": id, "ok": true, "result": result }).to_string()
 }
 
-pub fn interconnect_send(
-    core: &Arc<Core>,
-    id: &serde_json::Value,
-    params: &serde_json::Value,
-) -> String {
+pub fn interconnect_send(core: &Arc<Core>, id: &serde_json::Value, params: &serde_json::Value) -> String {
     let package = params["package"].as_str().unwrap_or("");
     let Some(payload) = params["payload"].as_array() else {
         core.log("device.interconnect.send: payload 不是数组，拒绝");
@@ -157,9 +145,7 @@ pub fn interconnect_send(
     let parsed: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(e) => {
-            core.log(&format!(
-                "device.interconnect.send: payload 不是合法 JSON（{e}），忽略"
-            ));
+            core.log(&format!("device.interconnect.send: payload 不是合法 JSON（{e}），忽略"));
             return serde_json::json!({ "id": id, "ok": true, "result": {} }).to_string();
         }
     };
@@ -214,11 +200,7 @@ struct Report {
 impl Report {
     fn push(&mut self, name: &str, passed: bool, detail: String) {
         self.passed &= passed;
-        self.checks.push(Check {
-            name: name.to_string(),
-            passed,
-            detail,
-        });
+        self.checks.push(Check { name: name.to_string(), passed, detail });
     }
 }
 
@@ -226,10 +208,7 @@ impl Report {
 /// status-server /api/status/compact?all=1 的现有协议定义（leanLimit/leanSession）。
 /// 「与数据源结果一致」的对照在验收步骤做（直接 curl 同一端点比对 limits）。
 fn validate_fetch_response(expected_id: Option<&str>, packet: &serde_json::Value) -> Report {
-    let mut r = Report {
-        passed: true,
-        checks: Vec::new(),
-    };
+    let mut r = Report { passed: true, checks: Vec::new() };
 
     let resp_id = packet["id"].as_str().unwrap_or("");
     r.push(
@@ -240,11 +219,7 @@ fn validate_fetch_response(expected_id: Option<&str>, packet: &serde_json::Value
 
     let resp = &packet["resp"];
     let ok = resp["ok"].as_bool();
-    r.push(
-        "resp.ok === true",
-        ok == Some(true),
-        format!("resp.ok={:?}", ok),
-    );
+    r.push("resp.ok === true", ok == Some(true), format!("resp.ok={:?}", ok));
     r.push(
         "resp.status === 200",
         resp["status"].as_u64() == Some(200),
@@ -252,13 +227,8 @@ fn validate_fetch_response(expected_id: Option<&str>, packet: &serde_json::Value
     );
 
     let body = resp["body"].as_str().unwrap_or("");
-    let body_json: serde_json::Value =
-        serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
-    r.push(
-        "resp.body 是合法 JSON",
-        body_json.is_object(),
-        format!("body 前 80 字节: {:?}", &body[..body.len().min(80)]),
-    );
+    let body_json: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    r.push("resp.body 是合法 JSON", body_json.is_object(), format!("body 前 80 字节: {:?}", &body[..body.len().min(80)]));
     if !body_json.is_object() {
         return r;
     }
@@ -271,17 +241,12 @@ fn validate_fetch_response(expected_id: Option<&str>, packet: &serde_json::Value
 
     let limits = &body_json["limits"];
     let is_limit_obj = limits.as_object().map(|m| {
-        ["claude", "codex", "antigravity"]
-            .iter()
-            .all(|k| m.contains_key(*k))
+        ["claude", "codex", "antigravity"].iter().all(|k| m.contains_key(*k))
     });
     r.push(
         "limits 含 claude/codex/antigravity 三键",
         is_limit_obj == Some(true),
-        format!(
-            "limits keys={:?}",
-            limits.as_object().map(|m| m.keys().collect::<Vec<_>>())
-        ),
+        format!("limits keys={:?}", limits.as_object().map(|m| m.keys().collect::<Vec<_>>())),
     );
 
     // 每个非 null 的 limit 要长成 leanLimit 的形状；额度数据来自外部服务，
@@ -289,11 +254,7 @@ fn validate_fetch_response(expected_id: Option<&str>, packet: &serde_json::Value
     for key in ["claude", "codex", "antigravity"] {
         let l = &limits[key];
         if l.is_null() {
-            r.push(
-                &format!("limits.{key} 形状"),
-                true,
-                "null（外部额度源无数据时合法）".into(),
-            );
+            r.push(&format!("limits.{key} 形状"), true, "null（外部额度源无数据时合法）".into());
             continue;
         }
         let shape_ok = l["pct5h"].is_number()
@@ -307,10 +268,7 @@ fn validate_fetch_response(expected_id: Option<&str>, packet: &serde_json::Value
         r.push(
             &format!("limits.{key} 形状"),
             shape_ok,
-            format!(
-                "pct5h={:?} pct7d={:?} authoritative={:?}",
-                l["pct5h"], l["pct7d"], l["authoritative"]
-            ),
+            format!("pct5h={:?} pct7d={:?} authoritative={:?}", l["pct5h"], l["pct7d"], l["authoritative"]),
         );
     }
 
@@ -324,10 +282,7 @@ fn validate_fetch_response(expected_id: Option<&str>, packet: &serde_json::Value
     r.push(
         "sessions 含 claude/codex/antigravity 三键（leanSession 形状）",
         sessions_ok == Some(true),
-        format!(
-            "sessions keys={:?}",
-            sessions.as_object().map(|m| m.keys().collect::<Vec<_>>())
-        ),
+        format!("sessions keys={:?}", sessions.as_object().map(|m| m.keys().collect::<Vec<_>>())),
     );
 
     r
@@ -356,21 +311,18 @@ fn write_record(core: &Core, packet: &serde_json::Value, report: &Report) {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
 fn iso_now() -> String {
     // 只用于人读记录，精度到秒就够；不引 chrono，手写 UTC 日期换算。
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let days = secs / 86400;
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();    let days = secs / 86400;
     let (y, m, d) = civil_from_days(days as i64);
-    let (hh, mm, ss) = (secs % 86400 / 3600, secs % 3600 / 60, secs % 60);
+    let (hh, mm, ss) = (
+        secs % 86400 / 3600,
+        secs % 3600 / 60,
+        secs % 60,
+    );
     format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 

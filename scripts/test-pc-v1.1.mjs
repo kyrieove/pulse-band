@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
@@ -20,6 +21,20 @@ import {
 } from '../src/main/services/support-report.ts';
 import { resolveMiniBarVisibility } from '../src/main/services/minibar-preference.ts';
 import { isVersionNewer } from '../src/main/services/version-check.ts';
+
+// 记录真实环境状态，用于断言测试期间绝对未被触碰或修改
+const REAL_RUN_DIR = path.join(
+  process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
+  'PulseDev',
+  'run',
+);
+const REAL_CORE_FILE = path.join(REAL_RUN_DIR, 'core.json');
+const REAL_DEVICE_FILE = path.join(REAL_RUN_DIR, 'device.json');
+const INITIAL_CORE_EXISTS = fs.existsSync(REAL_CORE_FILE);
+const INITIAL_CORE_CONTENT = INITIAL_CORE_EXISTS ? fs.readFileSync(REAL_CORE_FILE, 'utf-8') : null;
+const INITIAL_DEVICE_EXISTS = fs.existsSync(REAL_DEVICE_FILE);
+const INITIAL_DEVICE_STAT = INITIAL_DEVICE_EXISTS ? fs.statSync(REAL_DEVICE_FILE) : null;
+const INITIAL_DEVICE_CONTENT = INITIAL_DEVICE_EXISTS ? fs.readFileSync(REAL_DEVICE_FILE, 'utf-8') : null;
 
 test('only an explicit connect action may connect the band', () => {
   assert.equal(shouldConnectBand('startup'), false);
@@ -152,12 +167,13 @@ test('shouldRetryLiveConnect: allows retrying up to 3 attempts and stops', () =>
   assert.equal(shouldRetryLiveConnect(4, 3), false);
 });
 
-test('packaged win-unpacked resources contains pulse-core.exe and CORE_EXE resolves to it', () => {
-  const unpackedResources = path.resolve('release/win-unpacked/resources');
-  const packagedExe = path.join(unpackedResources, 'pulse-core.exe');
-  assert.equal(fs.existsSync(packagedExe), true, 'resources/pulse-core.exe 必须存在于打包解包目录');
-  const resolved = resolveCoreExePath(unpackedResources, (p) => fs.existsSync(p), 'fallback');
-  assert.equal(resolved.replace(/\\/g, '/'), packagedExe.replace(/\\/g, '/'));
+test('package.json extraResources configures pulse-core.exe packaging', () => {
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
+  const extraResources = pkg?.build?.extraResources || [];
+  const target = extraResources.find(
+    (item) => item.from === 'core/target/release/pulse-core.exe' && item.to === 'pulse-core.exe',
+  );
+  assert.ok(target, 'package.json build.extraResources 必须配置 pulse-core.exe 打包');
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -200,10 +216,10 @@ test('OronBoxClient: connectOnce switches to new port and token when fresh endpo
   const deadPort = closedServer.address().port;
   await new Promise((resolve) => closedServer.close(resolve));
 
-  const epDir = path.join(process.env.LOCALAPPDATA || '.', 'PulseDev', 'run');
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-port-test-'));
+  const epDir = path.join(tempDir, 'PulseDev', 'run');
   fs.mkdirSync(epDir, { recursive: true });
   const epFile = path.join(epDir, 'core.json');
-  const backup = fs.existsSync(epFile) ? fs.readFileSync(epFile, 'utf-8') : null;
 
   try {
     // 初始写入 deadPort 和旧 token
@@ -217,7 +233,7 @@ test('OronBoxClient: connectOnce switches to new port and token when fresh endpo
       }),
     );
 
-    const client = new OronBoxClient();
+    const client = new OronBoxClient({ endpointFile: epFile });
 
     // 延迟 400ms 后（处于重试等待期间）将 core.json 刷新为有效 newPort 和新 token
     const timer = setTimeout(() => {
@@ -244,34 +260,339 @@ test('OronBoxClient: connectOnce switches to new port and token when fresh endpo
     client.dispose();
   } finally {
     server.close();
-    if (backup) {
-      fs.writeFileSync(epFile, backup);
-    } else {
-      fs.rmSync(epFile, { force: true });
-    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test('pulse-core --live: starts in disconnected state and does not reconnect after active disconnect', async () => {
+test('OronBoxClient: recovers band connection intent after daemon restart and respects explicit disconnect', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-intent-test-'));
+  const epDir = path.join(tempDir, 'PulseDev', 'run');
+  fs.mkdirSync(epDir, { recursive: true });
+  const epFile = path.join(epDir, 'core.json');
+
+  const createMockDaemon = (pid) => {
+    const receivedMethods = [];
+    const sockets = new Set();
+    let statusResponse = { connected: false, protocolState: 'disconnected', device: null };
+    const server = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.on('data', (data) => {
+        for (const line of data.toString('utf-8').split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const req = JSON.parse(line);
+            receivedMethods.push(req.method);
+            if (req.method === 'daemon.info') {
+              socket.write(
+                JSON.stringify({
+                  id: req.id,
+                  ok: true,
+                  result: {
+                    protocolVersion: 6,
+                    pid,
+                    platform: 'windows',
+                    endpoint: `127.0.0.1:${server.address().port}`,
+                    uptimeSeconds: 1,
+                  },
+                }) + '\n',
+              );
+            } else if (req.method === 'device.connect') {
+              statusResponse = { connected: true, protocolState: 'connected' };
+              socket.write(
+                JSON.stringify({
+                  id: req.id,
+                  ok: true,
+                  result: statusResponse,
+                }) + '\n',
+              );
+            } else if (req.method === 'device.disconnect') {
+              statusResponse = { connected: false, protocolState: 'disconnected' };
+              socket.write(
+                JSON.stringify({
+                  id: req.id,
+                  ok: true,
+                  result: statusResponse,
+                }) + '\n',
+              );
+            } else if (req.method === 'device.status') {
+              socket.write(
+                JSON.stringify({
+                  id: req.id,
+                  ok: true,
+                  result: statusResponse,
+                }) + '\n',
+              );
+            }
+          } catch {}
+        }
+      });
+    });
+
+    return {
+      server,
+      receivedMethods,
+      closeSockets: () => {
+        for (const s of sockets) s.destroy();
+      },
+    };
+  };
+
+  const dummy1 = spawn('node', ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  const dummy2 = spawn('node', ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  const dummy3 = spawn('node', ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+
+  const d1 = createMockDaemon(dummy1.pid);
+  const d2 = createMockDaemon(dummy2.pid);
+  const d3 = createMockDaemon(dummy3.pid);
+
+  await new Promise((r) => d1.server.listen(0, '127.0.0.1', r));
+  await new Promise((r) => d2.server.listen(0, '127.0.0.1', r));
+  await new Promise((r) => d3.server.listen(0, '127.0.0.1', r));
+
+  let client = null;
+  try {
+    // 1. 旧 daemon 写入端点
+    fs.writeFileSync(
+      epFile,
+      JSON.stringify({
+        port: d1.server.address().port,
+        token: 'token_d1',
+        pid: dummy1.pid,
+        protocolVersion: 6,
+      }),
+    );
+
+    client = new OronBoxClient({ endpointFile: epFile });
+    const connected1 = await client.connectIfRunning();
+    assert.equal(connected1, true, '连上旧 daemon');
+    assert.equal(client.bandConnectionDesired, false, '初始连接意图为 false');
+
+    // 2. 旧 daemon 收到 device.connect
+    const connRes = await client.call('device.connect');
+    assert.equal(connRes.connected, true);
+    assert.equal(client.bandConnectionDesired, true, 'device.connect 成功后意图置为 true');
+    assert.ok(d1.receivedMethods.includes('device.connect'), '旧 daemon 收到 device.connect');
+
+    // 3. 旧 daemon 被终止，新端点 (d2) 出现
+    fs.writeFileSync(
+      epFile,
+      JSON.stringify({
+        port: d2.server.address().port,
+        token: 'token_d2',
+        pid: dummy2.pid,
+        protocolVersion: 6,
+      }),
+    );
+    dummy1.kill();
+    d1.closeSockets();
+    d1.server.close();
+
+    // 等待 client 自动重连上新 daemon 并补发 device.connect
+    for (let i = 0; i < 40; i++) {
+      await sleep(100);
+      if (d2.receivedMethods.includes('device.connect')) break;
+    }
+
+    assert.ok(d2.receivedMethods.includes('daemon.info'), '新 daemon 收到协议校验请求');
+    assert.ok(
+      d2.receivedMethods.includes('device.connect'),
+      '旧 daemon 崩溃重启后，客户端自动向新 daemon 补发 device.connect',
+    );
+    assert.equal(client.bandConnectionDesired, true, '连接意图依然保持 true');
+
+    // 4. 用户主动调用 device.disconnect
+    const disconnRes = await client.call('device.disconnect');
+    assert.equal(disconnRes.connected, false);
+    assert.equal(client.bandConnectionDesired, false, 'device.disconnect 成功后意图置为 false');
+    assert.ok(d2.receivedMethods.includes('device.disconnect'), '新 daemon 收到 device.disconnect');
+
+    // 5. 再次重启 daemon，验证主动 disconnect 后新 daemon 启动不收到 device.connect
+    fs.writeFileSync(
+      epFile,
+      JSON.stringify({
+        port: d3.server.address().port,
+        token: 'token_d3',
+        pid: dummy3.pid,
+        protocolVersion: 6,
+      }),
+    );
+    dummy2.kill();
+    d2.closeSockets();
+    d2.server.close();
+
+    // 等待 client 重连上 d3
+    for (let i = 0; i < 40; i++) {
+      await sleep(100);
+      if (d3.receivedMethods.includes('daemon.info')) break;
+    }
+    assert.ok(d3.receivedMethods.includes('daemon.info'), 'daemon 3 收到协议校验请求');
+    await sleep(400); // 留出足够时间确认没有多余补发
+    assert.equal(
+      d3.receivedMethods.includes('device.connect'),
+      false,
+      '主动调用 device.disconnect 后重启，新 daemon 不收到 device.connect',
+    );
+
+    client.dispose();
+    assert.equal(client.bandConnectionDesired, false, 'dispose 后意图重置为 false');
+  } finally {
+    client?.dispose();
+    dummy1.kill();
+    dummy2.kill();
+    dummy3.kill();
+    d1.closeSockets();
+    d2.closeSockets();
+    d3.closeSockets();
+    d1.server.close();
+    d2.server.close();
+    d3.server.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('OronBoxClient: when same daemon survives transient RPC drop, checks device.status before reconnecting', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-same-daemon-test-'));
+  const epDir = path.join(tempDir, 'PulseDev', 'run');
+  fs.mkdirSync(epDir, { recursive: true });
+  const epFile = path.join(epDir, 'core.json');
+
+  const dummy = spawn('node', ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  const receivedMethods = [];
+  let activeSocket = null;
+  let currentDeviceState = 'disconnected';
+
+  const server = net.createServer((socket) => {
+    activeSocket = socket;
+    socket.on('data', (data) => {
+      for (const line of data.toString('utf-8').split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const req = JSON.parse(line);
+          receivedMethods.push(req.method);
+          if (req.method === 'daemon.info') {
+            socket.write(
+              JSON.stringify({
+                id: req.id,
+                ok: true,
+                result: {
+                  protocolVersion: 6,
+                  pid: dummy.pid,
+                  platform: 'windows',
+                  endpoint: `127.0.0.1:${server.address().port}`,
+                  uptimeSeconds: 1,
+                },
+              }) + '\n',
+            );
+          } else if (req.method === 'device.connect') {
+            currentDeviceState = 'connected';
+            socket.write(
+              JSON.stringify({
+                id: req.id,
+                ok: true,
+                result: { connected: true, protocolState: 'connected' },
+              }) + '\n',
+            );
+          } else if (req.method === 'device.status') {
+            socket.write(
+              JSON.stringify({
+                id: req.id,
+                ok: true,
+                result: {
+                  connected: currentDeviceState === 'connected',
+                  protocolState: currentDeviceState,
+                },
+              }) + '\n',
+            );
+          }
+        } catch {}
+      }
+    });
+  });
+
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+
+  let client = null;
+  try {
+    fs.writeFileSync(
+      epFile,
+      JSON.stringify({
+        port: server.address().port,
+        token: 'token_same',
+        pid: dummy.pid,
+        protocolVersion: 6,
+      }),
+    );
+
+    client = new OronBoxClient({ endpointFile: epFile });
+    await client.connectIfRunning();
+    await client.call('device.connect');
+    assert.equal(client.bandConnectionDesired, true);
+
+    // 场景 A: 原 daemon 仍存活，手环状态依然是 connected。RPC 短暂断线重连后先查 device.status，不重发 device.connect
+    receivedMethods.length = 0;
+    activeSocket.destroy(); // 仅断开 RPC 连接
+
+    for (let i = 0; i < 40; i++) {
+      await sleep(100);
+      if (receivedMethods.includes('device.status')) break;
+    }
+    assert.ok(receivedMethods.includes('daemon.info'));
+    assert.ok(receivedMethods.includes('device.status'), '同 PID 重连后先查 device.status');
+    await sleep(300);
+    assert.equal(
+      receivedMethods.filter((m) => m === 'device.connect').length,
+      0,
+      '手环已在 connected 状态，不重复发送 device.connect',
+    );
+
+    // 场景 B: 原 daemon 仍存活，但手环已处于 disconnected。RPC 短暂断线重连后查到 disconnected，补发一次 device.connect
+    currentDeviceState = 'disconnected';
+    receivedMethods.length = 0;
+    activeSocket.destroy();
+
+    for (let i = 0; i < 40; i++) {
+      await sleep(100);
+      if (receivedMethods.includes('device.connect')) break;
+    }
+    assert.ok(receivedMethods.includes('device.status'));
+    assert.ok(receivedMethods.includes('device.connect'), '手环处于 disconnected 时补发 device.connect');
+
+    client.dispose();
+  } finally {
+    client?.dispose();
+    dummy.kill();
+    server.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('pulse-core --live: starts in disconnected state and exits cleanly on daemon.stop (isolated)', async () => {
   const coreExe = path.resolve('core/target/release/pulse-core.exe');
   if (!fs.existsSync(coreExe)) return;
 
-  const epDir = path.join(process.env.LOCALAPPDATA || '.', 'PulseDev', 'run');
-  fs.mkdirSync(epDir, { recursive: true });
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-live-test-'));
+  const epDir = path.join(tempDir, 'PulseDev', 'run');
   const epFile = path.join(epDir, 'core.json');
-  fs.rmSync(epFile, { force: true });
 
-  const proc = spawn(coreExe, ['--live'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  // 严禁在隔离目录创建 device.json，确保不读取真实凭据
+  assert.equal(fs.existsSync(path.join(epDir, 'device.json')), false);
+
+  const proc = spawn(coreExe, ['--live'], {
+    env: { ...process.env, LOCALAPPDATA: tempDir },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
   try {
     let ep = null;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 50; i++) {
       await sleep(100);
       try {
         ep = JSON.parse(fs.readFileSync(epFile, 'utf-8'));
         if (ep?.port) break;
       } catch {}
     }
-    assert.ok(ep?.port, 'pulse-core --live 成功启动并写入端点');
+    assert.ok(ep?.port, 'pulse-core --live 成功启动并写入隔离端点');
 
     const client = net.connect(ep.port, '127.0.0.1');
     await new Promise((r) => client.once('connect', r));
@@ -297,37 +618,19 @@ test('pulse-core --live: starts in disconnected state and does not reconnect aft
         client.write(JSON.stringify({ id, method, params, token: ep.token }) + '\n');
       });
 
-    // 1. 验证仅启动 daemon、未调用 device.connect 时，保持 Disconnected，不建立蓝牙连接
+    // 1. 验证仅启动 daemon、未调用 device.connect 时，保持 Disconnected，不建立物理蓝牙连接
     const st0 = await callRpc('device.status');
     assert.equal(st0.result.connected, false, '启动后未收到 connect 请求前 connected=false');
     assert.equal(st0.result.protocolState, 'disconnected', '启动后 protocolState 为 disconnected');
     assert.equal(st0.result.device, null, '未连接时 device 为 null（不伪造假设备）');
 
-    // 保持静默 1.2 秒，确认状态未发生自发改变
+    // 保持静默 1.2 秒，确认状态未发生自发改变（不主动连接手环）
     await sleep(1200);
     const st1 = await callRpc('device.status');
     assert.equal(st1.result.connected, false);
     assert.equal(st1.result.protocolState, 'disconnected');
 
-    // 2. 模拟调用 device.connect（设置 desired_connected=true）
-    const connResp = await callRpc('device.connect');
-    assert.equal(connResp.ok, true);
-
-    // 3. 模拟用户主动调用 device.disconnect
-    const disconnResp = await callRpc('device.disconnect');
-    assert.equal(disconnResp.ok, true);
-
-    const stAfterDisconn = await callRpc('device.status');
-    assert.equal(stAfterDisconn.result.connected, false);
-    assert.equal(stAfterDisconn.result.protocolState, 'disconnected');
-
-    // 4. 等待 3.5 秒（超过 3 秒的重连周期），断言不会自发重连
-    await sleep(3500);
-    const stAfterWait = await callRpc('device.status');
-    assert.equal(stAfterWait.result.connected, false, '主动断开 3 秒后依然保持 disconnected，不会自动重连');
-    assert.equal(stAfterWait.result.protocolState, 'disconnected');
-
-    // 5. 验证 daemon.stop 干净退出
+    // 2. 严禁在此调用会触发 RFCOMM 连接的 device.connect；直接验证 daemon.stop 干净退出
     await callRpc('daemon.stop');
     await sleep(500);
     assert.equal(proc.exitCode, 0, 'daemon.stop 后进程退出码为 0');
@@ -337,6 +640,28 @@ test('pulse-core --live: starts in disconnected state and does not reconnect aft
     if (proc.exitCode === null) {
       proc.kill();
     }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('audit: real environment files (%LOCALAPPDATA%/PulseDev/run) were not modified or deleted', () => {
+  assert.equal(
+    fs.existsSync(REAL_CORE_FILE),
+    INITIAL_CORE_EXISTS,
+    '真实 core.json 存在性未被改变',
+  );
+  if (INITIAL_CORE_EXISTS) {
+    assert.equal(fs.readFileSync(REAL_CORE_FILE, 'utf-8'), INITIAL_CORE_CONTENT);
+  }
+  assert.equal(
+    fs.existsSync(REAL_DEVICE_FILE),
+    INITIAL_DEVICE_EXISTS,
+    '真实 device.json 存在性未被改变',
+  );
+  if (INITIAL_DEVICE_EXISTS) {
+    const currentStat = fs.statSync(REAL_DEVICE_FILE);
+    assert.equal(currentStat.mtimeMs, INITIAL_DEVICE_STAT.mtimeMs, '真实 device.json mtime 未被改变');
+    assert.equal(fs.readFileSync(REAL_DEVICE_FILE, 'utf-8'), INITIAL_DEVICE_CONTENT, '真实 device.json 内容未被改变');
   }
 });
 

@@ -17,11 +17,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod crc;
+#[rustfmt::skip]
 mod fake;
 pub mod frame;
 pub mod live;
+#[rustfmt::skip]
 pub mod rfcomm;
 mod rpc;
+#[rustfmt::skip]
 pub mod session;
 
 use fake::FakeDevice;
