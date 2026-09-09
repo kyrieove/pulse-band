@@ -21,6 +21,7 @@ import {
   INITIAL_SETUP_STEPS,
 } from './types';
 import { LogImportStep } from './LogImportStep';
+import { CredentialSaveStep } from './CredentialSaveStep';
 
 export interface SetupWizardProps {
   onClose: () => void;
@@ -82,6 +83,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   const renderStepContent = (step: SetupStep) => {
     if (step.id === 'import_log') {
       return <LogImportStep />;
+    }
+
+    if (step.id === 'save_credentials') {
+      return <CredentialSaveStep />;
     }
 
     return (

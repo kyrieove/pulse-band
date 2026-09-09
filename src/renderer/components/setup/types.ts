@@ -10,6 +10,8 @@ export type {
   SetupAction,
   LogImportStatus,
   LogImportState,
+  CredentialSaveStatus,
+  CredentialSaveState,
 } from '../../../common/types';
 
 /** 向后兼容现有 SetupWizard 内部引用的别名 */
