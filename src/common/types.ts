@@ -191,3 +191,70 @@ export interface VerifyQuotaState {
   status: VerifyQuotaStatus;
   error?: SetupError;
 }
+
+// ============================================================================
+// 快应用原生安装协议契约 (Native App Install Protocol Contract)
+// ============================================================================
+
+export type InstallSessionStatus =
+  | 'idle'
+  | 'preparing'
+  | 'transferring'
+  | 'installing'
+  | 'verifying'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface InstallPrepareRequest {
+  packageId?: string;
+  versionName?: string;
+  versionCode?: number;
+  fileSize: number;
+  hash: string;
+  chunkSize?: number;
+}
+
+export interface InstallPrepareResult {
+  installId: string;
+  status: InstallSessionStatus;
+  fileSize: number;
+  chunkSize: number;
+  totalChunks: number;
+}
+
+export interface InstallChunkRequest {
+  installId: string;
+  chunkIndex: number;
+  chunkData: string;
+  chunkHash?: string;
+}
+
+export interface InstallChunkResult {
+  installId: string;
+  status: InstallSessionStatus;
+  chunkIndex: number;
+  receivedBytes: number;
+  totalChunks: number;
+}
+
+export interface InstallCommitRequest {
+  installId: string;
+  expectedHash: string;
+}
+
+export interface InstallCancelRequest {
+  installId: string;
+  reason?: string;
+}
+
+export interface InstallProgressEvent {
+  messageType: 'event';
+  event: 'device.app.install.progress';
+  installId: string;
+  status: InstallSessionStatus;
+  transferredBytes?: number;
+  fileSize?: number;
+  percentage?: number;
+  error?: string;
+}

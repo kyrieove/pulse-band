@@ -178,6 +178,14 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
             };
             (error_resp(&id, "method_not_found", msg).to_string(), false)
         }
+        // Pulse 2.0 原生快应用安装 RPC 契约占位（未实现真实安装，返回 method_not_implemented）
+        "device.app.install.prepare"
+        | "device.app.install.chunk"
+        | "device.app.install.commit"
+        | "device.app.install.cancel" => (
+            error_resp(&id, "method_not_implemented", "快应用安装能力正在开发中").to_string(),
+            false,
+        ),
         other => (
             error_resp(&id, "method_not_found", &format!("未知方法 {other}")).to_string(),
             false,

@@ -5,9 +5,28 @@ declare module '*.css' {
   export default content;
 }
 
-import type { AgentSession, MinibarState } from '../common/types';
+import type {
+  AgentSession,
+  MinibarState,
+  InstallPrepareRequest,
+  InstallPrepareResult,
+  InstallChunkRequest,
+  InstallChunkResult,
+  InstallCommitRequest,
+  InstallCancelRequest,
+  InstallProgressEvent,
+} from '../common/types';
 import type { PulseOronboxState, PulseErrorEntry } from '../main/services/oronbox-bridge';
 import type { DiagnosticReport } from '../main/services/diagnostics';
+
+/** 快应用原生安装 RPC 桥接接口（阶段契约：仅定义类型边界） */
+export interface AppInstallBridge {
+  prepare: (req: InstallPrepareRequest) => Promise<InstallPrepareResult>;
+  sendChunk: (req: InstallChunkRequest) => Promise<InstallChunkResult>;
+  commit: (req: InstallCommitRequest) => Promise<{ ok: boolean; error?: string }>;
+  cancel: (req: InstallCancelRequest) => Promise<{ ok: boolean; error?: string }>;
+  onProgress: (cb: (event: InstallProgressEvent) => void) => () => void;
+}
 
 /** 旧悬浮岛残留 API（仅剩仍有后端支撑的通道）与迷你悬浮窗 API */
 export interface CodeislandBridge {
@@ -85,6 +104,8 @@ export interface PulseBridge {
   onMiniBarVisibilityChange: (cb: (visible: boolean) => void) => () => void;
   /** Electron ≥32 拖拽文件取本地路径（webUtils 只在 preload 可用） */
   getPathForFile: (file: File) => string;
+  /** 快应用原生安装协议契约（阶段契约：仅暴露类型边界，未绑定真实 IPC） */
+  appInstall?: AppInstallBridge;
 }
 
 declare global {
