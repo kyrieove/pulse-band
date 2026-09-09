@@ -3,7 +3,9 @@
  *
  * 职责：
  * - 维护内存 Install Session（单任务模式，暂存会话状态）
- * - 计算分块数、累加传输进度、派发进度广播
+ * - 严格解码并校验 Base64 分块真实字节长度
+ * - 计算分块数、累加真实传输字节、派发进度广播
+ * - commit 阶段进行完整性前置断言（全分块接收 + 声明哈希一致性）
  * - 纯内存流转，无磁盘写入，不调用硬件/蓝牙/Core
  */
 
@@ -19,6 +21,31 @@ import type {
   InstallProgressEvent,
 } from '../../common/types';
 
+export const MIN_CHUNK_SIZE = 256;
+export const MAX_CHUNK_SIZE = 64 * 1024; // 64 KiB
+export const DEFAULT_CHUNK_SIZE = 512;
+export const MAX_RPK_SIZE = 5 * 1024 * 1024; // 5 MiB
+
+const BASE64_REGEX = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function decodeBase64Strict(data: string): Buffer {
+  if (!data || typeof data !== 'string') {
+    throw new Error('chunkData 必须为非空字符串');
+  }
+  const trimmed = data.trim();
+  if (trimmed.length === 0 || trimmed.length % 4 !== 0) {
+    throw new Error('非法 Base64 数据: 长度不合法');
+  }
+  if (!BASE64_REGEX.test(trimmed)) {
+    throw new Error('非法 Base64 数据: 包含非法字符');
+  }
+  const buf = Buffer.from(trimmed, 'base64');
+  if (buf.length === 0) {
+    throw new Error('非法 Base64 数据: 解码后为空数据');
+  }
+  return buf;
+}
+
 export interface InstallSession {
   installId: string;
   status: InstallSessionStatus;
@@ -27,6 +54,7 @@ export interface InstallSession {
   totalChunks: number;
   receivedBytes: number;
   receivedChunks: Set<number>;
+  expectedHash: string;
   createdAt: number;
 }
 
@@ -76,11 +104,30 @@ export class AppInstallService {
     ) {
       throw new Error('已有正在进行的安装会话');
     }
-    if (!req.fileSize || req.fileSize <= 0) {
-      throw new Error('无效的 fileSize');
+    if (!req.fileSize || typeof req.fileSize !== 'number' || req.fileSize <= 0) {
+      throw new Error('无效的 fileSize: 必须大于 0');
+    }
+    if (req.fileSize > MAX_RPK_SIZE) {
+      throw new Error(`fileSize 超出最大限制 (${MAX_RPK_SIZE / (1024 * 1024)} MiB)`);
+    }
+    if (!req.hash || typeof req.hash !== 'string' || req.hash.trim() === '') {
+      throw new Error('无效的 hash: 必须为非空字符串');
     }
 
-    const chunkSize = req.chunkSize && req.chunkSize > 0 ? req.chunkSize : 512;
+    let chunkSize = DEFAULT_CHUNK_SIZE;
+    if (req.chunkSize !== undefined && req.chunkSize !== null) {
+      if (
+        typeof req.chunkSize !== 'number' ||
+        req.chunkSize < MIN_CHUNK_SIZE ||
+        req.chunkSize > MAX_CHUNK_SIZE
+      ) {
+        throw new Error(
+          `无效的 chunkSize: 必须在 [${MIN_CHUNK_SIZE}, ${MAX_CHUNK_SIZE}] 范围内`
+        );
+      }
+      chunkSize = req.chunkSize;
+    }
+
     const totalChunks = Math.ceil(req.fileSize / chunkSize);
     const installId =
       'inst_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 8);
@@ -93,6 +140,7 @@ export class AppInstallService {
       totalChunks,
       receivedBytes: 0,
       receivedChunks: new Set<number>(),
+      expectedHash: req.hash.trim(),
       createdAt: Date.now(),
     };
 
@@ -122,20 +170,36 @@ export class AppInstallService {
     if (this.session.status !== 'preparing' && this.session.status !== 'transferring') {
       throw new Error(`当前会话状态 (${this.session.status}) 不允许接收分块`);
     }
-    if (req.chunkIndex < 0 || req.chunkIndex >= this.session.totalChunks) {
+    if (
+      typeof req.chunkIndex !== 'number' ||
+      req.chunkIndex < 0 ||
+      req.chunkIndex >= this.session.totalChunks
+    ) {
       throw new Error(`分块索引 ${req.chunkIndex} 越界 (总数: ${this.session.totalChunks})`);
     }
 
+    // 1. 严格 Base64 解码与空数据校验
+    const decodedBuffer = decodeBase64Strict(req.chunkData);
+    const decodedLength = decodedBuffer.length;
+
+    // 2. 校验真实分块大小
+    const isLastChunk = req.chunkIndex === this.session.totalChunks - 1;
+    const expectedLength = isLastChunk
+      ? this.session.fileSize - req.chunkIndex * this.session.chunkSize
+      : this.session.chunkSize;
+
+    if (decodedLength !== expectedLength) {
+      throw new Error(
+        `分块长度不正确: 期望 ${expectedLength} 字节, 实际解码 ${decodedLength} 字节`
+      );
+    }
+
+    // 3. 幂等处理 duplicate chunk：不得重复累加 receivedBytes
     if (!this.session.receivedChunks.has(req.chunkIndex)) {
       this.session.receivedChunks.add(req.chunkIndex);
-      let bytesInChunk = this.session.chunkSize;
-      if (req.chunkIndex === this.session.totalChunks - 1) {
-        const rem = this.session.fileSize % this.session.chunkSize;
-        bytesInChunk = rem === 0 ? this.session.chunkSize : rem;
-      }
       this.session.receivedBytes = Math.min(
         this.session.fileSize,
-        this.session.receivedBytes + bytesInChunk
+        this.session.receivedBytes + decodedLength
       );
     }
 
@@ -170,6 +234,21 @@ export class AppInstallService {
     }
     if (this.session.status !== 'transferring' && this.session.status !== 'preparing') {
       throw new Error(`当前会话状态 (${this.session.status}) 不允许 commit`);
+    }
+
+    // 检查 expectedHash 与 prepare 声明一致性（声明值对账）
+    if (!req.expectedHash || req.expectedHash !== this.session.expectedHash) {
+      throw new Error('expectedHash 与 prepare 声明不一致');
+    }
+
+    // 检查分块完整性：必须收到全部 chunk 且累计字节精确等于 fileSize
+    if (
+      this.session.receivedChunks.size !== this.session.totalChunks ||
+      this.session.receivedBytes !== this.session.fileSize
+    ) {
+      throw new Error(
+        `分块尚未传输完整: 接收到 ${this.session.receivedChunks.size}/${this.session.totalChunks} 块, 字节数 ${this.session.receivedBytes}/${this.session.fileSize}`
+      );
     }
 
     // 阶段规范：只进入 verifying，禁止 completed
