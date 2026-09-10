@@ -60,11 +60,14 @@ export function getHookStatus(): HookStatus {
   const hooks = readSettings().hooks ?? {};
   const ours = HOOK_EVENTS.map((e) => (hooks[e] ?? []).find(isOurs)).filter(Boolean);
   const script = path.join(hookDir(), 'claude-hook.cjs');
+  const repoScript = path.join(import.meta.dirname, '../../scripts/claude-hook.cjs');
+  // Mac：无 .cmd 包装器，直接用系统 node 跑仓库里的 claude-hook.cjs
+  const scriptOk =
+    process.platform === 'darwin'
+      ? fs.existsSync(repoScript)
+      : fs.existsSync(wrapperPath()) && fs.existsSync(script);
   return {
-    installed:
-      ours.length === HOOK_EVENTS.length &&
-      fs.existsSync(wrapperPath()) &&
-      fs.existsSync(script),
+    installed: ours.length === HOOK_EVENTS.length && scriptOk,
     settingsPath: settingsPath(),
     command: ours[0]?.hooks?.[0]?.command ?? null,
   };

@@ -19,15 +19,26 @@ import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 
-export const ORONBOX_EXE = 'C:\\Program Files\\OronBox\\oronbox.exe';
-export const DAEMON_ENDPOINT_FILE = path.join(
-  process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
-  'OronBox',
-  'run',
-  'daemon.json',
-);
+// macOS 版 OronBox 的 daemon 不写 daemon.json（TCP+token），而是监听 Unix domain
+// socket（$TMPDIR/oronbox/daemon.sock，权限 0600，无需 token），RPC 报文与 Windows 完全一致。
+export const ORONBOX_EXE =
+  process.platform === 'darwin'
+    ? '/Applications/OronBox.app/Contents/MacOS/OronBox'
+    : 'C:\\Program Files\\OronBox\\oronbox.exe';
+export const DAEMON_SOCK_FILE = path.join(os.tmpdir(), 'oronbox', 'daemon.sock');
+export const DAEMON_ENDPOINT_FILE =
+  process.platform === 'darwin'
+    ? DAEMON_SOCK_FILE
+    : path.join(
+        process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '.', 'AppData', 'Local'),
+        'OronBox',
+        'run',
+        'daemon.json',
+      );
+export const IS_MAC_DAEMON = process.platform === 'darwin';
 export const EXPECTED_PROTOCOL_VERSION = 6;
 
 const SPAWN_WAIT_MS = 20_000;
@@ -40,6 +51,8 @@ export interface DaemonEndpoint {
   token: string;
   pid: number;
   protocolVersion: number;
+  /** macOS：Unix socket 路径；存在时优先于 TCP port 连接 */
+  socketPath?: string;
 }
 
 export interface Degradation {
@@ -64,6 +77,16 @@ function pidAlive(pid: number): boolean {
 }
 
 function readEndpoint(): DaemonEndpoint | null {
+  if (IS_MAC_DAEMON) {
+    try {
+      const stat = fs.statSync(DAEMON_SOCK_FILE);
+      if (!stat.isSocket()) return null;
+      // pid 填 1（恒活）让 ensureDaemon 跳过 spawn；socket 由 daemon 自身管理
+      return { port: 0, token: '', pid: 1, protocolVersion: EXPECTED_PROTOCOL_VERSION, socketPath: DAEMON_SOCK_FILE };
+    } catch {
+      return null;
+    }
+  }
   try {
     const ep = JSON.parse(fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8'));
     return Number.isInteger(ep?.port) && typeof ep?.token === 'string' ? ep : null;
@@ -73,6 +96,16 @@ function readEndpoint(): DaemonEndpoint | null {
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** macOS：读 daemon.sock 的 mtime，用于检测 socket 是否被 daemon 重建过 */
+function sockMtimeMs(): number {
+  try {
+    return fs.statSync(DAEMON_SOCK_FILE).mtimeMs;
+  } catch {
+    return -1;
+  }
+}
+
 const TRANSIENT_CODES = new Set(['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED', 'EHOSTUNREACH', 'ENOTFOUND']);
 
 export class OronBoxClient extends EventEmitter {
@@ -117,9 +150,11 @@ export class OronBoxClient extends EventEmitter {
       this.endpoint = ep;
       return ep;
     }
-    const oldRaw = fs.existsSync(DAEMON_ENDPOINT_FILE)
-      ? fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8')
-      : null;
+    const oldRaw = IS_MAC_DAEMON
+      ? String(sockMtimeMs())
+      : fs.existsSync(DAEMON_ENDPOINT_FILE)
+        ? fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8')
+        : null;
     if (!fs.existsSync(ORONBOX_EXE)) throw new Error('找不到 ' + ORONBOX_EXE);
     const child = spawn(ORONBOX_EXE, ['--nogui', 'daemon', 'run'], {
       detached: true,
@@ -136,7 +171,7 @@ export class OronBoxClient extends EventEmitter {
       }
       let raw: string | null = null;
       try {
-        raw = fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8');
+        raw = IS_MAC_DAEMON ? String(sockMtimeMs()) : fs.readFileSync(DAEMON_ENDPOINT_FILE, 'utf-8');
       } catch {
         /* 文件尚未出现 */
       }
@@ -204,7 +239,7 @@ export class OronBoxClient extends EventEmitter {
 
   private openSocket(ep: DaemonEndpoint): Promise<void> {
     return new Promise((resolve, reject) => {
-      const socket = net.connect(ep.port, '127.0.0.1');
+      const socket = ep.socketPath ? net.connect(ep.socketPath) : net.connect(ep.port, '127.0.0.1');
       let settled = false;
       const done = (err?: Error) => {
         if (settled) return;

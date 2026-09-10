@@ -8,10 +8,14 @@ export const HOOK_EVENTS = ['SessionStart', 'PreToolUse', 'PostToolUse', 'Stop']
 /** PreToolUse / PostToolUse 按 Claude Code 的惯例要带 matcher */
 const NEEDS_MATCHER = new Set<string>(['PreToolUse', 'PostToolUse']);
 
-/** 我们写进去的条目靠命令里含 pulse-hook.cmd 认出来 */
+/** 我们写进去的条目靠命令里含 pulse-hook.cmd 认出来（Windows 包装器）；Mac 上直接写 node 跑 claude-hook.cjs */
 export const isOurs = (entry: any): boolean =>
   Array.isArray(entry?.hooks) &&
-  entry.hooks.some((h: any) => typeof h?.command === 'string' && h.command.includes('pulse-hook.cmd'));
+  entry.hooks.some(
+    (h: any) =>
+      typeof h?.command === 'string' &&
+      (h.command.includes('pulse-hook.cmd') || h.command.includes('claude-hook.cjs')),
+  );
 
 /** 并进我们的条目：先摘掉旧的同类条目再追加，重复安装不会堆积 */
 export function mergeHooks(
