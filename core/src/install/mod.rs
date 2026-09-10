@@ -18,6 +18,7 @@ pub mod inspector;
 pub mod replay;
 pub mod report;
 pub mod pipeline;
+pub mod xiaomi;
 
 #[allow(unused_imports)]
 pub use model::*;
@@ -27,4 +28,7 @@ pub use recorder::*;
 pub use inspector::*;
 pub use replay::*;
 pub use report::*;
+#[allow(unused_imports)]
 pub use pipeline::*;
+#[allow(unused_imports)]
+pub use xiaomi::*;

@@ -1118,3 +1118,269 @@ fn test_33_legacy_json_format_backward_compatibility() {
     let rec_dir = CaptureLoader::load_from_dir(captures_dir).expect("load_from_dir 兼容");
     assert!(!rec_dir.is_empty());
 }
+
+#[test]
+fn test_34_protobuf_roundtrip_wear_packet_thirdparty_and_mass() {
+    use app_install::xiaomi::*;
+
+    // 1. AppInstallerRequest roundtrip
+    let req = AppInstallerRequest::new("com.test.app", 100, 1024);
+    let req_bytes = req.encode();
+    let req_decoded = AppInstallerRequest::decode(&req_bytes).expect("Request decode 成功");
+    assert_eq!(req_decoded, req);
+
+    // 2. AppInstallerResponse roundtrip
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let resp_bytes = resp.encode();
+    let resp_decoded = AppInstallerResponse::decode(&resp_bytes).expect("Response decode 成功");
+    assert_eq!(resp_decoded, resp);
+    assert!(resp_decoded.is_ready());
+
+    // 3. AppInstallerResult roundtrip
+    let res = AppInstallerResult::new(InstallResultCode::Success, Some("com.test.app".to_string()));
+    let res_bytes = res.encode();
+    let res_decoded = AppInstallerResult::decode(&res_bytes).expect("Result decode 成功");
+    assert_eq!(res_decoded, res);
+
+    // 4. PrepareRequest roundtrip
+    let md5 = vec![0xAB; 16];
+    let prep_req = PrepareRequest::new(MASS_DATA_TYPE_THIRDPARTY_APP, md5.clone(), 50000);
+    let prep_bytes = prep_req.encode();
+    let prep_decoded = PrepareRequest::decode(&prep_bytes).expect("PrepareRequest decode 成功");
+    assert_eq!(prep_decoded, prep_req);
+
+    // 5. PrepareResponse roundtrip
+    let prep_resp = PrepareResponse {
+        data_id: md5.clone(),
+        prepare_status: 0,
+        select_compress_mode: Some(0),
+        remained_data_length: Some(0),
+        expected_slice_length: Some(244),
+    };
+    let prep_resp_bytes = prep_resp.encode();
+    let prep_resp_decoded = PrepareResponse::decode(&prep_resp_bytes).expect("PrepareResponse decode 成功");
+    assert_eq!(prep_resp_decoded, prep_resp);
+    assert!(prep_resp_decoded.is_ready());
+
+    // 6. MassControl roundtrip
+    let ctrl = MassControl::new(MassControlOp::Cancel, MASS_DATA_TYPE_THIRDPARTY_APP, md5);
+    let ctrl_bytes = ctrl.encode();
+    let ctrl_decoded = MassControl::decode(&ctrl_bytes).expect("MassControl decode 成功");
+    assert_eq!(ctrl_decoded, ctrl);
+
+    // 7. WearPacket wrapping ThirdpartyApp roundtrip
+    let app = ThirdpartyApp::from_install_request(req);
+    let wp_app = WearPacket::new_thirdparty_app(1, app);
+    let wp_app_bytes = wp_app.encode();
+    let wp_app_decoded = WearPacket::decode(&wp_app_bytes).expect("WearPacket ThirdpartyApp decode 成功");
+    assert_eq!(wp_app_decoded.pkt_type, WearPacketType::ThirdpartyApp);
+    assert_eq!(wp_app_decoded.id, 1);
+
+    // 8. WearPacket wrapping Mass roundtrip
+    let mass = Mass::from_prepare_request(prep_req);
+    let wp_mass = WearPacket::new_mass(0, mass);
+    let wp_mass_bytes = wp_mass.encode();
+    let wp_mass_decoded = WearPacket::decode(&wp_mass_bytes).expect("WearPacket Mass decode 成功");
+    assert_eq!(wp_mass_decoded.pkt_type, WearPacketType::Mass);
+    assert_eq!(wp_mass_decoded.id, 0);
+}
+
+#[test]
+fn test_35_mass_prepare_packet_and_md5_correctness() {
+    use app_install::xiaomi::*;
+
+    let rpk_dummy = vec![0x12; 1000];
+    let valid_md5 = vec![0x5A; 16];
+
+    // 1. MD5 长度校验 (非 16 字节被拒绝)
+    let invalid_md5 = vec![0x5A; 15];
+    assert!(encode_mass_prepare(&rpk_dummy, &invalid_md5).is_err());
+
+    // 2. 正常编码
+    let bytes = encode_mass_prepare(&rpk_dummy, &valid_md5).expect("encode_mass_prepare 成功");
+
+    // 3. 解码验证
+    let wp = WearPacket::decode(&bytes).expect("WearPacket decode 成功");
+    assert_eq!(wp.pkt_type, WearPacketType::Mass);
+    assert_eq!(wp.id, 0);
+
+    let mass = match wp.payload {
+        Some(WearPacketPayload::Mass(m)) => m,
+        _ => panic!("Expected Mass payload"),
+    };
+
+    let prep = match mass.payload {
+        Some(MassPayload::PrepareRequest(p)) => p,
+        _ => panic!("Expected PrepareRequest payload"),
+    };
+
+    assert_eq!(prep.data_type, 64);
+    assert_eq!(prep.data_id, valid_md5);
+    assert_eq!(prep.data_length, 1000);
+}
+
+#[test]
+fn test_36_mass_chunk_header_and_fragment_length() {
+    use app_install::xiaomi::*;
+
+    let fragment = vec![0xAA, 0xBB, 0xCC, 0xDD];
+    let total_parts = 50u16;
+    let current_part = 12u16;
+
+    // 1. 编码分片 (包含 L2 channel=2, opcode=1 封装)
+    let chunk_bytes = encode_mass_chunk(total_parts, current_part, &fragment).expect("encode_mass_chunk 成功");
+
+    // 2. 解封装 L2
+    let l2 = L2Packet::from_bytes(&chunk_bytes).expect("L2 decode 成功");
+    assert_eq!(l2.channel, L2Channel::Mass);
+    assert_eq!(l2.channel.as_u8(), 2);
+    assert_eq!(l2.opcode, L2OpCode::Write);
+    assert_eq!(l2.opcode.as_u8(), 1);
+
+    // 3. 解码 MassChunk 头部
+    let chunk = MassChunk::decode(&l2.payload).expect("MassChunk decode 成功");
+    assert_eq!(chunk.total_parts, 50);
+    assert_eq!(chunk.current_part, 12);
+    assert_eq!(chunk.fragment, fragment);
+
+    // 4. 边界异常分片拒绝
+    assert!(MassChunk::decode(&[]).is_err());
+    assert!(MassChunk::decode(&[0, 0, 0]).is_err()); // < 4 bytes
+    assert!(MassChunk::decode(&[0, 0, 1, 0]).is_err()); // total_parts = 0
+    assert!(MassChunk::decode(&[10, 0, 0, 0]).is_err()); // current_part = 0
+    assert!(MassChunk::decode(&[10, 0, 11, 0]).is_err()); // current_part > total_parts
+}
+
+#[test]
+fn test_37_l2_channel_and_opcode_isolation() {
+    use app_install::xiaomi::*;
+
+    // 1. 验证 L2Channel 数值与映射
+    assert_eq!(L2Channel::Pb.as_u8(), 1);
+    assert_eq!(L2Channel::Mass.as_u8(), 2);
+    assert_eq!(L2Channel::from_u8(1).unwrap(), L2Channel::Pb);
+    assert_eq!(L2Channel::from_u8(2).unwrap(), L2Channel::Mass);
+    assert!(L2Channel::from_u8(99).is_err());
+
+    // 2. 验证 L2OpCode 数值与映射
+    assert_eq!(L2OpCode::Write.as_u8(), 1);
+    assert_eq!(L2OpCode::WriteEnc.as_u8(), 2);
+    assert_eq!(L2OpCode::Read.as_u8(), 3);
+    assert_eq!(L2OpCode::from_u8(1).unwrap(), L2OpCode::Write);
+    assert!(L2OpCode::from_u8(99).is_err());
+
+    // 3. L2 报文序列化
+    let payload = vec![0x10, 0x20, 0x30];
+    let packet = L2Packet::new(L2Channel::Mass, L2OpCode::Write, payload.clone());
+    let bytes = packet.to_bytes();
+    assert_eq!(bytes[0], 2);
+    assert_eq!(bytes[1], 1);
+    assert_eq!(&bytes[2..], &payload[..]);
+
+    let decoded = L2Packet::from_bytes(&bytes).expect("L2 decode 成功");
+    assert_eq!(decoded, packet);
+}
+
+#[test]
+fn test_38_mass_inner_payload_crc32_and_validation() {
+    use app_install::xiaomi::*;
+
+    let file_dummy = b"Hello RPK Wear Mass Transfer Payload Content";
+    let md5 = vec![0x11; 16];
+
+    // 1. 构造内部载荷
+    let payload = build_mass_inner_payload(file_dummy, 64, &md5).expect("build payload 成功");
+
+    // 结构验证：0x00 | 0x40 | MD5 (16B) | len (4B) | file | CRC32 (4B)
+    assert_eq!(payload[0], 0x00);
+    assert_eq!(payload[1], 0x40);
+    assert_eq!(&payload[2..18], &md5[..]);
+    let len = u32::from_le_bytes([payload[18], payload[19], payload[20], payload[21]]);
+    assert_eq!(len as usize, file_dummy.len());
+
+    // 2. 校验 CRC32
+    assert!(verify_mass_inner_payload(&payload).is_ok());
+
+    // 3. 篡改文件数据导致 CRC32 不匹配
+    let mut corrupted = payload.clone();
+    corrupted[25] ^= 0xFF;
+    let err = verify_mass_inner_payload(&corrupted).unwrap_err();
+    assert!(err.contains("CRC32 校验失败"));
+
+    // 4. 截断载荷拒绝
+    assert!(verify_mass_inner_payload(&payload[..20]).is_err());
+}
+
+#[test]
+fn test_39_protocol_state_machine_flow_to_waiting_device_result() {
+    use app_install::xiaomi::*;
+
+    // 1. 验证状态机状态流转：preparing -> transferring -> waiting_device_result
+    let state_prep = XiaomiInstallState::Preparing;
+    let state_trans = XiaomiInstallState::Transferring;
+    let state_wait = XiaomiInstallState::WaitingDeviceResult;
+
+    assert_eq!(state_prep.as_str(), "preparing");
+    assert_eq!(state_trans.as_str(), "transferring");
+    assert_eq!(state_wait.as_str(), "waiting_device_result");
+
+    // 严格安全防线：严禁状态包含 completed 或 installed
+    assert_ne!(state_wait.as_str(), "completed");
+    assert_ne!(state_wait.as_str(), "installed");
+    assert_ne!(state_wait.as_str(), "success");
+
+    // 2. 验证与现有 Mock 状态机的协调互锁
+    let mut mock_proto = MockAppInstallProtocol::new();
+    let mut dev = MockBandDeviceTransport::new();
+    dev.connect("00:00:00:00:00:00").unwrap();
+
+    let meta = InstallMetadata {
+        package_id: "com.test.xiaomi".to_string(),
+        version_name: "1.0.0".to_string(),
+        version_code: 10,
+        file_size: 512,
+        hash: "dummy_hash".to_string(),
+    };
+
+    let sess = mock_proto.prepare_install(&mut dev, &meta).unwrap();
+    assert_eq!(sess.status, state_prep.as_str());
+
+    let chunk = InstallChunk {
+        session_id: sess.session_id.clone(),
+        index: 0,
+        size: 512,
+        data: vec![0u8; 512],
+    };
+    let ack = mock_proto.send_package_chunk(&mut dev, &chunk).unwrap();
+    assert_eq!(ack.received_bytes, 512);
+
+    let commit = mock_proto.commit_install(&mut dev, &sess.session_id).unwrap();
+    assert_ne!(commit.status, "completed");
+    assert_ne!(commit.status, "installed");
+}
+
+#[test]
+fn test_40_negative_payload_rejection_tests() {
+    use app_install::xiaomi::*;
+
+    // 1. 空 package_name 拒绝
+    assert!(encode_install_request("", 1, 100).is_err());
+
+    // 2. 解码非法/截断的 AppInstallerRequest
+    assert!(AppInstallerRequest::decode(&[]).is_err());
+    assert!(AppInstallerRequest::decode(&[0x0A, 0xFF]).is_err()); // 截断长度
+
+    // 3. 非法/截断的 WearPacket
+    assert!(WearPacket::decode(&[]).is_err());
+    assert!(WearPacket::decode(&[0x08]).is_err()); // tag 1 缺少 varint 载荷
+
+    // 4. decode_install_response 面对非法载荷拒绝
+    let bad_wp = WearPacket::new(WearPacketType::System, 99).encode();
+    assert!(decode_install_response(&bad_wp).is_err());
+
+    // 5. decode_install_result 面对非法载荷拒绝
+    assert!(decode_install_result(&bad_wp).is_err());
+
+    // 6. decode_mass_ack 截断载荷拒绝
+    assert!(decode_mass_ack(&[0x01]).is_err()); // 长度不足 2 字节
+}
