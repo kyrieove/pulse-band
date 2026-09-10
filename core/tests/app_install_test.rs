@@ -1384,3 +1384,263 @@ fn test_40_negative_payload_rejection_tests() {
     // 6. decode_mass_ack 截断载荷拒绝
     assert!(decode_mass_ack(&[0x01]).is_err()); // 长度不足 2 字节
 }
+
+#[test]
+fn test_xiaomi_protocol_prepare_encode() {
+    use app_install::xiaomi::*;
+
+    let mut proto = XiaomiAppInstallProtocol::new();
+    let mut dev = MockBandDeviceTransport::new();
+    dev.connect("AA:BB:CC:11:22:33").unwrap();
+
+    // 模拟手环响应: WearPacket(type=20, id=1, ThirdpartyApp with AppInstallerResponse(prepare_status=0, expected_slice_length=244))
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let app_resp = ThirdpartyApp::from_install_response(resp);
+    let wp_resp = WearPacket::new_thirdparty_app(1, app_resp);
+    let l2_resp = L2Packet::pb_write(wp_resp.encode());
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: l2_resp.to_bytes(),
+    });
+
+    let meta = InstallMetadata {
+        package_id: "com.xiaomi.demo".to_string(),
+        version_name: "1.0.0".to_string(),
+        version_code: 100,
+        file_size: 1024,
+        hash: "0123456789abcdef0123456789abcdef".to_string(),
+    };
+
+    let session = proto.prepare_install(&mut dev, &meta).expect("prepare_install 成功");
+    assert_eq!(session.file_size, 1024);
+    assert_eq!(proto.state, XiaomiInstallState::Transferring);
+
+    // 验证发出的帧结构
+    assert_eq!(dev.sent_frames.len(), 1);
+    let sent = &dev.sent_frames[0];
+    assert_eq!(sent.frame_type, 0x03);
+
+    // 载荷解包验证: L2 -> WearPacket -> ThirdpartyApp -> AppInstallerRequest
+    let l2 = L2Packet::from_bytes(&sent.payload).expect("L2 decode 成功");
+    assert_eq!(l2.channel, L2Channel::Pb);
+    let wp = WearPacket::decode(&l2.payload).expect("WearPacket decode 成功");
+    assert_eq!(wp.pkt_type, WearPacketType::ThirdpartyApp);
+    assert_eq!(wp.id, 1);
+
+    let app = match wp.payload {
+        Some(WearPacketPayload::ThirdpartyApp(a)) => a,
+        _ => panic!("Expected ThirdpartyApp"),
+    };
+    let req = match app.payload {
+        Some(ThirdpartyAppPayload::InstallRequest(r)) => r,
+        _ => panic!("Expected InstallRequest"),
+    };
+    assert_eq!(req.package_name, "com.xiaomi.demo");
+    assert_eq!(req.version_code, 100);
+    assert_eq!(req.package_size, 1024);
+}
+
+#[test]
+fn test_xiaomi_mass_transfer_sequence() {
+    use app_install::xiaomi::*;
+
+    let mut proto = XiaomiAppInstallProtocol::new();
+    let mut dev = MockBandDeviceTransport::new();
+    dev.connect("AA:BB:CC:11:22:33").unwrap();
+
+    // 先模拟完成 prepare 握手
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let wp_resp = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp));
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: L2Packet::pb_write(wp_resp.encode()).to_bytes(),
+    });
+
+    let meta = InstallMetadata {
+        package_id: "com.xiaomi.demo".to_string(),
+        version_name: "1.0.0".to_string(),
+        version_code: 100,
+        file_size: 1024, // 2 chunks (512 each)
+        hash: "0123456789abcdef0123456789abcdef".to_string(),
+    };
+    let session = proto.prepare_install(&mut dev, &meta).unwrap();
+    assert_eq!(session.total_chunks, 2);
+
+    // 发送 chunk 0 (首块触发 Mass Prepare + Mass Chunk)
+    let chunk0 = InstallChunk {
+        session_id: session.session_id.clone(),
+        index: 0,
+        size: 512,
+        data: vec![0x11; 512],
+    };
+    let ack0 = proto.send_package_chunk(&mut dev, &chunk0).expect("chunk0 发送成功");
+    assert_eq!(ack0.received_bytes, 512);
+    assert_eq!(proto.state, XiaomiInstallState::Transferring);
+
+    // 检查发出帧：1 (prepare_install) + 1 (mass_prepare) + 1 (mass_chunk0)
+    assert_eq!(dev.sent_frames.len(), 3);
+
+    let mass_prep_frame = &dev.sent_frames[1];
+    let mass_prep_l2 = L2Packet::from_bytes(&mass_prep_frame.payload).unwrap();
+    let mass_prep_wp = WearPacket::decode(&mass_prep_l2.payload).unwrap();
+    assert_eq!(mass_prep_wp.pkt_type, WearPacketType::Mass);
+    assert_eq!(mass_prep_wp.id, 0);
+
+    let chunk0_frame = &dev.sent_frames[2];
+    let chunk0_l2 = L2Packet::from_bytes(&chunk0_frame.payload).unwrap();
+    assert_eq!(chunk0_l2.channel, L2Channel::Mass);
+    assert_eq!(chunk0_l2.opcode, L2OpCode::Write);
+    let chunk0_mass = MassChunk::decode(&chunk0_l2.payload).unwrap();
+    assert_eq!(chunk0_mass.total_parts, 2);
+    assert_eq!(chunk0_mass.current_part, 1);
+    assert_eq!(chunk0_mass.fragment.len(), 512);
+
+    // 发送 chunk 1 (末尾块，完成后状态流转进入 waiting_device_result)
+    let chunk1 = InstallChunk {
+        session_id: session.session_id.clone(),
+        index: 1,
+        size: 512,
+        data: vec![0x22; 512],
+    };
+    let ack1 = proto.send_package_chunk(&mut dev, &chunk1).expect("chunk1 发送成功");
+    assert_eq!(ack1.received_bytes, 1024);
+
+    assert_eq!(dev.sent_frames.len(), 4);
+    let chunk1_frame = &dev.sent_frames[3];
+    let chunk1_l2 = L2Packet::from_bytes(&chunk1_frame.payload).unwrap();
+    let chunk1_mass = MassChunk::decode(&chunk1_l2.payload).unwrap();
+    assert_eq!(chunk1_mass.total_parts, 2);
+    assert_eq!(chunk1_mass.current_part, 2);
+
+    // 状态流转确认：进入 waiting_device_result，绝不产生 completed
+    assert_eq!(proto.state, XiaomiInstallState::WaitingDeviceResult);
+    assert_ne!(proto.state.as_str(), "completed");
+    assert_ne!(proto.state.as_str(), "installed");
+}
+
+#[test]
+fn test_xiaomi_result_decode() {
+    use app_install::xiaomi::*;
+
+    let mut proto = XiaomiAppInstallProtocol::new();
+    let mut dev = MockBandDeviceTransport::new();
+    dev.connect("AA:BB:CC:11:22:33").unwrap();
+
+    // 完成 prepare
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let wp_resp = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp));
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: L2Packet::pb_write(wp_resp.encode()).to_bytes(),
+    });
+
+    let meta = InstallMetadata {
+        package_id: "com.xiaomi.demo".to_string(),
+        version_name: "1.0.0".to_string(),
+        version_code: 100,
+        file_size: 512,
+        hash: "0123456789abcdef0123456789abcdef".to_string(),
+    };
+    let session = proto.prepare_install(&mut dev, &meta).unwrap();
+
+    let chunk = InstallChunk {
+        session_id: session.session_id.clone(),
+        index: 0,
+        size: 512,
+        data: vec![0x11; 512],
+    };
+    proto.send_package_chunk(&mut dev, &chunk).unwrap();
+    assert_eq!(proto.state, XiaomiInstallState::WaitingDeviceResult);
+
+    // 注入设备真实返回结果: WearPacket(type=20, id=2, payload=AppInstallerResult(code=Success, package_name="com.xiaomi.demo"))
+    let res = AppInstallerResult::new(InstallResultCode::Success, Some("com.xiaomi.demo".to_string()));
+    let wp_res = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(res));
+    let l2_res = L2Packet::pb_write(wp_res.encode());
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 2,
+        payload: l2_res.to_bytes(),
+    });
+
+    // 调用 wait_install_result
+    let result = proto.wait_install_result(&mut dev, &session.session_id).expect("wait_install_result 应当成功");
+    assert_eq!(result.status, "success");
+    assert_ne!(result.status, "completed");
+    assert_ne!(result.status, "installed");
+    assert_eq!(proto.state, XiaomiInstallState::Success);
+}
+
+#[test]
+fn test_xiaomi_protocol_failure_states() {
+    use app_install::xiaomi::*;
+
+    let mut proto = XiaomiAppInstallProtocol::new();
+    let mut dev = MockBandDeviceTransport::new();
+
+    let meta = InstallMetadata {
+        package_id: "com.xiaomi.fail".to_string(),
+        version_name: "1.0.0".to_string(),
+        version_code: 100,
+        file_size: 512,
+        hash: "0123456789abcdef0123456789abcdef".to_string(),
+    };
+
+    // 1. 未连接设备时调用 prepare 拒绝
+    let err_not_conn = proto.prepare_install(&mut dev, &meta).unwrap_err();
+    assert!(err_not_conn.contains("device_unavailable"));
+
+    // 2. 连接后，设备响应 prepare_status != 0 (例如 BUSY=1)
+    dev.connect("AA:BB:CC:11:22:33").unwrap();
+    let resp_busy = AppInstallerResponse::new(1, None); // BUSY
+    let wp_busy = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp_busy));
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: L2Packet::pb_write(wp_busy.encode()).to_bytes(),
+    });
+
+    let err_busy = proto.prepare_install(&mut dev, &meta).unwrap_err();
+    assert!(err_busy.contains("未就绪"));
+    assert_eq!(proto.state, XiaomiInstallState::Failure);
+
+    // 3. 设备返回失败结果: code = INSTALL_FAILED (1)
+    let resp_ready = AppInstallerResponse::new(0, Some(244));
+    let wp_ready = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp_ready));
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 2,
+        payload: L2Packet::pb_write(wp_ready.encode()).to_bytes(),
+    });
+    let session = proto.prepare_install(&mut dev, &meta).unwrap();
+
+    let chunk = InstallChunk {
+        session_id: session.session_id.clone(),
+        index: 0,
+        size: 512,
+        data: vec![0u8; 512],
+    };
+    proto.send_package_chunk(&mut dev, &chunk).unwrap();
+
+    // 注入失败结果 (INSTALL_FAILED)
+    let fail_res = AppInstallerResult::new(InstallResultCode::Failed, Some("com.xiaomi.fail".to_string()));
+    let wp_fail = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(fail_res));
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 3,
+        payload: L2Packet::pb_write(wp_fail.encode()).to_bytes(),
+    });
+
+    let err_install = proto.wait_install_result(&mut dev, &session.session_id).unwrap_err();
+    assert!(err_install.contains("INSTALL_FAILED"));
+    assert_eq!(proto.state, XiaomiInstallState::Failure);
+
+    // 4. 超时无报文情况：保持在 waiting_device_result，绝不冒充成功
+    proto.state = XiaomiInstallState::WaitingDeviceResult;
+    let timeout_res = proto.wait_install_result(&mut dev, &session.session_id).unwrap();
+    assert_eq!(timeout_res.status, "waiting_device_result");
+    assert_ne!(timeout_res.status, "completed");
+    assert_ne!(timeout_res.status, "installed");
+}

@@ -14,19 +14,21 @@ pub mod thirdparty_app;
 pub mod mass;
 pub mod wear_packet;
 pub mod codec;
+pub mod protocol;
 
 pub use l2::*;
 pub use thirdparty_app::*;
 pub use mass::*;
 pub use wear_packet::*;
 pub use codec::*;
+pub use protocol::*;
 
 use serde::{Deserialize, Serialize};
 
 /// 小米安装协议状态机状态枚举
 ///
 /// 纪律要求：
-/// - 状态流转只允许：preparing -> transferring -> waiting_device_result
+/// - 状态流转只允许：preparing -> transferring -> waiting_device_result -> success/failure
 /// - 严禁包含 completed / installed 假成功状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,6 +36,8 @@ pub enum XiaomiInstallState {
     Preparing,
     Transferring,
     WaitingDeviceResult,
+    Success,
+    Failure,
 }
 
 impl XiaomiInstallState {
@@ -42,6 +46,8 @@ impl XiaomiInstallState {
             Self::Preparing => "preparing",
             Self::Transferring => "transferring",
             Self::WaitingDeviceResult => "waiting_device_result",
+            Self::Success => "success",
+            Self::Failure => "failure",
         }
     }
 }

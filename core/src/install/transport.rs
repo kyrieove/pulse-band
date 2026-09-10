@@ -342,8 +342,7 @@ impl AppInstallTransport for XiaomiBand10Transport {
                 )
             }
         };
-        proto.verify_package(dt.as_mut(), &session_id)?;
-        proto.commit_install(dt.as_mut(), &session_id)
+        proto.wait_install_result(dt.as_mut(), &session_id)
     }
 
     fn cancel(&mut self, session_id: String) -> Result<()> {

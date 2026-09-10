@@ -30,13 +30,7 @@ pub trait AppInstallProtocol: std::fmt::Debug + Send + Sync {
         chunk: &InstallChunk,
     ) -> Result<ChunkAck>;
 
-    fn verify_package(
-        &mut self,
-        device_transport: &mut dyn BandDeviceTransport,
-        session_id: &str,
-    ) -> Result<()>;
-
-    fn commit_install(
+    fn wait_install_result(
         &mut self,
         device_transport: &mut dyn BandDeviceTransport,
         session_id: &str,
@@ -47,6 +41,24 @@ pub trait AppInstallProtocol: std::fmt::Debug + Send + Sync {
         device_transport: &mut dyn BandDeviceTransport,
         session_id: &str,
     ) -> Result<()>;
+
+    /// 兼容接口：向后兼容旧的 commit_install 调用
+    fn commit_install(
+        &mut self,
+        device_transport: &mut dyn BandDeviceTransport,
+        session_id: &str,
+    ) -> Result<InstallResult> {
+        self.wait_install_result(device_transport, session_id)
+    }
+
+    /// 兼容接口：向后兼容旧的 verify_package 调用
+    fn verify_package(
+        &mut self,
+        _device_transport: &mut dyn BandDeviceTransport,
+        _session_id: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// 用于模拟快应用安装业务协议状态机的 Mock 实现
@@ -131,7 +143,7 @@ impl AppInstallProtocol for MockAppInstallProtocol {
         Ok(())
     }
 
-    fn commit_install(
+    fn wait_install_result(
         &mut self,
         device_transport: &mut dyn BandDeviceTransport,
         session_id: &str,
@@ -143,10 +155,18 @@ impl AppInstallProtocol for MockAppInstallProtocol {
         if session.session_id != session_id {
             return Err("session_id 不匹配".to_string());
         }
-        // 严格状态限制：只能返回 verifying，禁止 completed / installed
+        // 严格状态限制：只能返回 verifying / waiting_device_result，禁止 completed / installed
         Ok(InstallResult {
             status: "verifying".to_string(),
         })
+    }
+
+    fn commit_install(
+        &mut self,
+        device_transport: &mut dyn BandDeviceTransport,
+        session_id: &str,
+    ) -> Result<InstallResult> {
+        self.wait_install_result(device_transport, session_id)
     }
 
     fn cancel_install(
