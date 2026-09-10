@@ -15,6 +15,7 @@ pub mod mass;
 pub mod wear_packet;
 pub mod codec;
 pub mod protocol;
+pub mod device_session;
 
 pub use l2::*;
 pub use thirdparty_app::*;
@@ -22,6 +23,7 @@ pub use mass::*;
 pub use wear_packet::*;
 pub use codec::*;
 pub use protocol::*;
+pub use device_session::*;
 
 use serde::{Deserialize, Serialize};
 

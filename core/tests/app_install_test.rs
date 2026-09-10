@@ -1644,3 +1644,181 @@ fn test_xiaomi_protocol_failure_states() {
     assert_ne!(timeout_res.status, "completed");
     assert_ne!(timeout_res.status, "installed");
 }
+
+#[test]
+fn test_install_session_can_send_packet() {
+    use app_install::xiaomi::*;
+    use app_install::transport::BandDeviceTransport;
+
+    // 1. 未连接时发送应当失败
+    let mut session = XiaomiInstallDeviceSession::new();
+    let frame = Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: vec![0x01, 0x02, 0x03],
+    };
+    let err_unauthed = session.send_install_packet(&frame).unwrap_err();
+    assert!(err_unauthed.contains("device_unavailable"));
+
+    // 2. 绑定已认证会话后，发送安装帧入队成功
+    session.connect("AA:BB:CC:11:22:33").unwrap();
+    assert!(session.is_connected());
+    assert!(session.is_authenticated());
+
+    let req_pb = encode_install_request("com.xiaomi.demo", 1, 1024).expect("编码安装请求应当成功");
+    let l2_pkt = L2Packet::pb_write(req_pb);
+    let install_frame = Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: l2_pkt.to_bytes(),
+    };
+    session.send_install_packet(&install_frame).expect("发送安装包应当成功");
+    assert_eq!(session.outgoing_install_frames.len(), 1);
+    let queued = session.outgoing_install_frames.front().unwrap();
+    assert_eq!(queued.frame_type, 0x03);
+    assert_eq!(queued.seq, 1);
+    assert_eq!(queued.payload, l2_pkt.to_bytes());
+
+    // 3. 验证 MockDeviceSession 发送功能
+    let mut mock_session = MockDeviceSession::new();
+    mock_session.connect("11:22:33:44:55:66").unwrap();
+    mock_session.send_install_packet(&install_frame).unwrap();
+    assert_eq!(mock_session.sent_install_frames.len(), 1);
+    assert_eq!(mock_session.sent_install_frames[0].payload, l2_pkt.to_bytes());
+}
+
+#[test]
+fn test_install_response_routing() {
+    use app_install::xiaomi::*;
+
+    let mut session = XiaomiInstallDeviceSession::new();
+    session.connect("AA:BB:CC:11:22:33").unwrap();
+
+    // 1. 构造三类合法安装响应帧
+    // A: AppInstallerResponse (WearPacket type=20, id=1)
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let wp_resp = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp));
+    let frame_resp = Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: L2Packet::pb_write(wp_resp.encode()).to_bytes(),
+    };
+
+    // B: AppInstallerResult (WearPacket type=20, id=2)
+    let res = AppInstallerResult::new(InstallResultCode::Success, Some("com.xiaomi.demo".to_string()));
+    let wp_res = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(res));
+    let frame_res = Frame {
+        frame_type: 0x03,
+        seq: 2,
+        payload: L2Packet::pb_write(wp_res.encode()).to_bytes(),
+    };
+
+    // C: Mass 数据通道报文 (L2Channel::Mass)
+    let frame_mass = Frame {
+        frame_type: 0x03,
+        seq: 3,
+        payload: L2Packet::mass_write(vec![0x00, 0x01, 0x02, 0x03]).to_bytes(),
+    };
+
+    // 2. 验证 filter_install_response 判定均返回 true
+    assert!(filter_install_response(&frame_resp.payload));
+    assert!(filter_install_response(&frame_res.payload));
+    assert!(filter_install_response(&frame_mass.payload));
+
+    // 3. 通过 dispatch_incoming_frame 进行路由分发
+    assert!(session.dispatch_incoming_frame(frame_resp.clone()));
+    assert!(session.dispatch_incoming_frame(frame_res.clone()));
+    assert!(session.dispatch_incoming_frame(frame_mass.clone()));
+
+    // 4. 验证安装队列按 FIFO 接收，且普通业务队列为空
+    assert_eq!(session.incoming_install_queue.len(), 3);
+    assert_eq!(session.normal_message_queue.len(), 0);
+
+    let rec1 = session.receive_install_packet(100).unwrap().expect("应收到响应1");
+    assert_eq!(rec1.seq, 1);
+    let rec2 = session.receive_install_packet(100).unwrap().expect("应收到响应2");
+    assert_eq!(rec2.seq, 2);
+    let rec3 = session.receive_install_packet(100).unwrap().expect("应收到响应3");
+    assert_eq!(rec3.seq, 3);
+    assert!(session.receive_install_packet(100).unwrap().is_none());
+}
+
+#[test]
+fn test_normal_message_isolation() {
+    use app_install::xiaomi::*;
+
+    let mut session = XiaomiInstallDeviceSession::new();
+    session.connect("AA:BB:CC:11:22:33").unwrap();
+
+    // 1. 构造日常非安装业务报文（严禁被安装通道拦截或吞没）
+    // A: interconnect fetch 报文 (type=20, id=9)
+    let wp_fetch = WearPacket::new(WearPacketType::ThirdpartyApp, 9);
+    let frame_fetch = Frame {
+        frame_type: 0x03,
+        seq: 10,
+        payload: L2Packet::pb_write(wp_fetch.encode()).to_bytes(),
+    };
+
+    // B: app status 查询报文 (type=20, id=6)
+    let wp_status = WearPacket::new(WearPacketType::ThirdpartyApp, 6);
+    let frame_status = Frame {
+        frame_type: 0x03,
+        seq: 11,
+        payload: L2Packet::pb_write(wp_status.encode()).to_bytes(),
+    };
+
+    // C: phone message 下行报文 (type=20, id=8)
+    let wp_phone = WearPacket::new(WearPacketType::ThirdpartyApp, 8);
+    let frame_phone = Frame {
+        frame_type: 0x03,
+        seq: 12,
+        payload: L2Packet::pb_write(wp_phone.encode()).to_bytes(),
+    };
+
+    // 2. 验证 filter_install_response 判定均返回 false
+    assert!(!filter_install_response(&frame_fetch.payload));
+    assert!(!filter_install_response(&frame_status.payload));
+    assert!(!filter_install_response(&frame_phone.payload));
+
+    // 3. 通过 dispatch_incoming_frame 进行路由分发
+    assert!(!session.dispatch_incoming_frame(frame_fetch.clone()));
+    assert!(!session.dispatch_incoming_frame(frame_status.clone()));
+    assert!(!session.dispatch_incoming_frame(frame_phone.clone()));
+
+    // 4. 严格断言：安装接收队列完全为空，日常普通报文全量保留在普通队列
+    assert_eq!(session.incoming_install_queue.len(), 0);
+    assert_eq!(session.normal_message_queue.len(), 3);
+    assert!(session.receive_install_packet(100).unwrap().is_none());
+
+    // 验证普通消息队列数据完整性
+    assert_eq!(session.normal_message_queue[0].seq, 10);
+    assert_eq!(session.normal_message_queue[1].seq, 11);
+    assert_eq!(session.normal_message_queue[2].seq, 12);
+}
+
+#[test]
+fn test_no_duplicate_bluetooth_connection() {
+    use app_install::xiaomi::*;
+    use app_install::transport::BandDeviceTransport;
+
+    // 1. 初始化 XiaomiInstallDeviceSession，验证无第二套连接
+    let mut session = XiaomiInstallDeviceSession::new();
+    assert!(!session.has_duplicate_connection());
+    assert!(session.is_shared_connection());
+
+    // 2. 调用 connect 模拟绑定既有认证会话，验证依然没有建立第二套连接
+    session.connect("AA:BB:CC:11:22:33").unwrap();
+    assert!(session.is_connected());
+    assert!(!session.has_duplicate_connection());
+    assert!(session.is_shared_connection());
+
+    // 3. 从既有句柄构建会话
+    let session_bound = XiaomiInstallDeviceSession::from_authenticated_session(9999, "AA:BB:CC:11:22:33");
+    assert!(session_bound.is_connected());
+    assert!(!session_bound.has_duplicate_connection());
+    assert_eq!(session_bound.underlying_handle, Some(9999));
+
+    // 4. 验证 MockDeviceSession 同样遵守无重复连接约束
+    let mock = MockDeviceSession::new();
+    assert!(!mock.has_duplicate_connection());
+}

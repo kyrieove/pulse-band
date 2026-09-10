@@ -144,6 +144,23 @@ pub trait BandDeviceTransport: std::fmt::Debug + Send + Sync {
     fn is_connected(&self) -> bool;
     fn send_frame(&mut self, frame: &Frame) -> Result<()>;
     fn receive_frame(&mut self, timeout_ms: u64) -> Result<Option<Frame>>;
+
+    // 阶段 20 扩展接口（带默认实现，保持所有既有 Mock 与 Replay 的向下兼容性）：
+    fn send_install_packet(&mut self, frame: &Frame) -> Result<()> {
+        self.send_frame(frame)
+    }
+
+    fn receive_install_packet(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
+        self.receive_frame(timeout_ms)
+    }
+
+    fn is_authenticated(&self) -> bool {
+        self.is_connected()
+    }
+
+    fn has_duplicate_connection(&self) -> bool {
+        false
+    }
 }
 
 /// 用于测试与离线模拟的手环底层通信 Mock 实现
