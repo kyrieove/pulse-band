@@ -9,5 +9,9 @@
   },
   "devDependencies": {
     "aiot-toolkit": "^2.0.5"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true,
+    "fsevents@1.2.13": true
   }
 }

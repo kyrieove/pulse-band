@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "vite",
-    "test": "node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node --test scripts/test-diagnostics.mjs scripts/test-pc-v1.1.mjs",
+    "test": "node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node --test scripts/test-agent-routing.mjs scripts/test-band-agent-pages.mjs scripts/test-diagnostics.mjs scripts/test-pc-v1.1.mjs",
     "build": "tsc && vite build",
     "dist": "npm run build && electron-builder --publish never",
     "preview": "vite preview"
@@ -15,7 +15,7 @@
   "build": {
     "appId": "com.codeisland.windows",
     "productName": "Pulse",
-    "artifactName": "Pulse-Setup-${version}.${ext}",
+    "artifactName": "Pulse-${version}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -23,7 +23,9 @@
       "dist/**/*",
       "dist-electron/**/*",
       "assets/**/*",
-      "scripts/claude-hook.cjs"
+      "scripts/claude-hook.cjs",
+      "scripts/opencode-forward.cjs",
+      "scripts/zcode-forward.cjs"
     ],
     "win": {
       "target": [
@@ -35,6 +37,15 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "identity": null
     }
   },
   "keywords": [
@@ -53,7 +64,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.5.4",
     "clsx": "^2.1.1",
-    "electron": "^44.2.0",
+    "electron": "^44.3.0",
     "electron-builder": "^26.15.3",
     "lucide-react": "^1.40.0",
     "postcss": "^8.5.28",
@@ -65,5 +76,9 @@
     "vite": "^8.2.2",
     "vite-plugin-electron": "^1.1.2",
     "vite-plugin-electron-renderer": "^1.0.0"
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true,
+    "fsevents@2.3.3": true
   }
 }

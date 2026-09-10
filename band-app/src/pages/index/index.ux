@@ -43,7 +43,7 @@
         </div>
         <div class="clock-zone" onclick="onTapClock" onlongpress="onExitApp">
           <div class="dots-row">
-            <div class="pdot pdot-on"></div><div class="pdot"></div><div class="pdot"></div>
+            <div class="pdot pdot-on"></div><div class="pdot"></div><div class="pdot"></div><div class="pdot"></div><div class="pdot"></div>
           </div>
           <text class="date-text">{{currentDate}}</text>
           <text class="time-text">{{currentTime}}</text>
@@ -85,7 +85,7 @@
         </div>
         <div class="clock-zone" onclick="onTapClock" onlongpress="onExitApp">
           <div class="dots-row">
-            <div class="pdot"></div><div class="pdot pdot-on"></div><div class="pdot"></div>
+            <div class="pdot"></div><div class="pdot pdot-on"></div><div class="pdot"></div><div class="pdot"></div><div class="pdot"></div>
           </div>
           <text class="date-text">{{currentDate}}</text>
           <text class="time-text">{{currentTime}}</text>
@@ -127,7 +127,91 @@
         </div>
         <div class="clock-zone" onclick="onTapClock" onlongpress="onExitApp">
           <div class="dots-row">
-            <div class="pdot"></div><div class="pdot"></div><div class="pdot pdot-on"></div>
+            <div class="pdot"></div><div class="pdot"></div><div class="pdot pdot-on"></div><div class="pdot"></div><div class="pdot"></div>
+          </div>
+          <text class="date-text">{{currentDate}}</text>
+          <text class="time-text">{{currentTime}}</text>
+        </div>
+      </div>
+      <!-- 屏 3 · OpenCode：独立身份，避免与 Claude 屏共用导致的 completed 覆盖 -->
+      <div class="screen">
+        <div class="head-row">
+          <image class="logo" src="/common/agent-opencode.png"></image>
+          <text class="agent-name">OpenCode</text>
+        </div>
+        <div class="status-row">
+          <div class="status-dot {{light3Class}}" style="opacity: {{lightOpacity}};"></div>
+          <text class="status-verb" style="color: {{a3VerbColor}}; opacity: {{sw0}};">{{a3seg0}}</text>
+          <text class="status-verb" style="color: {{a3VerbColor}}; opacity: {{sw1}};">{{a3seg1}}</text>
+          <text class="status-verb" style="color: {{a3VerbColor}}; opacity: {{sw2}};">{{a3seg2}}</text>
+          <text class="status-verb" style="color: {{a3VerbColor}}; opacity: {{sw3}};">{{a3seg3}}</text>
+          <text class="status-verb" style="color: {{a3VerbColor}}; opacity: {{sw4}};">{{a3seg4}}</text>
+          <text class="status-verb" style="color: {{a3VerbColor}}; opacity: {{sw5}};">{{a3seg5}}</text>
+          <text class="status-verb" style="color: {{a3VerbColor}}; opacity: {{sw6}};">{{a3seg6}}</text>
+          <text class="status-verb" style="color: {{a3VerbColor}}; opacity: {{sw7}};">{{a3seg7}}</text>
+        </div>
+        <text class="tool-name">{{a3Tool}}</text>
+        <div class="card card-a3">
+          <text class="card-title tt-a3">5h</text>
+          <text class="card-reset">{{opencodeReset5h}}</text>
+          <text class="card-val" style="color: {{opencodeValC5h}};">{{opencodeVal5h}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{opencodeFillW5h}}px; background-color: {{opencodeFillC5h}};"></div>
+          </div>
+        </div>
+        <div class="card card-b">
+          <text class="card-title tt-b">7d</text>
+          <text class="card-reset">{{opencodeReset7d}}</text>
+          <text class="card-val" style="color: {{opencodeValC7d}};">{{opencodeVal7d}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{opencodeFillW7d}}px; background-color: {{opencodeFillC7d}};"></div>
+          </div>
+        </div>
+        <div class="clock-zone" onclick="onTapClock" onlongpress="onExitApp">
+          <div class="dots-row">
+            <div class="pdot"></div><div class="pdot"></div><div class="pdot"></div><div class="pdot pdot-on"></div><div class="pdot"></div>
+          </div>
+          <text class="date-text">{{currentDate}}</text>
+          <text class="time-text">{{currentTime}}</text>
+        </div>
+      </div>
+      <!-- 屏 4 · ZCode：与其余 agent 使用同一骨架，独立接收 ZCode hook 状态 -->
+      <div class="screen">
+        <div class="head-row">
+          <image class="logo" src="/common/agent-zcode.png"></image>
+          <text class="agent-name">ZCode</text>
+        </div>
+        <div class="status-row">
+          <div class="status-dot {{light4Class}}" style="opacity: {{lightOpacity}};"></div>
+          <text class="status-verb" style="color: {{a4VerbColor}}; opacity: {{sw0}};">{{a4seg0}}</text>
+          <text class="status-verb" style="color: {{a4VerbColor}}; opacity: {{sw1}};">{{a4seg1}}</text>
+          <text class="status-verb" style="color: {{a4VerbColor}}; opacity: {{sw2}};">{{a4seg2}}</text>
+          <text class="status-verb" style="color: {{a4VerbColor}}; opacity: {{sw3}};">{{a4seg3}}</text>
+          <text class="status-verb" style="color: {{a4VerbColor}}; opacity: {{sw4}};">{{a4seg4}}</text>
+          <text class="status-verb" style="color: {{a4VerbColor}}; opacity: {{sw5}};">{{a4seg5}}</text>
+          <text class="status-verb" style="color: {{a4VerbColor}}; opacity: {{sw6}};">{{a4seg6}}</text>
+          <text class="status-verb" style="color: {{a4VerbColor}}; opacity: {{sw7}};">{{a4seg7}}</text>
+        </div>
+        <text class="tool-name">{{a4Tool}}</text>
+        <div class="card card-a4">
+          <text class="card-title tt-a4">5h</text>
+          <text class="card-reset">{{zcodeReset5h}}</text>
+          <text class="card-val" style="color: {{zcodeValC5h}};">{{zcodeVal5h}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{zcodeFillW5h}}px; background-color: {{zcodeFillC5h}};"></div>
+          </div>
+        </div>
+        <div class="card card-b">
+          <text class="card-title tt-b">7d</text>
+          <text class="card-reset">{{zcodeReset7d}}</text>
+          <text class="card-val" style="color: {{zcodeValC7d}};">{{zcodeVal7d}}</text>
+          <div class="bar-bg">
+            <div class="bar-fill" style="width: {{zcodeFillW7d}}px; background-color: {{zcodeFillC7d}};"></div>
+          </div>
+        </div>
+        <div class="clock-zone" onclick="onTapClock" onlongpress="onExitApp">
+          <div class="dots-row">
+            <div class="pdot"></div><div class="pdot"></div><div class="pdot"></div><div class="pdot"></div><div class="pdot pdot-on"></div>
           </div>
           <text class="date-text">{{currentDate}}</text>
           <text class="time-text">{{currentTime}}</text>
@@ -224,7 +308,7 @@
 }
 
 /* 额度卡片：164×106 圆角14 + 1px 描边（design §2）。
-   屏 0-2 双卡 top126/top242；屏 3 单卡 top184 居中。
+   五屏统一使用双卡 top126/top242。
    内部坐标相对卡片：title 12,12 · reset 72,12(右对齐) · 大数字 12,34 · 进度条 12,80 */
 .card {
   position: absolute;
@@ -238,6 +322,8 @@
 .card-a0 { top: 126px; background-color: #16120c; border-color: #8a5818; } /* Claude 暖黄 */
 .card-a1 { top: 126px; background-color: #0d1712; border-color: #1b4d32; } /* Codex 翠绿 */
 .card-a2 { top: 126px; background-color: #140c1c; border-color: #532682; } /* AG 紫罗兰 */
+.card-a3 { top: 126px; background-color: #0c1518; border-color: #1f5964; } /* OpenCode 青蓝 */
+.card-a4 { top: 126px; background-color: #111322; border-color: #313a79; } /* ZCode 靛蓝 */
 .card-b  { top: 242px; background-color: #0c131d; border-color: #163c68; } /* 7d 蓝色通用 */
 
 .card-title {
@@ -252,6 +338,8 @@
 .tt-a0 { color: #e5a93c; }
 .tt-a1 { color: #30d158; }
 .tt-a2 { color: #c77dff; }
+.tt-a3 { color: #64d2ff; }
+.tt-a4 { color: #7d8cff; }
 .tt-b  { color: #5ac8fa; }
 
 .card-reset {
@@ -371,14 +459,14 @@ const SEGS = 8;        // 文字切几段
 const SWEEP_AT = 8;    // 灯最亮之后第几步起跑（错开约五分之一圈）
 const DIM = '0.42';    // 光没扫到的地方
 
-// 三屏的固定顺序：swiper 第几屏就是谁，也是 limits/sessions 的键序（zcode 屏 3.1.1 起砍掉）
-const AGENTS = ['claude', 'codex', 'antigravity'];
+// 固定顺序：swiper 第几屏就是谁，也是 limits/sessions 的键序。
+const AGENTS = ['claude', 'codex', 'antigravity', 'opencode', 'zcode'];
 
 // 30s 无触摸自动熄屏（阶段 5B）。戴着调手感时改这里，别动调用处。
 const SCREEN_AWAKE_MS = 30000;
 
 // 每个 agent 上一次的状态，用于判断 completed/error 跳变（模块级，不进绑定）
-const prevStatus = ['idle', 'idle', 'idle'];
+const prevStatus = ['idle', 'idle', 'idle', 'idle', 'idle'];
 
 // 屏 0 右滑退出的手势起点（模块级，不进绑定；只有屏 0 的根节点绑了 touch 事件）
 let swipeStartX = 0;
@@ -473,14 +561,16 @@ export default {
     // 没拿到服务端时间就整块空着 —— 画 --:-- 等于把「还没数据」显示成「有数据但坏了」
     currentTime: '',
     currentDate: '',
-    // swiper 当前屏号（0/1/2），由 change 事件驱动；切屏不发任何请求（Q7）
+    // swiper 当前屏号，由 change 事件驱动；切屏不发任何请求（Q7）
     curIdx: 0,
     selectedAgent: 'claude',
     // 每屏一个灯。class 绑定用法逐字沿用 1.2.4 验证过的那一处（硬约束 5 唯一例外），
-    // 三处复用同一模式；颜色若卡住按风险 4 预案改内联 style
+    // 五处复用同一模式；颜色若卡住按风险 4 预案改内联 style
     light0Class: 'lt-idle',
     light1Class: 'lt-idle',
     light2Class: 'lt-idle',
+    light3Class: 'lt-idle',
+    light4Class: 'lt-idle',
     // 呼吸透明度多屏共用（同一时刻只有一屏可见，和 Q8 共用扫光同一逻辑）
     lightOpacity: '1',
     // 每屏状态行 = 灯 + 动词（切 8 段跑扫光，sw0..7 多屏共用）；工具名独立第二行
@@ -496,6 +586,14 @@ export default {
     a2seg4: '', a2seg5: '', a2seg6: '', a2seg7: '',
     a2VerbColor: '#8e8e93',
     a2Tool: '',
+    a3seg0: '', a3seg1: '', a3seg2: '', a3seg3: '',
+    a3seg4: '', a3seg5: '', a3seg6: '', a3seg7: '',
+    a3VerbColor: '#8e8e93',
+    a3Tool: '',
+    a4seg0: '', a4seg1: '', a4seg2: '', a4seg3: '',
+    a4seg4: '', a4seg5: '', a4seg6: '', a4seg7: '',
+    a4VerbColor: '#8e8e93',
+    a4Tool: '',
 
     // 每屏卡片绑定（design.md §2）：Val 大百分比文本 / ValC 其颜色 /
     // FillW 进度条填充宽 px / FillC 填充色 / Reset 倒计时。
@@ -509,8 +607,14 @@ export default {
     antigravityVal5h: '--', antigravityValC5h: '#ffffff', antigravityFillW5h: 0, antigravityFillC5h: '#9d4edd', antigravityReset5h: '--',
     antigravityVal7d: '--', antigravityValC7d: '#ffffff', antigravityFillW7d: 0, antigravityFillC7d: '#0a84ff', antigravityReset7d: '--',
 
+    opencodeVal5h: '--', opencodeValC5h: '#ffffff', opencodeFillW5h: 0, opencodeFillC5h: '#64d2ff', opencodeReset5h: '--',
+    opencodeVal7d: '--', opencodeValC7d: '#ffffff', opencodeFillW7d: 0, opencodeFillC7d: '#0a84ff', opencodeReset7d: '--',
 
-    // 扫光透明度 8 个字段：阶段 5 的 8 段扫光沿用（Q8：三屏共用，每帧仍只写 8 个）
+    zcodeVal5h: '--', zcodeValC5h: '#ffffff', zcodeFillW5h: 0, zcodeFillC5h: '#7d8cff', zcodeReset5h: '--',
+    zcodeVal7d: '--', zcodeValC7d: '#ffffff', zcodeFillW7d: 0, zcodeFillC7d: '#0a84ff', zcodeReset7d: '--',
+
+
+    // 扫光透明度 8 个字段：阶段 5 的 8 段扫光沿用（Q8：五屏共用，每帧仍只写 8 个）
     sw0: '1',
     sw1: '1',
     sw2: '1',
@@ -1033,7 +1137,7 @@ export default {
       this.serverIp = data.serverIp;
     }
 
-    // 三屏各吃各的 session：灯、动词/工具行按屏独立，跳变按 agent 独立判。
+    // 五屏各吃各的 session：灯、动词/工具行按屏独立，跳变按 agent 独立判。
     // 🔴 震动是用户点名的核心功能：任意 agent 跳到 completed/error 都震，
     //    同一轮轮询多个 agent 跳变也只震一次。
     let buzzNow = false;
@@ -1084,7 +1188,7 @@ export default {
   //   正常       → 'n%' 白 + 条平涂屏专属色 + 倒计时
   // 条宽 = Math.round(140 * pct / 100)
   applyCards(a, l) {
-    const FILL_1 = { claude: '#ff9f0a', codex: '#30d158', antigravity: '#9d4edd' };
+    const FILL_1 = { claude: '#ff9f0a', codex: '#30d158', antigravity: '#9d4edd', opencode: '#64d2ff', zcode: '#7d8cff' };
     const FILL_7D = '#0a84ff';
     const EST_VAL = '#8e8e93';
     const EST_FILL = '#48484a';
@@ -1135,7 +1239,7 @@ export default {
   },
 
   // 一拍心跳：灯先搏动，光随后从左穿到右。不在跑就整个定住。
-  // 三屏之后灯的呼吸透明度三屏共用（只有可见屏能被看见），按当前屏的 agent 门控。
+  // 多屏共用灯的呼吸透明度（只有可见屏能被看见），按当前屏的 agent 门控。
   tickPulse() {
     if (this['light' + this.curIdx + 'Class'] !== 'lt-run') {
       this.lightOpacity = '1';

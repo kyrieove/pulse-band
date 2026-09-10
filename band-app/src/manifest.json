@@ -1,8 +1,8 @@
 {
   "package": "com.codeisland.band",
   "name": "Pulse",
-  "versionName": "1.0.1",
-  "versionCode": 26,
+  "versionName": "1.0.2",
+  "versionCode": 27,
   "minPlatformVersion": 1000,
   "icon": "/common/icon-v2.png",
   "features": [

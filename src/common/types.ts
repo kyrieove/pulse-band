@@ -1,4 +1,4 @@
-export type AgentKind = 'claude' | 'codex' | 'antigravity';
+export type AgentKind = 'claude' | 'codex' | 'antigravity' | 'opencode' | 'zcode';
 
 export type SessionState = 'idle' | 'thinking' | 'running_tool' | 'completed' | 'error';
 
@@ -48,4 +48,3 @@ export interface MinibarState {
   quotas: import('../main/services/quota-collector').ClusterQuotas;
   isExpanded: boolean;
 }
-

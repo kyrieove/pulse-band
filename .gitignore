@@ -17,3 +17,6 @@ band-app/sign/
 
 # PULSE_SCREEN 调试截图
 debug-window-*.png
+
+# macOS 图标转换的中间文件；最终 icon.icns 需要入库供打包使用
+build/icon.iconset/
