@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "vite",
-    "test": "node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node --test scripts/test-diagnostics.mjs scripts/test-pc-v1.1.mjs",
+    "test": "node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node --test scripts/test-agent-routing.mjs scripts/test-band-agent-pages.mjs scripts/test-diagnostics.mjs scripts/test-pc-v1.1.mjs",
     "build": "tsc && vite build",
     "dist": "npm run build && electron-builder --publish never",
     "preview": "vite preview"
