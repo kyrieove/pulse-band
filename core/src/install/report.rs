@@ -1,7 +1,7 @@
 //! 协议分析报告生成器 (Protocol Report Generator)
 
 use super::inspector::{hex_to_bytes, ProtocolInspector};
-use super::model::Result;
+use super::model::{CaptureBundle, CaptureMetadata, Result};
 use super::recorder::{InstallProtocolRecorder, PacketDirection};
 
 /// 协议分析报告生成器：解析录制记录并生成结构化 Markdown 报告
@@ -16,11 +16,45 @@ impl ProtocolReportGenerator {
         Self::generate_markdown_report(&recorder)
     }
 
-    /// 从已有的录制器实例生成 Markdown 报告
+    /// 从已有的录制器实例生成通用 Markdown 报告
     pub fn generate_markdown_report(recorder: &InstallProtocolRecorder) -> Result<String> {
         let mut out = String::new();
-
         out.push_str("# 协议取证与流量分析报告 (Protocol Capture Analysis Report)\n\n");
+        Self::append_report_body(&mut out, recorder)?;
+        Ok(out)
+    }
+
+    /// 从 CaptureBundle 生成完整报告（包含 capture_id、source 与元数据信息）
+    pub fn generate_bundle_report(bundle: &CaptureBundle) -> Result<String> {
+        Self::generate_markdown_report_with_metadata(&bundle.recorder, &bundle.metadata)
+    }
+
+    /// 包含 Capture 元数据的结构化 Markdown 报告生成
+    pub fn generate_markdown_report_with_metadata(
+        recorder: &InstallProtocolRecorder,
+        metadata: &CaptureMetadata,
+    ) -> Result<String> {
+        let mut out = String::new();
+        out.push_str("# 协议取证与流量分析报告 (Protocol Capture Analysis Report)\n\n");
+
+        // 0. 样本捕获元数据关联
+        out.push_str("## 0. 捕获样本元数据 (Capture Metadata)\n\n");
+        out.push_str(&format!("- **Capture ID**: `{}`\n", metadata.capture_id));
+        out.push_str(&format!("- **捕获来源 (Source)**: `{}`\n", metadata.source));
+        out.push_str(&format!("- **目标设备 (Device Model)**: `{}`\n", metadata.device_model));
+        out.push_str(&format!("- **App 版本 (App Version)**: `{}`\n", metadata.app_version));
+        out.push_str(&format!("- **捕获时间戳 (Timestamp)**: {}\n", metadata.timestamp));
+        out.push_str(&format!("- **分析状态 (Analysis Status)**: `{}`\n", metadata.analysis_status));
+        if !metadata.notes.trim().is_empty() {
+            out.push_str(&format!("- **说明备注 (Notes)**: {}\n", metadata.notes));
+        }
+        out.push('\n');
+
+        Self::append_report_body(&mut out, recorder)?;
+        Ok(out)
+    }
+
+    fn append_report_body(out: &mut String, recorder: &InstallProtocolRecorder) -> Result<()> {
 
         let total_frames = recorder.packets.len();
         let mut host_to_band_count = 0usize;
@@ -180,6 +214,6 @@ impl ProtocolReportGenerator {
         }
         out.push('\n');
 
-        Ok(out)
+        Ok(())
     }
 }

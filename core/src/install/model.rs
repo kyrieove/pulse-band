@@ -63,3 +63,27 @@ pub enum TransportMode {
     Mock,
     Device,
 }
+
+/// 协议捕获样本元数据契约
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureMetadata {
+    #[serde(alias = "captureId")]
+    pub capture_id: String,
+    pub source: String,
+    #[serde(alias = "deviceModel")]
+    pub device_model: String,
+    #[serde(alias = "appVersion")]
+    pub app_version: String,
+    pub timestamp: u64,
+    pub notes: String,
+    #[serde(alias = "analysisStatus")]
+    pub analysis_status: String,
+}
+
+/// 完整的捕获样本包结构体（包含元数据、报文记录与分析文档）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureBundle {
+    pub metadata: CaptureMetadata,
+    pub recorder: super::recorder::InstallProtocolRecorder,
+    pub analysis_markdown: Option<String>,
+}

@@ -1,0 +1,9 @@
+{
+  "capture_id": "CAPTURE-20260910-001",
+  "source": "synthetic_bench_capture",
+  "device_model": "Xiaomi Smart Band 10 (M2345B1)",
+  "app_version": "Mi Fitness v3.35.0",
+  "timestamp": 1725955200000,
+  "notes": "手环快应用初始握手与ACK报文基准测试样本，已完成MAC与Token全脱敏",
+  "analysis_status": "analyzed"
+}

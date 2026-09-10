@@ -26,7 +26,7 @@ pub struct RecordedPacket {
 
 /// 协议录制调试层：用于捕获双向数据帧并导出日志
 #[allow(dead_code)]
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct InstallProtocolRecorder {
     pub packets: Vec<RecordedPacket>,
 }

@@ -9,10 +9,11 @@ mod app_install;
 
 use app_install::{
     compute_payload_sha256, AppInstallProtocol, AppInstallTransport, BandDeviceTransport,
-    CaptureLoader, InstallChunk, InstallMetadata, InstallProtocolRecorder,
-    InstallTransportDispatcher, MockAppInstallProtocol, MockAppInstallTransport,
-    MockBandDeviceTransport, MockDeviceReplayTransport, PacketDirection, ProtocolAnalysisPipeline,
-    ProtocolInspector, ProtocolReportGenerator, TransportMode, XiaomiBand10Transport,
+    CaptureBundle, CaptureLoader, CaptureMetadata, InstallChunk, InstallMetadata,
+    InstallProtocolRecorder, InstallTransportDispatcher, MockAppInstallProtocol,
+    MockAppInstallTransport, MockBandDeviceTransport, MockDeviceReplayTransport, PacketDirection,
+    ProtocolAnalysisPipeline, ProtocolInspector, ProtocolReportGenerator, SampleValidator,
+    TransportMode, XiaomiBand10Transport,
 };
 use frame::Frame;
 
@@ -962,4 +963,158 @@ fn test_29_replay_transport_drives_pipeline_asserted_workflow() {
     // 队列耗尽安全返回 None
     let frame3 = replay.receive_frame(100).unwrap();
     assert!(frame3.is_none());
+}
+
+#[test]
+fn test_30_capture_bundle_loader_and_metadata_binding() {
+    let captures_dir = if std::path::Path::new("../docs/protocol/captures").exists() {
+        "../docs/protocol/captures"
+    } else {
+        "docs/protocol/captures"
+    };
+    let bundle_path = format!("{captures_dir}/capture_sample_001");
+    // 1. 测试单目录 Bundle 加载
+    let bundle: CaptureBundle = CaptureLoader::load_bundle_from_dir(&bundle_path)
+        .expect("加载 capture_sample_001 应当成功");
+    assert_eq!(bundle.metadata.capture_id, "CAPTURE-20260910-001");
+    assert_eq!(bundle.metadata.source, "synthetic_bench_capture");
+    assert_eq!(bundle.metadata.device_model, "Xiaomi Smart Band 10 (M2345B1)");
+    assert_eq!(bundle.metadata.app_version, "Mi Fitness v3.35.0");
+    assert_eq!(bundle.metadata.analysis_status, "analyzed");
+    assert_eq!(bundle.recorder.packets.len(), 4);
+    assert!(bundle.analysis_markdown.is_some());
+    assert!(bundle.analysis_markdown.as_ref().unwrap().contains("CAPTURE-20260910-001"));
+
+    // 2. 测试批量扫描 Bundle 目录
+    let all_bundles = CaptureLoader::load_all_bundles(captures_dir)
+        .expect("扫描所有 bundle 应当成功");
+    assert!(!all_bundles.is_empty());
+    assert!(all_bundles.iter().any(|b| b.metadata.capture_id == "CAPTURE-20260910-001"));
+}
+
+#[test]
+fn test_31_report_generator_with_metadata_binding() {
+    let captures_dir = if std::path::Path::new("../docs/protocol/captures").exists() {
+        "../docs/protocol/captures"
+    } else {
+        "docs/protocol/captures"
+    };
+    let bundle_path = format!("{captures_dir}/capture_sample_001");
+    let bundle = CaptureLoader::load_bundle_from_dir(&bundle_path).unwrap();
+
+    // 1. 测试从 bundle 生成带元数据的报告
+    let report = ProtocolReportGenerator::generate_bundle_report(&bundle)
+        .expect("生成 bundle 报告成功");
+    assert!(report.contains("# 协议取证与流量分析报告"));
+    assert!(report.contains("## 0. 捕获样本元数据 (Capture Metadata)"));
+    assert!(report.contains("- **Capture ID**: `CAPTURE-20260910-001`"));
+    assert!(report.contains("- **捕获来源 (Source)**: `synthetic_bench_capture`"));
+    assert!(report.contains("- **目标设备 (Device Model)**: `Xiaomi Smart Band 10 (M2345B1)`"));
+    assert!(report.contains("- **App 版本 (App Version)**: `Mi Fitness v3.35.0`"));
+    assert!(report.contains("- **分析状态 (Analysis Status)**: `analyzed`"));
+    assert!(report.contains("## 1. 流量概要与方向统计"));
+    assert!(report.contains("## 6. Frame 时间线详细记录"));
+
+    // 2. 验证 Pipeline 运行结果完全一致
+    let pipe_report = ProtocolAnalysisPipeline::run_from_bundle_dir(&bundle_path)
+        .expect("Pipeline 运行 bundle 成功");
+    assert_eq!(report, pipe_report);
+
+    // 3. 验证批量 Bundle Pipeline
+    let all_reports = ProtocolAnalysisPipeline::run_all_bundles_pipeline(captures_dir)
+        .expect("批量运行 bundle 成功");
+    assert!(!all_reports.is_empty());
+    assert_eq!(all_reports[0].0, "CAPTURE-20260910-001");
+    assert_eq!(all_reports[0].1, report);
+}
+
+#[test]
+fn test_32_sample_validator_rejects_invalid_samples() {
+    // 场景 1: 缺少必要元数据字段
+    let mut invalid_meta = CaptureMetadata {
+        capture_id: "".to_string(), // 空 ID
+        source: "btsnoop".to_string(),
+        device_model: "Band 10".to_string(),
+        app_version: "1.0.0".to_string(),
+        timestamp: 1000,
+        notes: "test".to_string(),
+        analysis_status: "analyzed".to_string(),
+    };
+    assert!(SampleValidator::validate_metadata(&invalid_meta).is_err());
+
+    invalid_meta.capture_id = "VALID_ID".to_string();
+    invalid_meta.device_model = "".to_string(); // 空 device_model
+    assert!(SampleValidator::validate_metadata(&invalid_meta).is_err());
+
+    // 场景 2: 包含未脱敏敏感字段 token/secret/credential
+    let mut sensitive_meta = CaptureMetadata {
+        capture_id: "SENS_001".to_string(),
+        source: "token=abc123456789".to_string(), // 未脱敏 token
+        device_model: "Band 10".to_string(),
+        app_version: "1.0.0".to_string(),
+        timestamp: 1000,
+        notes: "test".to_string(),
+        analysis_status: "analyzed".to_string(),
+    };
+    let err = SampleValidator::validate_metadata(&sensitive_meta).unwrap_err();
+    assert!(err.contains("敏感安全扫描拒绝"));
+
+    // 场景 3: 包含未脱敏的真实蓝牙 MAC 地址
+    sensitive_meta.source = "btmon".to_string();
+    sensitive_meta.notes = "Device real address is 12:34:56:78:9A:BC".to_string();
+    let mac_err = SampleValidator::validate_metadata(&sensitive_meta).unwrap_err();
+    assert!(mac_err.contains("真实蓝牙 MAC 地址"));
+
+    // 脱敏占位符 AA:BB:CC:DD:EE:FF 应当安全放行
+    sensitive_meta.notes = "Sanitized MAC: AA:BB:CC:DD:EE:FF".to_string();
+    assert!(SampleValidator::validate_metadata(&sensitive_meta).is_ok());
+
+    // 场景 4: 数据帧 CRC 校验不匹配
+    let mut bad_recorder = InstallProtocolRecorder::new();
+    bad_recorder.packets.push(app_install::install::recorder::RecordedPacket {
+        direction: PacketDirection::HostToBand,
+        timestamp_ms: 100,
+        frame_type: 3,
+        seq: 1,
+        len: 1,
+        crc: 0xFFFF, // 错误 CRC
+        payload_hex: "00".to_string(), // 真实 CRC 应为 0x0000
+    });
+    let crc_err = SampleValidator::validate_frames(&bad_recorder).unwrap_err();
+    assert!(crc_err.contains("CRC16 校验不匹配"));
+
+    // 场景 5: 数据帧长度不匹配
+    let mut len_mismatch_rec = InstallProtocolRecorder::new();
+    len_mismatch_rec.packets.push(app_install::install::recorder::RecordedPacket {
+        direction: PacketDirection::HostToBand,
+        timestamp_ms: 100,
+        frame_type: 3,
+        seq: 1,
+        len: 10, // 声明 10 字节，实际仅 1 字节
+        crc: 0,
+        payload_hex: "00".to_string(),
+    });
+    let len_err = SampleValidator::validate_frames(&len_mismatch_rec).unwrap_err();
+    assert!(len_err.contains("声明长度"));
+}
+
+#[test]
+fn test_33_legacy_json_format_backward_compatibility() {
+    let template_json = include_str!("../../docs/protocol/captures/sample-rpk-exchange-template.json");
+    let captures_dir = if std::path::Path::new("../docs/protocol/captures").exists() {
+        "../docs/protocol/captures"
+    } else {
+        "docs/protocol/captures"
+    };
+
+    // 老单文件 JSON 读取继续保持兼容
+    let rec_json = CaptureLoader::load_from_json(template_json).expect("load_from_json 兼容");
+    assert_eq!(rec_json.packets.len(), 4);
+
+    let rec_file = CaptureLoader::load_from_file(format!("{captures_dir}/sample-rpk-exchange-template.json"))
+        .expect("load_from_file 兼容");
+    assert_eq!(rec_file.packets.len(), 4);
+
+    let rec_dir = CaptureLoader::load_from_dir(captures_dir).expect("load_from_dir 兼容");
+    assert!(!rec_dir.is_empty());
 }
