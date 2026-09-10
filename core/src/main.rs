@@ -213,6 +213,12 @@ fn main() {
             std::process::id(),
             &core.token[..6]
         ));
+        // 把安装路径的脱敏日志接到 core.log。
+        // pulse-core 以 stdio=ignore 启动，eprintln 会被丢弃，真机排查只能靠 core.log。
+        crate::install::xiaomi::runtime_bridge::set_install_logger(Box::new({
+            let c = Arc::clone(&core);
+            move |msg: &str| c.log(msg)
+        }));
         let core2 = Arc::clone(&core);
         std::thread::spawn(move || {
             for stream in listener.incoming() {

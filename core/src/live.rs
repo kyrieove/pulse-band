@@ -262,6 +262,11 @@ impl crate::install::xiaomi::device_session::InstallWireSender for CoreBtInstall
         let raw = encode(&frame);
         send_all(ctx.sock, &raw)?;
         ctx.seq_out = ctx.seq_out.wrapping_add(1);
+        crate::install::xiaomi::runtime_bridge::install_log(&format!(
+            "install: 下行 seq={seq} 明文={}B 帧={}B",
+            plaintext_l2.len(),
+            raw.len()
+        ));
         Ok(seq)
     }
 
@@ -686,6 +691,11 @@ fn run_pump_loop(core: &Core, sock: usize, dec_key: &[u8; 16], rx: &mut Vec<u8>)
                                     },
                                 ),
                             );
+                            crate::install::xiaomi::runtime_bridge::install_log(&format!(
+                                "install: 入站 seq={} {}",
+                                frame.seq,
+                                crate::install::xiaomi::device_session::describe_install_frame(&plain)
+                            ));
                         }
                         if let Ok(Some(up)) = parse_uplink(&plain) {
                             {

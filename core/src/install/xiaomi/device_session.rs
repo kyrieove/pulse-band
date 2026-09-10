@@ -250,6 +250,37 @@ impl InstallWireSender for MockInstallWireSender {
     }
 }
 
+/// 生成一段**脱敏**的安装帧描述（L2 通道 + WearPacket type/id + 长度），仅用于日志。
+///
+/// 只输出结构标识，不输出任何载荷字节。
+#[allow(dead_code)]
+pub fn describe_install_frame(payload: &[u8]) -> String {
+    let raw = if payload.len() >= 2 && payload[0..2] == BIZ_PREFIX {
+        &payload[2..]
+    } else {
+        payload
+    };
+    if let Ok(l2) = L2Packet::from_bytes(raw) {
+        if l2.channel == L2Channel::Mass {
+            return format!("L2=mass len={}", l2.payload.len());
+        }
+        if l2.channel == L2Channel::Pb {
+            if let Ok(wp) = WearPacket::decode(&l2.payload) {
+                return format!(
+                    "L2=pb type={} id={} len={}",
+                    wp.pkt_type.as_u32(),
+                    wp.id,
+                    l2.payload.len()
+                );
+            }
+        }
+    }
+    if let Ok(wp) = WearPacket::decode(raw) {
+        return format!("type={} id={} len={}", wp.pkt_type.as_u32(), wp.id, raw.len());
+    }
+    format!("unparsed len={}", raw.len())
+}
+
 /// 小米快应用安装设备会话适配器。
 ///
 /// 架构定位：

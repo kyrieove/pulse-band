@@ -105,6 +105,31 @@ pub fn is_install_pipeline_active() -> bool {
     INSTALL_PIPELINE_ACTIVE.load(Ordering::SeqCst)
 }
 
+/// 安装路径的脱敏日志出口。
+///
+/// pulse-core 由客户端以 `stdio: 'ignore'` 启动，所以 `eprintln!` 会被直接丢弃；
+/// main.rs 在 `--live` 启动时把它接到 `Core::log`，让真机排查时能在 core.log 看到安装过程。
+/// 未接线时（离线测试）为 no-op。
+///
+/// 日志纪律：只允许记录序号、方向、长度、包名、状态与错误原因；
+/// 绝不记录密钥、会话密钥、authkey、MAC 地址或任何载荷字节。
+static INSTALL_LOGGER: Mutex<Option<Box<dyn Fn(&str) + Send + Sync>>> = Mutex::new(None);
+
+pub fn set_install_logger(logger: Box<dyn Fn(&str) + Send + Sync>) {
+    if let Ok(mut guard) = INSTALL_LOGGER.lock() {
+        *guard = Some(logger);
+    }
+}
+
+/// 写一条脱敏安装日志（未接线时为 no-op）。
+pub fn install_log(msg: &str) {
+    if let Ok(guard) = INSTALL_LOGGER.lock() {
+        if let Some(logger) = guard.as_ref() {
+            logger(msg);
+        }
+    }
+}
+
 /// 向全局安装帧事件队列派发事件（由 live.rs 调用）。
 pub fn dispatch_install_frame_event(event: InstallFrameEvent) {
     if let Ok(mut q) = GLOBAL_INSTALL_EVENT_QUEUE.lock() {
@@ -415,6 +440,12 @@ impl XiaomiInstallRuntimeBridge {
                     &metadata.package_id,
                     Some(metadata.version_code),
                 );
+                install_log(&format!(
+                    "install: 已安装列表返回 {} 项，目标 package={} version_code={} 命中={found}",
+                    apps.len(),
+                    metadata.package_id,
+                    metadata.version_code
+                ));
                 if found {
                     return Ok(());
                 }
@@ -504,7 +535,18 @@ impl AppInstallTransport for XiaomiInstallTransport {
     /// 门禁只在安装进行期间打开，这样空闲连接不会把每个业务帧复制进全局队列。
     fn prepare(&mut self, metadata: InstallMetadata) -> Result<InstallSession> {
         set_install_pipeline_active(true);
+        install_log(&format!(
+            "install: prepare 开始 package={} version_code={} file_size={}",
+            metadata.package_id, metadata.version_code, metadata.file_size
+        ));
         let res = self.bridge.transport_prepare(&metadata);
+        match &res {
+            Ok(s) => install_log(&format!(
+                "install: prepare 完成 session={} total_chunks={}",
+                s.session_id, s.total_chunks
+            )),
+            Err(e) => install_log(&format!("install: prepare 失败: {e}")),
+        }
         if res.is_err() {
             set_install_pipeline_active(false);
         }
@@ -514,6 +556,13 @@ impl AppInstallTransport for XiaomiInstallTransport {
     fn send_chunk(&mut self, chunk: InstallChunk) -> Result<ChunkAck> {
         set_install_pipeline_active(true);
         let res = self.bridge.transport_send_chunk(&chunk);
+        match &res {
+            Ok(ack) => install_log(&format!(
+                "install: chunk #{}/{} 已下发 (累计 {}B)",
+                ack.index, self.bridge.protocol.total_chunks, ack.received_bytes
+            )),
+            Err(e) => install_log(&format!("install: chunk #{} 失败: {e}", chunk.index)),
+        }
         if res.is_err() {
             set_install_pipeline_active(false);
         }
@@ -522,12 +571,18 @@ impl AppInstallTransport for XiaomiInstallTransport {
 
     fn commit(&mut self, session_id: String) -> Result<InstallResult> {
         set_install_pipeline_active(true);
+        install_log("install: commit 开始，等待设备 id=2 安装结果");
         let res = self.bridge.transport_commit(&session_id);
+        match &res {
+            Ok(r) => install_log(&format!("install: commit 结束 status={}", r.status)),
+            Err(e) => install_log(&format!("install: commit 失败: {e}")),
+        }
         set_install_pipeline_active(false);
         res
     }
 
     fn cancel(&mut self, session_id: String) -> Result<()> {
+        install_log("install: cancel 收到，发送 Mass 取消并关闭门禁");
         let res = self.bridge.transport_cancel(&session_id);
         set_install_pipeline_active(false);
         res
