@@ -82,6 +82,15 @@ pub fn filter_install_response(payload: &[u8]) -> bool {
         return false;
     }
 
+    // 真机抓包实证：业务明文就是 WearPacket protobuf 本身（无 L2 前缀），优先按此解析。
+    if let Ok(wp) = WearPacket::decode(raw) {
+        if is_wear_packet_install(&wp) {
+            return true;
+        }
+    }
+
+    // 兼容路径：Mass 分片按上游采用 L2 channel=2 封装
+    // （仅源码证据，设备未实测），保留解析以兼容历史样本与 Mock。
     if let Ok(l2) = L2Packet::from_bytes(raw) {
         if l2.channel == L2Channel::Mass {
             return true;
@@ -91,10 +100,6 @@ pub fn filter_install_response(payload: &[u8]) -> bool {
                 return is_wear_packet_install(&wp);
             }
         }
-    }
-
-    if let Ok(wp) = WearPacket::decode(raw) {
-        return is_wear_packet_install(&wp);
     }
 
     false

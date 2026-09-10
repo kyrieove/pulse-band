@@ -413,11 +413,11 @@ impl XiaomiInstallRuntimeBridge {
             .clone()
             .ok_or_else(|| "缺少安装元数据，无法核验已安装列表".to_string())?;
 
-        let query_l2 = installed_list::build_installed_list_query_l2();
+        let query_payload = installed_list::build_installed_list_query();
         let query_frame = Frame {
             frame_type: 0x03,
             seq: 0,
-            payload: query_l2,
+            payload: query_payload,
         };
         self.install_session.send_install_packet(&query_frame)?;
 

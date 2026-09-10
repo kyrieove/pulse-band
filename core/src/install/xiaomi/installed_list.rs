@@ -12,7 +12,7 @@
 //! - 查询与响应都必须经过真实认证链路收发，本模块不持有也不创建任何连接。
 
 use super::super::model::Result;
-use super::l2::{L2Channel, L2OpCode, L2Packet};
+use super::l2::{L2Channel, L2OpCode};
 use super::thirdparty_app::{ThirdpartyApp, ThirdpartyAppPayload};
 use super::wear_packet::{WearPacket, WearPacketPayload, WearPacketType};
 use super::wire::{
@@ -50,9 +50,13 @@ pub fn encode_installed_list_query() -> Vec<u8> {
     WearPacket::new_thirdparty_app(0, app).encode()
 }
 
-/// 构造已安装列表查询的完整 L2/WearPacket 明文，可直接交给设备会话下行。
-pub fn build_installed_list_query_l2() -> Vec<u8> {
-    L2Packet::pb_write(encode_installed_list_query()).to_bytes()
+/// 构造已安装列表查询的完整业务明文（WearPacket），可直接交给设备会话下行。
+///
+/// 注意：**不加** L2 channel/opcode 前缀。真机抓包实证业务明文就是 protobuf 本身
+/// （见 `tools/decrypt_business.py` 直接以 WearPacket 解析解密结果），
+/// 加了 `01 01` 前缀会让手环把 field1 读成 1 而不是 20。
+pub fn build_installed_list_query() -> Vec<u8> {
+    encode_installed_list_query()
 }
 
 /// 编码已安装列表响应（仅供离线测试与 Mock 使用，字段顺序与真机抓包一致）。
@@ -198,6 +202,7 @@ pub fn installed_list_contains(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::l2::L2Packet;
 
     #[test]
     fn test_query_is_type20_id0() {

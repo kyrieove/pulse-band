@@ -1435,10 +1435,9 @@ fn test_xiaomi_protocol_prepare_encode() {
     let sent = &dev.sent_frames[0];
     assert_eq!(sent.frame_type, 0x03);
 
-    // 载荷解包验证: L2 -> WearPacket -> ThirdpartyApp -> AppInstallerRequest
-    let l2 = L2Packet::from_bytes(&sent.payload).expect("L2 decode 成功");
-    assert_eq!(l2.channel, L2Channel::Pb);
-    let wp = WearPacket::decode(&l2.payload).expect("WearPacket decode 成功");
+    // 载荷解包验证: WearPacket -> ThirdpartyApp -> AppInstallerRequest
+    // 真机实证：业务明文就是 protobuf 本身，不带 L2 channel/opcode 前缀。
+    let wp = WearPacket::decode(&sent.payload).expect("WearPacket decode 成功");
     assert_eq!(wp.pkt_type, WearPacketType::ThirdpartyApp);
     assert_eq!(wp.id, 1);
 
@@ -1497,11 +1496,12 @@ fn test_xiaomi_mass_transfer_sequence() {
     assert_eq!(dev.sent_frames.len(), 3);
 
     let mass_prep_frame = &dev.sent_frames[1];
-    let mass_prep_l2 = L2Packet::from_bytes(&mass_prep_frame.payload).unwrap();
-    let mass_prep_wp = WearPacket::decode(&mass_prep_l2.payload).unwrap();
+    // Mass Prepare 是 WearPacket(type=22, id=0)，同样不带 L2 前缀
+    let mass_prep_wp = WearPacket::decode(&mass_prep_frame.payload).unwrap();
     assert_eq!(mass_prep_wp.pkt_type, WearPacketType::Mass);
     assert_eq!(mass_prep_wp.id, 0);
 
+    // Mass 分片仍按上游源码证据使用 L2 channel=2/opcode=1 封装（设备未实测）
     let chunk0_frame = &dev.sent_frames[2];
     let chunk0_l2 = L2Packet::from_bytes(&chunk0_frame.payload).unwrap();
     assert_eq!(chunk0_l2.channel, L2Channel::Mass);
@@ -2547,6 +2547,55 @@ fn test_wait_result_skips_unrelated_frames_before_install_result() {
         .expect("跳过 Mass 帧后应能读到真正的 id=2 结果");
     assert_eq!(res.status, "success");
     assert_eq!(transport.bridge.protocol.state, XiaomiInstallState::Success);
+}
+
+#[test]
+fn test_install_prepare_frame_has_no_l2_prefix() {
+    use app_install::xiaomi::*;
+
+    // 真机失败根因回归测试：
+    // 安装准备帧此前被 L2Packet::pb_write 前置了 `01 01`，手环把 field1 读成 1（Account）
+    // 而不是 20（ThirdpartyApp），请求被丢弃 → prepare 必然超时。
+    // 实证：tools/decrypt_business.py 直接以 WearPacket 解析解密结果（无 L2 剥离），
+    // M1 真机跑通的 live.rs::build_downlink_payload 同样没有前缀。
+    let mut proto = XiaomiAppInstallProtocol::new();
+    let mut dev = MockBandDeviceTransport::new();
+    dev.connect("AA:BB:CC:11:22:33").unwrap();
+
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 255523,
+        hash: "0123456789abcdef0123456789abcdef".to_string(),
+    };
+
+    // prepare 会等到超时才返回（Mock 队列为空 → 立即 None），这里只关心发出去的帧
+    let _ = proto.prepare_install(&mut dev, &meta);
+    assert!(!dev.sent_frames.is_empty(), "prepare 必须发出安装准备帧");
+
+    let payload = &dev.sent_frames[0].payload;
+    assert_ne!(
+        &payload[0..2],
+        &[0x01u8, 0x01u8],
+        "业务明文不得带 L2 channel/opcode 前缀"
+    );
+
+    // 首字节必须是 WearPacket field1(type) 的 tag 0x08，值为 20
+    let wp = WearPacket::decode(payload).expect("下行明文必须可直接解析为 WearPacket");
+    assert_eq!(wp.pkt_type.as_u32(), 20);
+    assert_eq!(wp.id, 1);
+}
+
+#[test]
+fn test_installed_list_query_has_no_l2_prefix() {
+    use app_install::xiaomi::*;
+
+    let payload = build_installed_list_query();
+    assert_ne!(&payload[0..2], &[0x01u8, 0x01u8], "查询明文不得带 L2 前缀");
+    let wp = WearPacket::decode(&payload).expect("查询明文必须可直接解析为 WearPacket");
+    assert_eq!(wp.pkt_type.as_u32(), 20);
+    assert_eq!(wp.id, 0);
 }
 
 #[test]

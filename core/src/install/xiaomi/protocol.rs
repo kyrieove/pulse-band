@@ -19,7 +19,6 @@ use super::codec::{
     decode_install_response, decode_install_result, encode_install_request, encode_mass_chunk,
     encode_mass_prepare,
 };
-use super::l2::L2Packet;
 use super::thirdparty_app::InstallResultCode;
 use super::XiaomiInstallState;
 use crate::frame::Frame;
@@ -118,16 +117,21 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
         self.metadata = Some(metadata.clone());
 
         // 1. 编码安装准备请求: WearPacket(type=20, id=1, ThirdpartyApp.install_request)
+        //
+        // 外层**不加** L2 channel/opcode 前缀。
+        // 实证依据：tools/decrypt_business.py 直接把解密后的字节当作 WearPacket 解析
+        // （产出 docs/protocol/business.md 的结构树），说明真机业务明文就是 protobuf 本身；
+        // M1 真机跑通的 live.rs::build_downlink_payload 同样是「type + id + field22」无前缀。
+        // 带 `01 01` 前缀会让手环把 field1 读成 1（Account）而不是 20，请求被直接丢弃。
         let req_pb = encode_install_request(
             &metadata.package_id,
             metadata.version_code,
             metadata.file_size as u32,
         )?;
-        let l2_pkt = L2Packet::pb_write(req_pb);
         let frame = Frame {
             frame_type: 0x03,
             seq: self.next_seq(),
-            payload: l2_pkt.to_bytes(),
+            payload: req_pb,
         };
 
         // 2. 发送帧
@@ -201,11 +205,11 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
             let metadata = self.metadata.as_ref().ok_or("缺少安装元数据")?;
             let mass_prep_pb =
                 encode_mass_prepare(&vec![0u8; metadata.file_size as usize], &self.md5)?;
-            let l2_prep = L2Packet::pb_write(mass_prep_pb);
+            // Mass Prepare 本身是 WearPacket(type=22, id=0)，同样不加 L2 前缀（理由同上）。
             let frame = Frame {
                 frame_type: 0x03,
                 seq: self.next_seq(),
-                payload: l2_prep.to_bytes(),
+                payload: mass_prep_pb,
             };
             device_transport.send_frame(&frame)?;
             self.mass_prepared = true;
@@ -330,11 +334,11 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
                 );
                 let mass = Mass::from_control(ctrl);
                 let wp = WearPacket::new_mass(1, mass);
-                let l2 = L2Packet::pb_write(wp.encode());
+                // 同上：WearPacket 明文不加 L2 前缀。
                 let frame = Frame {
                     frame_type: 0x03,
                     seq: self.next_seq(),
-                    payload: l2.to_bytes(),
+                    payload: wp.encode(),
                 };
                 let _ = device_transport.send_frame(&frame);
             }
