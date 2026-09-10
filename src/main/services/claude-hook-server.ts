@@ -2,6 +2,18 @@ import http from 'node:http';
 import path from 'node:path';
 import type { SessionManager } from './session-manager';
 import type { ClaudeHookPayload } from '../../common/types';
+import type { AgentKind } from '../../common/types';
+
+const HOOK_AGENTS = new Set<AgentKind>(['claude', 'opencode', 'zcode']);
+
+export function resolveAgentKind(payload: ClaudeHookPayload): AgentKind {
+  const requested = payload.agent;
+  return HOOK_AGENTS.has(requested) ? requested : 'claude';
+}
+
+export function resolveSessionId(payload: ClaudeHookPayload, agent: AgentKind): string {
+  return payload.session_id || `${agent}-session`;
+}
 
 export class ClaudeHookServer {
   private server: http.Server | null = null;
@@ -69,27 +81,37 @@ export class ClaudeHookServer {
   }
 
   private handleClaudeEvent(payload: ClaudeHookPayload) {
-    const sessionId = payload.session_id || 'claude-session';
+    const agentKind = resolveAgentKind(payload);
+    const sessionId = resolveSessionId(payload, agentKind);
     const eventName = payload.hook_event_name || payload.event_type || 'Event';
     const cwd = payload.cwd;
+    const agentTitle =
+      agentKind === 'opencode'
+        ? 'OpenCode Session'
+        : agentKind === 'zcode'
+          ? 'ZCode Session'
+          : 'Claude Session';
+
+    // 只记录路由元数据，不记录 prompt/tool_input，便于定位“事件到了但卡片没跳变”。
+    console.log(`[ClaudeHookServer] ${agentKind} ${eventName} session=${sessionId}`);
 
     if (eventName === 'SessionStart') {
-      this.sessionManager.updateSession(sessionId, 'claude', {
+      this.sessionManager.updateSession(sessionId, agentKind, {
         status: 'thinking',
         startedAt: Date.now(),
         cwd,
-        title: cwd ? path.basename(cwd) : 'Claude Session',
+        title: cwd ? path.basename(cwd) : agentTitle,
         lastMessage: 'Session started',
       });
     } else if (eventName === 'UserPromptSubmit') {
       // 唯一在 t=0 触发的事件。其余几个都在模型生成完之后，
       // 只有这个能让手环在按下回车的瞬间就亮绿灯，不用等 transcript 落盘。
       const prompt = (payload as { prompt?: string }).prompt;
-      this.sessionManager.updateSession(sessionId, 'claude', {
+      this.sessionManager.updateSession(sessionId, agentKind, {
         status: 'thinking',
         startedAt: Date.now(),
         cwd,
-        title: cwd ? path.basename(cwd) : 'Claude Session',
+        title: cwd ? path.basename(cwd) : agentTitle,
         lastMessage: prompt ? String(prompt).slice(0, 60) : 'Thinking...',
       });
     } else if (eventName === 'PreToolUse') {
@@ -107,7 +129,7 @@ export class ClaudeHookServer {
         }
       }
 
-      this.sessionManager.updateSession(sessionId, 'claude', {
+      this.sessionManager.updateSession(sessionId, agentKind, {
         status: 'running_tool',
         cwd,
         currentTool: {
@@ -117,7 +139,7 @@ export class ClaudeHookServer {
         },
       });
     } else if (eventName === 'PostToolUse') {
-      this.sessionManager.updateSession(sessionId, 'claude', {
+      this.sessionManager.updateSession(sessionId, agentKind, {
         status: 'thinking',
         currentTool: null,
       });
@@ -126,7 +148,7 @@ export class ClaudeHookServer {
     } else if (eventName === 'error' || payload.error) {
       this.sessionManager.failSession(sessionId, payload.error || payload.message || 'Error occurred');
     } else if (payload.message) {
-      this.sessionManager.updateSession(sessionId, 'claude', {
+      this.sessionManager.updateSession(sessionId, agentKind, {
         lastMessage: payload.message.slice(0, 150),
       });
     }

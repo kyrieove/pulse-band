@@ -23,7 +23,9 @@
       "dist/**/*",
       "dist-electron/**/*",
       "assets/**/*",
-      "scripts/claude-hook.cjs"
+      "scripts/claude-hook.cjs",
+      "scripts/opencode-forward.cjs",
+      "scripts/zcode-forward.cjs"
     ],
     "win": {
       "target": [

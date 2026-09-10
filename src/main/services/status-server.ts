@@ -35,7 +35,7 @@ export class StatusServer {
       if (/^\/(api\/)?status\/compact(\?|$)/.test(req.url || '')) {
         const params = new URLSearchParams((req.url || '').split('?')[1] || '');
 
-        // 3.0 三屏：?all=1 一次回三份 session + limits（B-lean）。
+        // 多屏模式：?all=1 一次返回每个独立 agent 的 session + limits。
         // 砍掉 serverIp / session.agent / active（手环侧要么本来知道、要么一眼可见），
         // currentTool.name 拍平成 tool 并截 24 字符。旧的 ?agent= 路径一个字节不动，
         // 设备上还跑着 1.2.4，随时要能回退。
@@ -74,11 +74,15 @@ export class StatusServer {
                 claude: leanSession('claude'),
                 codex: leanSession('codex'),
                 antigravity: leanSession('antigravity'),
+                opencode: leanSession('opencode'),
+                zcode: leanSession('zcode'),
               },
               limits: {
                 claude: leanLimit(allQuotas.claude),
                 codex: leanLimit(allQuotas.codex),
                 antigravity: leanLimit(allQuotas.antigravity),
+                opencode: null,
+                zcode: null,
               },
             })
           );
