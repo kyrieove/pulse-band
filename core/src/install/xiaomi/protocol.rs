@@ -250,6 +250,23 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
 
         // 解码设备返回的安装结果
         let result = decode_install_result(&resp_frame.payload)?;
+
+        // 目标包名核验。
+        // 证据依据：`docs/protocol/antigravity-install-handoff-20260910.md`
+        // “最终必须核验响应目标及结果，不能只收到 id=2 就成功”。
+        // package_name 是可选字段：设备未携带时无法确认目标，不得据此判成功。
+        if let Some(got) = result.package_name.as_deref() {
+            if let Some(meta) = &self.metadata {
+                if !meta.package_id.is_empty() && got != meta.package_id {
+                    self.state = XiaomiInstallState::Failure;
+                    return Err(format!(
+                        "设备安装结果目标包名不匹配: expected={}, got={got}",
+                        meta.package_id
+                    ));
+                }
+            }
+        }
+
         match result.code {
             InstallResultCode::Success => {
                 self.state = XiaomiInstallState::Success;

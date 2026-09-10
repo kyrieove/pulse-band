@@ -17,6 +17,20 @@ use app_install::{
 };
 use frame::Frame;
 
+/// 全局安装事件队列是**进程级单例**，所有触碰它的测试必须串行执行。
+///
+/// 缺陷背景（阶段 21 审计发现）：`test_runtime_bridge_*` 这几个测试并行运行时，
+/// 彼此调用的 `clear_global_install_events()` 会把对方刚派发的帧清掉，导致
+/// `test_runtime_bridge_normal_business_isolation` 偶发假失败
+/// （实测 `normal_message_queue` 长度 2 != 3，40 次里 1 次）。串行化后行为确定。
+static GLOBAL_QUEUE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_global_queue() -> std::sync::MutexGuard<'static, ()> {
+    GLOBAL_QUEUE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn test_1_prepare_returns_preparing() {
     let mut transport = MockAppInstallTransport::new();
@@ -2101,6 +2115,7 @@ fn test_runtime_bridge_receive_install_result() {
     bridge.install_session.set_crypto_keys(enc_key, dec_key);
     bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
     bridge.state = RuntimeBridgeState::Transferring;
+    let _serial = lock_global_queue();
 
     // 构造真实结果报文：type=20, id=2 且 result_code == 0
     let app_res = AppInstallerResult::new(InstallResultCode::Success, Some("com.test.runtime".to_string()));
@@ -2137,6 +2152,7 @@ fn test_runtime_bridge_failure_state() {
     bridge.install_session.set_crypto_keys(enc_key, dec_key);
     bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
     bridge.state = RuntimeBridgeState::Transferring;
+    let _serial = lock_global_queue();
 
     // 构造失败报文：type=20, id=2 且 code == Failed (1) (result != 0)
     let app_res = AppInstallerResult::new(InstallResultCode::Failed, Some("com.test.runtime".to_string()));
@@ -2171,6 +2187,7 @@ fn test_runtime_bridge_normal_business_isolation() {
     let dec_key = [0x34; 16];
     bridge.install_session.set_crypto_keys(enc_key, dec_key);
     bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
+    let _serial = lock_global_queue();
 
     // 1. fetch 报文 (日常 interconnect 消息, id=9 SEND_WEAR_MESSAGE)
     let wp_fetch = WearPacket::new(WearPacketType::ThirdpartyApp, 9);
@@ -2212,6 +2229,105 @@ fn test_runtime_bridge_normal_business_isolation() {
     // 严格断言：日常报文绝不进入 install queue，全部隔离分流到 normal_message_queue
     assert_eq!(bridge.install_session.incoming_install_queue.len(), 0);
     assert_eq!(bridge.install_session.normal_message_queue.len(), 3);
+}
+
+#[test]
+fn test_install_pipeline_gate_defaults_off() {
+    use app_install::xiaomi::*;
+
+    let _serial = lock_global_queue();
+
+    // 阶段 21 审计：默认必须关闭 —— 生产数据泵不得把每个业务帧复制进无人消费的全局队列
+    assert_eq!(is_install_pipeline_active(), false);
+
+    set_install_pipeline_active(true);
+    assert_eq!(is_install_pipeline_active(), true);
+
+    set_install_pipeline_active(false);
+    assert_eq!(is_install_pipeline_active(), false);
+}
+
+#[test]
+fn test_runtime_bridge_wait_result_timeout_never_completes() {
+    use app_install::xiaomi::*;
+    use app_install::InstallSession;
+
+    let _serial = lock_global_queue();
+    clear_global_install_events();
+
+    let mut bridge = XiaomiInstallRuntimeBridge::new();
+    bridge.install_session.set_crypto_keys([0x12; 16], [0x34; 16]);
+    bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
+
+    // 会话已就绪，但设备**没有**上报任何结果（队列为空 → wait_install_result 超时分支）
+    let mut protocol = XiaomiAppInstallProtocol::new();
+    let session_id = "xiaomi_inst_com.test.timeout_1".to_string();
+    protocol.active_session = Some(InstallSession {
+        session_id: session_id.clone(),
+        status: "transferring".to_string(),
+        file_size: 4096,
+        chunk_size: 512,
+        total_chunks: 8,
+    });
+
+    let res = bridge
+        .execute_wait_result(&mut protocol, &session_id)
+        .expect("设备未上报时应返回 waiting_device_result，而不是报错");
+
+    // 关键防伪断言：设备没回话，绝不能进入 completed
+    assert_eq!(res.status, "waiting_device_result");
+    assert_ne!(res.status, "completed");
+    assert_eq!(bridge.state, RuntimeBridgeState::WaitingResult);
+    assert_ne!(bridge.state, RuntimeBridgeState::Completed);
+}
+
+#[test]
+fn test_xiaomi_install_result_wrong_package_rejected() {
+    use app_install::xiaomi::*;
+    use app_install::InstallSession;
+
+    let _serial = lock_global_queue();
+    clear_global_install_events();
+
+    let mut bridge = XiaomiInstallRuntimeBridge::new();
+    bridge.install_session.set_crypto_keys([0x12; 16], [0x34; 16]);
+    bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
+
+    let mut protocol = XiaomiAppInstallProtocol::new();
+    let session_id = "xiaomi_inst_com.test.expected_1".to_string();
+    protocol.active_session = Some(InstallSession {
+        session_id: session_id.clone(),
+        status: "transferring".to_string(),
+        file_size: 4096,
+        chunk_size: 512,
+        total_chunks: 8,
+    });
+    protocol.metadata = Some(InstallMetadata {
+        package_id: "com.test.expected".to_string(),
+        version_name: "1.0.0".to_string(),
+        version_code: 1,
+        file_size: 4096,
+        hash: "test_hash".to_string(),
+    });
+
+    // 设备上报“成功”，但目标包名是**另一个包**：
+    // 证据纪律要求“不能只收到 id=2 就成功”，必须核验响应目标。
+    let app_res = AppInstallerResult::new(
+        InstallResultCode::Success,
+        Some("com.other.app".to_string()),
+    );
+    let wp = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(app_res));
+    let frame = Frame {
+        frame_type: 0x03,
+        seq: 44,
+        payload: L2Packet::pb_write(wp.encode()).to_bytes(),
+    };
+    bridge.process_incoming_frame(frame);
+
+    let res = bridge.execute_wait_result(&mut protocol, &session_id);
+    assert!(res.is_err(), "目标包名不匹配必须报错，不能判成功");
+    assert_eq!(bridge.state, RuntimeBridgeState::Failed);
+    assert_ne!(bridge.state, RuntimeBridgeState::Completed);
 }
 
 #[test]

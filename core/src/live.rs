@@ -611,10 +611,15 @@ fn run_pump_loop(core: &Core, sock: usize, dec_key: &[u8; 16], rx: &mut Vec<u8>)
                     }
                     // 业务/握手数据帧：先回传输层 ACK（seq 回显），再处理。
                     let _ = ack_frame(sock, frame.seq);
-                    // 阶段 21：向快应用安装 Runtime Bridge 事件队列派发入站业务帧
-                    crate::install::xiaomi::runtime_bridge::dispatch_install_frame_event(
-                        crate::install::xiaomi::runtime_bridge::InstallFrameEvent::Incoming(frame.clone()),
-                    );
+                    // 阶段 21：向快应用安装 Runtime Bridge 事件队列派发入站业务帧。
+                    // 门禁：仅当安装管线被上层显式激活时才派发。默认关闭，原因是该全局队列
+                    // 当前没有生产者对应的消费者（RuntimeBridge 无生产实例），无条件派发会让
+                    // 队列在 --live 长期运行中无界增长，并制造“安装链路已接通”的假象。
+                    if crate::install::xiaomi::runtime_bridge::is_install_pipeline_active() {
+                        crate::install::xiaomi::runtime_bridge::dispatch_install_frame_event(
+                            crate::install::xiaomi::runtime_bridge::InstallFrameEvent::Incoming(frame.clone()),
+                        );
+                    }
                     if !frame.payload.starts_with(&BIZ_PREFIX) {
                         continue;
                     }

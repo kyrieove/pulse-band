@@ -6,12 +6,13 @@
  *   authkey 明文，此文件是唯一出口，任何原始设备对象不得直接下发 —— 见 docs/ORONBOX_DAEMON_RPC.md）
  * - 设备操作：按需启动 daemon、手动连接 / 断开 / 校时
  * - FetchBridge 插件开关 + 请求数统计（订阅 device.interconnect 事件计数）
- * - .rpk 装包：install.local（只接受 .rpk；进度经 install.local 的 progress/completed 事件回推）
+ * - .rpk 装包：**已停用**。Pulse 2.0 禁止调用 install.local / OronBox daemon / 任何外部安装器；
+ *   新装包通路是 `pulse:app-install:*` IPC → AppInstallService → `device.app.install.*` Core RPC。
+ *   本文件保留的旧入口只返回明确的 not implemented，绝不假装成功（见 pushRpk）。
  * - 诊断：转发 status-server 的 /api/status（quota + quotaMeta）与错误环形日志
  */
 import { ipcMain, BrowserWindow } from 'electron';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { OronBoxClient } from './oronbox-client';
 import { DirectFetchBridge, BAND_PACKAGE } from './fetch-bridge-direct';
@@ -77,6 +78,18 @@ function safeDevice(raw: DeviceWire | null | undefined): PulseOronboxState['devi
     connectType: typeof raw.connectType === 'string' ? raw.connectType : 'unknown',
     disconnected: raw.disconnected !== false,
   };
+}
+
+/**
+ * 旧版装包通道的统一拒绝入口。
+ *
+ * 真实状态是 not implemented：Pulse 2.0 尚无自研 core 完成的 RPK 安装能力，
+ * 因此这里必须明确失败，而不是返回 `ok: true` 之类的假成功。
+ */
+export function refuseLegacyInstall(channel: string) {
+  const error = `Pulse 2.0 已停用旧版装包通道 (not implemented): ${channel}`;
+  pushError('install', error);
+  return { ok: false as const, error };
 }
 
 export class OronBoxBridge {
@@ -408,37 +421,15 @@ export class OronBoxBridge {
       }
     });
 
-    // 硬约束 2：装包只做代码与界面，调用链是 UI 按钮 → 这里 → install.local。
-    // 只支持 .rpk；实际推送由人在界面上点按钮触发。
-    ipcMain.handle('oronbox:install-rpk', async (_e, payload: { path?: string; fileName?: string }) => {
-      await this.ensureReady();
-      const filePath = typeof payload?.path === 'string' ? payload.path : '';
-      if (!filePath.toLowerCase().endsWith('.rpk')) {
-        return { ok: false, error: '只支持 .rpk 快应用格式' };
-      }
-      if (!fs.existsSync(filePath)) {
-        return { ok: false, error: `文件不存在: ${filePath}` };
-      }
-      const fileName =
-        typeof payload?.fileName === 'string' && payload.fileName ? payload.fileName : filePath.split(/[\\/]/).pop() ?? 'app.rpk';
-      return this.pushRpk(filePath, fileName);
+    // Pulse 2.0 硬约束：禁止调用 install.local / OronBox daemon / 任何外部安装器。
+    // 旧版装包入口一律返回明确 not implemented，不触碰文件系统、不启动 daemon、绝不假装成功。
+    ipcMain.handle('oronbox:install-rpk', async () => {
+      return refuseLegacyInstall('oronbox:install-rpk');
     });
 
-    // 内置的手环快应用：随 Pulse 一起发布，用户不用自己去找 .rpk。
-    // 打包后它在 app.asar 里，daemon 读不到 asar 内的路径 —— 先落到临时文件，推完即删。
+    // 内置手环端 .rpk 的旧版推送通道同样停用。
     ipcMain.handle('oronbox:install-bundled-rpk', async () => {
-      await this.ensureReady();
-      const src = path.join(import.meta.dirname, '../../assets/band-app.rpk');
-      if (!fs.existsSync(src)) return { ok: false, error: '安装包缺失：assets/band-app.rpk 不在发布包里' };
-      const tmp = path.join(os.tmpdir(), `pulse-band-${Date.now()}.rpk`);
-      try {
-        fs.writeFileSync(tmp, fs.readFileSync(src));
-        return await this.pushRpk(tmp, 'CodeIsland-Band10.rpk');
-      } catch (err: any) {
-        return { ok: false, error: String(err?.message ?? err) };
-      } finally {
-        fs.rmSync(tmp, { force: true });
-      }
+      return refuseLegacyInstall('oronbox:install-bundled-rpk');
     });
 
     ipcMain.handle('pulse:get-diagnostics', async () => {
@@ -495,32 +486,6 @@ export class OronBoxBridge {
         return { ok: false, error: String(err?.message ?? err) };
       }
     });
-  }
-
-  /** install.local 的公共通路：用户自选文件与内置包两个入口都走这里 */
-  private async pushRpk(filePath: string, fileName: string) {
-    if (this.installing) {
-      return { ok: false, error: '已有一次推送正在进行' };
-    }
-    this.installing = true;
-    this.state.installing = { fileName, progress: 0 };
-    this.push();
-    try {
-      const res = await this.client.call<{ installed: boolean; path: string; type: string }>(
-        'install.local',
-        { path: filePath },
-        300_000,
-      );
-      this.win?.webContents.send('oronbox-install-progress', { fileName, progress: 100, done: true });
-      return { ok: res?.installed === true, result: res };
-    } catch (err: any) {
-      pushError('install', `install.local 失败: ${err?.message ?? err}`);
-      return { ok: false, error: String(err?.message ?? err) };
-    } finally {
-      this.installing = false;
-      this.state.installing = null;
-      this.push();
-    }
   }
 
   /** 把 daemon 的设备状态映射成 UI 的连接态（不含 authkey） */

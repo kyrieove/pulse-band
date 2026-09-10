@@ -264,6 +264,9 @@ impl XiaomiInstallDeviceSession {
     }
 
     /// 发送安装数据帧（带认证前置检查）
+    ///
+    /// [placeholder] 只入队，不写 socket。真实下行需要复用 `live::DownlinkCtx::sock`
+    /// 并走 `live` 侧既有的 `send_all(sock, &encode(&frame))`，当前尚未接入。
     pub fn send_install_packet(&mut self, frame: &Frame) -> Result<()> {
         if !self.authenticated {
             return Err("device_unavailable: 设备会话未就绪或未认证 (not_implemented)".to_string());
