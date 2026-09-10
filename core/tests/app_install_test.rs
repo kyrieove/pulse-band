@@ -2842,6 +2842,70 @@ fn test_mass_payload_is_not_business_encrypted() {
 }
 
 #[test]
+fn test_slice_length_comes_from_mass_prepare_response() {
+    use app_install::xiaomi::*;
+
+    // 真机实测（2026-09-10）：Band 10 的 Mass PrepareResponse.field5 = 4096，
+    // 若沿用上游非 SPP v1 的 244 默认值会产生 1050 片而不是 63 片。
+    // 必须使用设备返回的 slice 长度。
+    let mut proto = XiaomiAppInstallProtocol::new();
+    let mut dev = MockBandDeviceTransport::new();
+    dev.connect("AA:BB:CC:11:22:33").unwrap();
+
+    let resp = AppInstallerResponse::new(0, Some(244)); // id=1 里的 244 不应被用于 Mass
+    let wp_resp = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp));
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: wp_resp.encode(),
+    });
+
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 512,
+        hash: "0123456789abcdef0123456789abcdef".to_string(),
+        md5: Some("00112233445566778899aabbccddeeff".to_string()),
+    };
+    let session = proto.prepare_install(&mut dev, &meta).unwrap();
+
+    // 设备在 Mass PrepareResponse 里给出 4096
+    enqueue_mass_prepare_ready(&mut dev, [0x00; 16], Some(4096));
+    for seq in 2u8..=4u8 {
+        dev.enqueue_ack(seq);
+    }
+    proto
+        .send_package_chunk(
+            &mut dev,
+            &InstallChunk {
+                session_id: session.session_id.clone(),
+                index: 0,
+                size: 512,
+                data: vec![0x5A; 512],
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        proto.expected_slice_length, 4096,
+        "必须采用 Mass PrepareResponse 返回的 slice 长度"
+    );
+
+    // body 538B < cap 4090 → 单片
+    let mass_frames: Vec<_> = dev
+        .sent_frames
+        .iter()
+        .filter(|f| f.payload.first() == Some(&L2Channel::Mass.as_u8()))
+        .collect();
+    assert_eq!(mass_frames.len(), 1);
+    let l2 = L2Packet::from_bytes(&mass_frames[0].payload).unwrap();
+    let chunk = MassChunk::decode(&l2.payload).unwrap();
+    assert_eq!(chunk.total_parts, 1);
+    assert_eq!(chunk.fragment.len(), 538);
+}
+
+#[test]
 fn test_no_oronbox_dependency() {
     let files_to_check = [
         "src/install/xiaomi/runtime_bridge.rs",

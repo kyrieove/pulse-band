@@ -34,7 +34,11 @@ Pulse Dev → pulse-core --live → Windows RFCOMM/SPP → Xiaomi Smart Band 10
 
 - 系统蓝牙关闭、超出范围或其他链路中断后，可能需要用户手动重新连接。
 - 当前代码仍有历史内部命名和用户文案；Pulse 2.0 将统一清理。
-- 全新电脑上的 Windows 配对和 RPK 安装尚未由自研 core 完成真机闭环。
+- 全新电脑上的 Windows 配对尚未由自研 core 完成真机闭环。
+- RPK 安装已于 2026-09-10 由自研 core 在真实小米手环 10 上完成一次成功安装
+  （`status=completed`，设备上报 `id=2` + 已安装列表核验命中；提交 `0fadb88`，
+  记录见 `docs/protocol/install-runtime-audit-20260910.md` 第 11 节）。
+  仍在手环上手动打开确认可用性、断点续传与失败回滚尚未验证。
 
 ## 下一步
 

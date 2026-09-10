@@ -321,3 +321,54 @@ L2 头:   02 01
   设备对 32 窗口的接受程度、ACK 的实际到达时序，都需要一次真机安装来确认。
 - 本轮改动使「客户端到设备的字节」与上游分支一致，若仍失败，下一步应先抓 Mass PrepareResponse，
   而不是继续调整后续参数。
+
+---
+
+## 11. 真机安装成功（2026-09-10，第 3 轮）
+
+### 11.1 结果
+
+**Pulse 自研 core 首次完成小米手环 10 的 RPK 快应用真实安装**，全程不依赖 OronBox。
+`status=completed` 来自设备真实上报的结果与已安装列表核验，不是本地推断。
+
+真实设备 `core.log` 原文：
+
+```text
+install: Mass 下行 seq=66 明文=1975B 帧=1983B (未加密)
+install: Mass 传输完成 body=255549B 分片=63 slice=4096 cap=4090
+install: chunk #499/500 已下发 (累计 255523B)
+install: commit 开始，等待设备 id=2 安装结果
+install: 入站 seq=9 type=20 id=2 len=67                 ← 设备上报安装结果
+install: 下行 seq=67 明文=7B 帧=17B                     ← 下发 id=0 已安装列表查询
+install: 入站 seq=10 type=20 id=0 len=130
+install: 已安装列表返回 2 项，目标 package=com.codeisland.band version_code=26 命中=true
+install: commit 结束 status=completed
+```
+
+### 11.2 本轮由设备实证、可升级为事实的数据
+
+| 项 | 之前 | 真机实测 |
+|---|---|---|
+| `expected_slice_length`（Band 10） | 未知，上游默认 244 | **4096**（来自 Mass PrepareResponse.field5，cap = 4090） |
+| Mass body 长度 | 推算 255549B | **255549B**（255523 + 22B 头 + 4B CRC32），与推算一致 |
+| Mass 分片数 | 按 slice 假设 500/506/1074 | **63** |
+| 分片是否需要 `02 01` | 源码证据 | **需要**，且确认为未加密通路 |
+| 安装结果等待耗时 | 上游 60s | 约 **3 秒** |
+| 已安装列表条目 | 抓包 2 项 | **2 项**，目标包 `com.codeisland.band` versionCode 26 命中 |
+
+`slice=4096` 这条尤其重要：若沿用上游非 SPP v1 的 244 默认值，会产生 1050 片而不是 63 片。
+**必须使用 Mass PrepareResponse 返回的 slice 长度**，这一点已由真机证实。
+
+### 11.3 达成路径（本轮两个修复共同作用）
+
+1. `ffa4835`：去掉 Pb 业务明文里多余的 L2 前缀 → 设备开始应答 `id=1`。
+2. `0fadb88`：按上游源码语义修正 Mass（不加密 / 组装 body 整体切片 / 真实 MD5 /
+   等 PrepareResponse / 累积 ACK 流控）→ 分片被接受、设备上报 `id=2`。
+
+### 11.4 仍未确认
+
+- **手环端可用性**：已安装列表命中只证明"设备记录了这次安装"，不等于"快应用能启动运行"，
+  仍需在手环上手动打开一次确认。
+- 断点续传（`remained_data_length` 语义）未验证；本轮按不续传处理。
+- 安装失败 / 空间不足 / 校验失败时的设备错误码与回滚行为未验证。
+- `core/src/session.rs:179` 仍以 `"OronBox"` 作 companion 名（冻结文件，未改）。
