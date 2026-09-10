@@ -23,6 +23,7 @@ import type {
 } from '../../common/types';
 import { inspectRpk } from './rpk-inspector.ts';
 import { calculateFileHash, readChunk } from './app-install-reader.ts';
+import type { CoreAppInstallBridge } from './core-app-install-bridge.ts';
 
 export { calculateFileHash } from './app-install-reader.ts';
 export const MIN_CHUNK_SIZE = 256;
@@ -65,12 +66,26 @@ export interface InstallSession {
   expectedHash: string;
   cancelRequested: boolean;
   createdAt: number;
+  coreSessionId?: string;
 }
 
 export class AppInstallService {
   private session: InstallSession | null = null;
   private win: BrowserWindow | null = null;
   private listeners: Set<(event: InstallProgressEvent) => void> = new Set();
+  private coreBridge: CoreAppInstallBridge | null = null;
+
+  constructor(coreBridge?: CoreAppInstallBridge | null) {
+    this.coreBridge = coreBridge ?? null;
+  }
+
+  setCoreBridge(bridge: CoreAppInstallBridge | null): void {
+    this.coreBridge = bridge;
+  }
+
+  getCoreBridge(): CoreAppInstallBridge | null {
+    return this.coreBridge ?? null;
+  }
 
   attach(win: BrowserWindow | null): void {
     this.win = win;
@@ -241,6 +256,37 @@ export class AppInstallService {
       percentage: 0,
     });
 
+    if (this.coreBridge) {
+      try {
+        const coreRes = await this.coreBridge.prepare({
+          packageId: meta.packageId || 'com.pulse.bandapp',
+          versionName: meta.versionName || '1.0.0',
+          versionCode: meta.versionCode || 1,
+          fileSize: meta.fileSize,
+          hash,
+        });
+        if (coreRes?.sessionId) {
+          this.session.coreSessionId = coreRes.sessionId;
+        }
+      } catch (err: any) {
+        this.session.status = 'failed';
+        this.broadcastProgress({
+          messageType: 'event',
+          event: 'device.app.install.progress',
+          installId,
+          status: 'failed',
+          fileSize: meta.fileSize,
+          transferredBytes: 0,
+          percentage: 0,
+          error: {
+            code: err?.code || 'CORE_PREPARE_FAILED',
+            userMessage: err?.userMessage || err?.message || '设备安装准备失败',
+          },
+        });
+        throw err;
+      }
+    }
+
     return {
       installId,
       status: 'preparing',
@@ -353,10 +399,42 @@ export class AppInstallService {
       percentage: 100,
     });
 
-    return {
+    const immediateResult = {
       ok: true,
-      status: 'verifying',
+      status: 'verifying' as InstallSessionStatus,
     };
+
+    if (this.coreBridge) {
+      const targetSessionId = this.session.coreSessionId || this.session.installId;
+      const p = (async () => {
+        try {
+          const coreRes = await this.coreBridge!.commit(targetSessionId);
+          if (coreRes?.status && coreRes.status !== 'completed' && coreRes.status !== 'installed') {
+            if (this.session) {
+              this.session.status = coreRes.status as InstallSessionStatus;
+            }
+          }
+          return {
+            ok: true,
+            status: (this.session?.status || 'verifying') as InstallSessionStatus,
+          };
+        } catch (err: any) {
+          if (this.session) {
+            this.session.status = 'failed';
+          }
+          const errCode = err?.code || 'CORE_COMMIT_FAILED';
+          const userMsg = err?.userMessage || err?.message || '设备校验安装失败';
+          const wrapped = new Error(userMsg);
+          (wrapped as any).code = errCode;
+          (wrapped as any).userMessage = userMsg;
+          throw wrapped;
+        }
+      })();
+      Object.assign(p, immediateResult);
+      return p as any;
+    }
+
+    return immediateResult;
   }
 
   cancelFileTransfer(installId?: string): { ok: boolean; status: InstallSessionStatus } {
@@ -365,6 +443,7 @@ export class AppInstallService {
     }
 
     const currentInstallId = this.session.installId;
+    const coreSessionId = this.session.coreSessionId || currentInstallId;
     const currentFileSize = this.session.fileSize;
 
     this.session.status = 'cancelled';
@@ -381,8 +460,21 @@ export class AppInstallService {
       error: '传输已取消',
     });
 
+    let cancelPromise: Promise<any> | null = null;
+    if (this.coreBridge && coreSessionId) {
+      cancelPromise = this.coreBridge.cancel(coreSessionId).catch((err) => {
+        console.warn('[AppInstallService] Core cancel notify error:', err);
+      });
+    }
+
     this.cleanup();
-    return { ok: true, status: 'cancelled' };
+    const immediateResult = { ok: true, status: 'cancelled' as InstallSessionStatus };
+    if (cancelPromise) {
+      const p = cancelPromise.then(() => immediateResult);
+      Object.assign(p, immediateResult);
+      return p as any;
+    }
+    return immediateResult;
   }
 
   cancel(req: InstallCancelRequest): { ok: boolean; status: InstallSessionStatus } {
@@ -434,15 +526,36 @@ export class AppInstallService {
           chunkData,
         });
 
+        if (this.coreBridge) {
+          try {
+            await this.coreBridge.sendChunk({
+              sessionId: this.session.coreSessionId || this.session.installId,
+              index: chunkIndex,
+              size: chunkBuf.length,
+              data: Array.from(chunkBuf),
+            });
+          } catch (err: any) {
+            const errCode = err?.code || 'CORE_CHUNK_FAILED';
+            const userMsg = err?.userMessage || err?.message || '设备分块写入失败';
+            const wrapped = new Error(userMsg);
+            (wrapped as any).code = errCode;
+            (wrapped as any).userMessage = userMsg;
+            throw wrapped;
+          }
+        }
+
         sentChunks++;
       }
 
       try {
-        this.commit({
+        await this.commit({
           installId: this.session.installId,
           expectedHash: this.session.expectedHash,
         });
-      } catch {
+      } catch (err: any) {
+        if (err?.code || err?.userMessage) {
+          throw err;
+        }
         throw new Error('HASH_VERIFY_FAILED');
       }
 
@@ -457,7 +570,8 @@ export class AppInstallService {
       }
 
       const code =
-        err?.message === 'FILE_NOT_FOUND'
+        err?.code ||
+        (err?.message === 'FILE_NOT_FOUND'
           ? 'FILE_NOT_FOUND'
           : err?.message === 'FILE_SIZE_CHANGED'
           ? 'FILE_SIZE_CHANGED'
@@ -465,10 +579,11 @@ export class AppInstallService {
           ? 'READ_CHUNK_FAILED'
           : err?.message === 'HASH_VERIFY_FAILED'
           ? 'HASH_VERIFY_FAILED'
-          : 'TRANSFER_ERROR';
+          : 'TRANSFER_ERROR');
 
       const userMessage =
-        code === 'FILE_NOT_FOUND'
+        err?.userMessage ||
+        (code === 'FILE_NOT_FOUND'
           ? '安装包文件不存在或已被移除'
           : code === 'FILE_SIZE_CHANGED'
           ? '安装包文件大小发生变更，传输中止'
@@ -476,7 +591,7 @@ export class AppInstallService {
           ? '读取安装包分块失败'
           : code === 'HASH_VERIFY_FAILED'
           ? '安装包完整性校验不通过'
-          : '安装包处理失败';
+          : '安装包处理失败');
 
       if (this.session) {
         this.session.status = 'failed';
@@ -546,19 +661,19 @@ export function registerAppInstallIpc(
     return service.sendFileChunks(req?.installId);
   });
 
-  ipc.handle('pulse:app-install:commit', (_e, req: InstallCommitRequest) => {
+  ipc.handle('pulse:app-install:commit', async (_e, req: InstallCommitRequest) => {
     if (winGetter) service.attach(winGetter());
-    return service.commit(req);
+    return await service.commit(req);
   });
 
-  ipc.handle('pulse:app-install:cancel', (_e, req: InstallCancelRequest) => {
+  ipc.handle('pulse:app-install:cancel', async (_e, req: InstallCancelRequest) => {
     if (winGetter) service.attach(winGetter());
-    return service.cancel(req);
+    return await service.cancel(req);
   });
 
-  ipc.handle('pulse:app-install:cancel-transfer', (_e, req: { installId: string } | string) => {
+  ipc.handle('pulse:app-install:cancel-transfer', async (_e, req: { installId: string } | string) => {
     if (winGetter) service.attach(winGetter());
     const installId = typeof req === 'string' ? req : req?.installId;
-    return service.cancelFileTransfer(installId);
+    return await service.cancelFileTransfer(installId);
   });
 }
