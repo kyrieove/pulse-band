@@ -27,7 +27,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
   },
   {
     key: 'codex',
-    label: 'Codex (CLI)',
+    label: 'Codex',
     shortLabel: 'Cx',
     color: '#30d158',
     grad: ['#1f9d55', '#30d158'],
@@ -119,11 +119,11 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
           <div className="flex items-center gap-1.5 shrink-0">
             {AGENT_CONFIGS.map((cfg) => {
               const q = quotas ? quotas[cfg.key] : null;
-              const used5h = q?.pct5h;
-              const remaining5h = toRemainingPercent(used5h);
+              const remaining5h = toRemainingPercent(q?.pct5h);
+              const remaining7d = toRemainingPercent(q?.pct7d);
               const tooltip =
-                remaining5h != null
-                  ? `${cfg.label}:\n5小时剩余额度 ${remaining5h}%\n窗口已使用 ${used5h}%${!q?.authoritative ? '\n(本地估算)' : ''}`
+                remaining5h != null || remaining7d != null
+                  ? `${cfg.label}:\n5小时剩余 ${remaining5h != null ? `${remaining5h}%` : '--'}\n7天剩余 ${remaining7d != null ? `${remaining7d}%` : '--'}${!q?.authoritative ? '\n(本地估算)' : ''}`
                   : `${cfg.label}: 暂无额度数据`;
 
               return (
@@ -140,8 +140,14 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
                     }}
                   />
                   <span className="text-[var(--text-secondary)] font-medium">{cfg.shortLabel}</span>
+                  {/* 5h / 7d 两个周期在收起态也同时可见，且带周期标签避免数字含义不明 */}
+                  <span className="text-[var(--text-muted)]">5h</span>
                   <span className="text-[var(--text-primary)] font-semibold tabular-nums">
                     {remaining5h != null ? `${remaining5h}%` : '--'}
+                  </span>
+                  <span className="text-[var(--text-muted)]">7d</span>
+                  <span className="text-[var(--text-primary)] font-semibold tabular-nums">
+                    {remaining7d != null ? `${remaining7d}%` : '--'}
                   </span>
                 </div>
               );
@@ -234,9 +240,9 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
           AGENT_CONFIGS.map((cfg) => {
             const q = quotas ? quotas[cfg.key] : null;
             const isCurrentActive = activeSession?.agent === cfg.key;
-            const used5h = q?.pct5h;
-            const remaining5h = toRemainingPercent(used5h);
-            const pct7d = q?.pct7d ?? 0;
+            // 两个周期统一"剩余"口径；缺失即 null，显示 -- 且不画进度条（绝不补 0）
+            const remaining5h = toRemainingPercent(q?.pct5h);
+            const remaining7d = toRemainingPercent(q?.pct7d);
             const r5 = shortReset(q?.resetText);
             const r7 = shortReset(q?.reset7dText);
 
@@ -269,14 +275,14 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
                       5h剩余: <strong className="text-[var(--text-primary)] font-semibold">{remaining5h != null ? `${remaining5h}%` : '--'}</strong>
                       {r5 && <span className="text-[var(--text-muted)] ml-0.5">({r5})</span>}
                     </span>
-                    <span className="text-[var(--text-muted)]">
-                      7d使用: <strong className="text-[var(--text-primary)] font-semibold">{q?.pct7d != null ? `${q.pct7d}%` : '--'}</strong>
+                    <span className="text-[var(--text-secondary)]">
+                      7d剩余: <strong className="text-[var(--text-primary)] font-semibold">{remaining7d != null ? `${remaining7d}%` : '--'}</strong>
                       {r7 && <span className="text-[var(--text-muted)] ml-0.5">({r7})</span>}
                     </span>
                   </div>
                 </div>
 
-                {/* 苹果风平滑渐变进度槽 */}
+                {/* 苹果风平滑渐变进度槽：5h / 7d 各一条，无数据时不填充 */}
                 <div className="grid grid-cols-2 gap-2">
                   <div
                     className="w-full h-1.5 bg-black/10 dark:bg-black/30 rounded-full overflow-hidden border border-[var(--border-default)] p-[0.5px]"
@@ -293,12 +299,12 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
                   </div>
                   <div
                     className="w-full h-1.5 bg-black/10 dark:bg-black/30 rounded-full overflow-hidden border border-[var(--border-default)] p-[0.5px]"
-                    title={`7天窗口已使用: ${pct7d}%`}
+                    title={`7天剩余额度: ${remaining7d != null ? `${remaining7d}%` : '--'}`}
                   >
                     <div
                       className="h-full rounded-full transition-all duration-500"
                       style={{
-                        width: `${Math.min(100, Math.max(0, pct7d))}%`,
+                        width: `${Math.min(100, Math.max(0, remaining7d ?? 0))}%`,
                         background: 'linear-gradient(to right, #0077b6, #00b4d8)',
                         boxShadow: '0 0 8px rgba(0, 180, 216, 0.4)',
                       }}

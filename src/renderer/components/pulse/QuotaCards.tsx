@@ -25,7 +25,7 @@ interface QuotaMeta {
 
 const AGENTS: Array<{ key: string; label: string; color: string; glow: string }> = [
   { key: 'claude', label: 'Claude Code', color: '#D97757', glow: 'rgba(217, 119, 87, 0.4)' },
-  { key: 'codex', label: 'Codex (CLI)', color: '#10A37F', glow: 'rgba(16, 163, 127, 0.4)' },
+  { key: 'codex', label: 'Codex', color: '#10A37F', glow: 'rgba(16, 163, 127, 0.4)' },
   { key: 'antigravity', label: 'Antigravity', color: '#4285F4', glow: 'rgba(66, 133, 244, 0.4)' },
 ];
 

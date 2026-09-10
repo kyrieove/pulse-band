@@ -8,14 +8,34 @@ export interface ExtendedQuotaItem {
   value: string | number;
 }
 
+/**
+ * 单个额度周期（5 小时 / 7 天）的展示数据。
+ *
+ * 纪律：`remaining` 为 null 表示**没有数据**，界面必须显示 `--`，
+ * 不得补成 0% 或 100%。`resetText` 同理，缺失显示 `--`。
+ */
+export interface QuotaWindow {
+  remaining: number | null;
+  resetText: string | null;
+  status: 'idle' | 'warning' | 'critical';
+}
+
 export interface AgentCardData {
   id: string;
   name: string;
   status: AgentStatusType;
+  /** 兼容字段：等价于 fiveHour.remaining */
   remainingPercent?: number | null;
   /** 兼容别名 */
   primaryQuota?: number | null;
+  /** 兼容字段：等价于 fiveHour.resetText */
   resetTime?: string | null;
+  /** 5 小时周期额度 */
+  fiveHour?: QuotaWindow | null;
+  /** 7 天周期额度 */
+  sevenDay?: QuotaWindow | null;
+  /** true = 本地估算而非服务端真值，界面需显式标注 */
+  estimated?: boolean;
   currentToolName?: string | null;
   elapsedSeconds?: number | null;
   extendedQuotas?: ExtendedQuotaItem[] | null;
@@ -33,6 +53,60 @@ const fmtDuration = (sec: number): string => {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`;
+};
+
+const NO_DATA = '--';
+
+/**
+ * 单个额度周期行：标题 + 剩余百分比 + 该周期自己的重置时间 + 进度条。
+ *
+ * 两个周期都常驻显示，缺失数据不隐藏整行、也不伪造 0%/100%。
+ */
+const QuotaRow: React.FC<{ label: string; window?: QuotaWindow | null }> = ({ label, window: w }) => {
+  const remaining = w?.remaining ?? null;
+  const hasData = remaining != null;
+
+  const tone = !hasData
+    ? 'text-[var(--text-muted)]'
+    : w?.status === 'critical'
+    ? 'text-[var(--quota-critical)]'
+    : w?.status === 'warning'
+    ? 'text-[var(--quota-warning)]'
+    : 'text-[var(--text-primary)]';
+
+  const barTone =
+    w?.status === 'critical'
+      ? 'bg-[var(--quota-critical)]'
+      : w?.status === 'warning'
+      ? 'bg-[var(--quota-warning)]'
+      : 'bg-[var(--accent-primary)]';
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px] text-[var(--text-muted)] shrink-0">{label}</span>
+        <span className="flex items-baseline gap-2.5 min-w-0">
+          <span className={`text-sm font-bold tabular-nums ${tone}`}>
+            {hasData ? `${remaining}%` : NO_DATA}
+          </span>
+          <span className="text-[11px] text-[var(--text-muted)] tabular-nums flex items-center gap-1 truncate">
+            <Clock className="w-3 h-3 shrink-0" />
+            <span className="truncate">
+              重置 {hasData ? w?.resetText ?? NO_DATA : NO_DATA}
+            </span>
+          </span>
+        </span>
+      </div>
+      <div className="h-1.5 rounded-full bg-[var(--bg-app)] border border-[var(--border-default)] overflow-hidden">
+        {hasData && (
+          <div
+            className={`h-full rounded-full transition-[width] duration-300 ${barTone}`}
+            style={{ width: `${remaining}%` }}
+          />
+        )}
+      </div>
+    </div>
+  );
 };
 
 export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
@@ -59,20 +133,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
     ? '额度紧张'
     : '待命就绪';
 
-  // 剩余额度数值（兼容 remainingPercent 与 primaryQuota）
-  const remaining = data.remainingPercent ?? data.primaryQuota ?? null;
-
-  // 额度色彩（基于剩余额度或独立 quotaStatus，即便卡片为 running 状态额度依然突出告警色）
-  const isQuotaCritical =
-    data.quotaStatus === 'critical' || (remaining != null && remaining <= 5);
-  const isQuotaWarning =
-    data.quotaStatus === 'warning' || (remaining != null && remaining <= 20);
-
-  const quotaTone = isQuotaCritical
-    ? 'text-[var(--quota-critical)]'
-    : isQuotaWarning
-    ? 'text-[var(--quota-warning)]'
-    : 'text-[var(--text-primary)]';
+  // 双周期额度：优先用新字段，同时兼容旧的单周期字段
+  const fiveHour: QuotaWindow = data.fiveHour ?? {
+    remaining: data.remainingPercent ?? data.primaryQuota ?? null,
+    resetText: data.resetTime ?? null,
+    status: data.quotaStatus ?? 'idle',
+  };
+  const sevenDay: QuotaWindow =
+    data.sevenDay ?? { remaining: null, resetText: null, status: 'idle' };
 
   const hasExpandedData =
     (data.extendedQuotas && data.extendedQuotas.length > 0) ||
@@ -136,38 +204,25 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
         </div>
       </div>
 
-      {/* 核心指标行：主要剩余额度、重置时间、运行计时 */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1 text-xs">
-        {remaining != null && (
-          <div className="space-y-0.5">
-            <div className="text-[11px] text-[var(--text-muted)]">5 小时剩余额度</div>
-            <div className={`text-base font-bold tabular-nums ${quotaTone}`}>
-              {remaining}%
-            </div>
-          </div>
-        )}
-
-        {data.resetTime && (
-          <div className="space-y-0.5">
-            <div className="text-[11px] text-[var(--text-muted)] flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              <span>重置时间</span>
-            </div>
-            <div className="text-xs font-medium text-[var(--text-secondary)] tabular-nums">
-              {data.resetTime}
-            </div>
-          </div>
-        )}
-
-        {isRunning && data.elapsedSeconds != null && (
-          <div className="space-y-0.5">
-            <div className="text-[11px] text-[var(--text-muted)]">运行计时</div>
-            <div className="text-xs font-semibold text-[var(--accent-primary)] tabular-nums font-mono">
-              {fmtDuration(data.elapsedSeconds)}
-            </div>
-          </div>
-        )}
+      {/* 双周期额度：5 小时与 7 天同时可见，无需展开 */}
+      <div className="space-y-3 pt-1">
+        <QuotaRow label="5 小时剩余" window={fiveHour} />
+        <QuotaRow label="7 天剩余" window={sevenDay} />
       </div>
+
+      {/* 运行态补充信息（额度不藏在详情里，这里只放运行计时） */}
+      {isRunning && data.elapsedSeconds != null && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-[11px] text-[var(--text-muted)]">运行计时</span>
+          <span className="text-xs font-semibold text-[var(--accent-primary)] tabular-nums font-mono">
+            {fmtDuration(data.elapsedSeconds)}
+          </span>
+        </div>
+      )}
+
+      {data.estimated && (
+        <p className="text-[10px] text-[var(--text-muted)]">额度为本地估算值，仅供参考</p>
+      )}
 
       {/* 展开区域：仅当存在数据时渲染预留结构 */}
       {expanded && hasExpandedData && (

@@ -7,6 +7,7 @@ import {
   type AgentCardData,
   type AgentStatusType,
   type ExtendedQuotaItem,
+  type QuotaWindow,
   toRemainingPercent,
   resolveQuotaStatus,
 } from './AgentCard';
@@ -95,9 +96,24 @@ export const AgentSection: React.FC = () => {
     );
     const session = activeSession ?? sessions.find((s) => s.agent === key);
 
-    // 配额状态与剩余百分比（正确解释 pct5h/pct7d 为已使用百分比，转换为剩余百分比）
-    const remainingPercent = toRemainingPercent(q?.pct5h);
-    const quotaStatus = resolveQuotaStatus(q?.level5h, q?.pct5h);
+    // 双周期额度：pct5h/pct7d 是"已使用"百分比，统一转换为"剩余"。
+    // 缺失即 null，界面显示 --，绝不补成 0%/100%。
+    const fiveHour: QuotaWindow = {
+      remaining: toRemainingPercent(q?.pct5h),
+      resetText: q?.resetText?.trim() ? q.resetText : null,
+      status: resolveQuotaStatus(q?.level5h, q?.pct5h),
+    };
+    const sevenDay: QuotaWindow = {
+      remaining: toRemainingPercent(q?.pct7d),
+      resetText: q?.reset7dText ?? null,
+      status: resolveQuotaStatus(q?.level7d, q?.pct7d),
+    };
+
+    // 卡片整体告警取两个周期中更严重的一个，避免 7 天已濒危而卡片仍显示正常
+    const severity = (s: QuotaWindow['status']): number =>
+      s === 'critical' ? 2 : s === 'warning' ? 1 : 0;
+    const worst = severity(fiveHour.status) >= severity(sevenDay.status) ? fiveHour : sevenDay;
+    const quotaStatus = worst.status;
 
     // 运行态优先级最高：如果有正在运行的 session，卡片主状态为 running
     let status: AgentStatusType = 'idle';
@@ -111,34 +127,25 @@ export const AgentSection: React.FC = () => {
       status = 'idle';
     }
 
-    // 收集真实存在的额外周期额度（展开态明确区分 5 小时与 7 天窗口已使用）
+    // 展开区只放额度以外的补充信息（额度本身不再藏在详情里）
     const extendedQuotas: ExtendedQuotaItem[] = [];
-    if (q?.pct5h != null) {
-      extendedQuotas.push({
-        label: '5 小时窗口已使用',
-        value: `${q.pct5h}%`,
-      });
+    if (q?.used5h != null && q?.limit5h != null) {
+      extendedQuotas.push({ label: '5 小时用量', value: `${q.used5h} / ${q.limit5h}` });
     }
-    if (q?.pct7d != null) {
-      extendedQuotas.push({
-        label: '7 天窗口已使用',
-        value: `${q.pct7d}%`,
-      });
-    }
-    if (q?.reset7dText) {
-      extendedQuotas.push({
-        label: '7 天窗口重置',
-        value: q.reset7dText,
-      });
+    if (q?.used7d != null && q?.limit7d != null) {
+      extendedQuotas.push({ label: '7 天用量', value: `${q.used7d} / ${q.limit7d}` });
     }
 
     return {
       id: key,
       name: AGENT_DISPLAY_NAMES[key] ?? session?.title ?? key,
       status,
-      remainingPercent,
-      primaryQuota: remainingPercent,
-      resetTime: q?.resetText ?? null,
+      remainingPercent: fiveHour.remaining,
+      primaryQuota: fiveHour.remaining,
+      resetTime: fiveHour.resetText,
+      fiveHour,
+      sevenDay,
+      estimated: q != null && q.authoritative === false,
       currentToolName: activeSession?.currentTool?.name ?? null,
       elapsedSeconds: activeSession?.durationSeconds ?? null,
       extendedQuotas: extendedQuotas.length > 0 ? extendedQuotas : null,

@@ -12,9 +12,12 @@ let updateTimer: NodeJS.Timeout | null = null;
 let sessionManagerRef: SessionManager | null = null;
 let statusServerRef: StatusServer | null = null;
 
-const COLLAPSED_WIDTH = 340;
+// 收起态需要同时容纳 3 个 Agent 的 5h / 7d 两个周期（含周期标签），
+// 340px 会把第三枚徽标挤出窗口（实测溢出 133px），因此加宽到 480px。
+// 展开态与收起态同宽，避免切换时窗口宽度跳变。
+const COLLAPSED_WIDTH = 480;
 const COLLAPSED_HEIGHT = 44;
-const EXPANDED_WIDTH = 340;
+const EXPANDED_WIDTH = 480;
 const EXPANDED_HEIGHT = 240;
 
 function getBoundsFile(): string {
