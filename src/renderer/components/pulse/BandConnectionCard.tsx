@@ -15,6 +15,11 @@ export interface BandConnectionCardProps {
   connectionState?: unknown;
   rawError?: string;
   lastSyncedText?: string;
+  /** 连接/断开动作由上层注入（复用同一套 IPC，不在卡片内自建连接逻辑） */
+  onConnect?: () => void;
+  onDisconnect?: () => void;
+  busy?: boolean;
+  canConnect?: boolean;
 }
 
 /** 消毒脱敏错误信息，彻底杜绝路径、密钥与内部堆栈暴露 */
@@ -51,6 +56,10 @@ export const BandConnectionCard: React.FC<BandConnectionCardProps> = ({
   connectionState,
   rawError,
   lastSyncedText,
+  onConnect,
+  onDisconnect,
+  busy = false,
+  canConnect = false,
 }) => {
   const state = normalizeState(connectionState);
 
@@ -152,7 +161,7 @@ export const BandConnectionCard: React.FC<BandConnectionCardProps> = ({
         </div>
       )}
 
-      {/* 分割线与主操作按钮（保留 disabled，不实现连接动作） */}
+      {/* 分割线与主操作按钮（连接/断开复用 preload 的真实 IPC） */}
       <div className="pt-3 border-t border-[var(--border-default)] flex items-center justify-between text-xs text-[var(--text-muted)]">
         <span>
           连接阶段：
@@ -173,11 +182,24 @@ export const BandConnectionCard: React.FC<BandConnectionCardProps> = ({
 
         <button
           type="button"
-          disabled
-          className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--accent-primary)] text-white text-xs font-medium opacity-60 cursor-not-allowed flex items-center gap-1.5 select-none"
-          title="UI 展示阶段，连接动作暂未开放"
+          onClick={isConnected ? onDisconnect : onConnect}
+          disabled={isConnected ? busy || !onDisconnect : !canConnect}
+          title={
+            isConnected
+              ? '断开与手环的蓝牙链路'
+              : canConnect
+              ? '连接手环（会断开它与小米运动健康的连接）'
+              : '连接中或设备正忙，请稍候'
+          }
+          className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--accent-primary)] text-white text-xs font-medium flex items-center gap-1.5 select-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          <span>{isConnected ? '断开连接' : '连接手环'}</span>
+          <span>
+            {isConnected
+              ? '断开连接'
+              : state === 'connecting' || busy
+              ? '连接中…'
+              : '连接手环'}
+          </span>
           <ArrowRight className="w-3.5 h-3.5" />
         </button>
       </div>

@@ -8,6 +8,7 @@ import { BandManagementPage } from './components/pulse/BandManagementPage';
 import { SettingsPage } from './components/pulse/SettingsPage';
 import { SetupWizard } from './components/setup';
 import { MiniBar } from './components/minibar/MiniBar';
+import { useBandConnection } from './hooks/useBandConnection';
 import type { PulseOronboxState } from '../main/services/oronbox-bridge';
 
 type AppScreen = PulsePage | 'minibar';
@@ -36,6 +37,8 @@ export const App: React.FC = () => {
   const [showAgents, setShowAgents] = useState<boolean>(true);
   const [showSetup, setShowSetup] = useState<boolean>(false);
   const [state, setState] = useState<PulseOronboxState | null>(null);
+  // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
+  const band = useBandConnection();
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
     setTheme(newTheme);
@@ -139,6 +142,10 @@ export const App: React.FC = () => {
               <BandConnectionCard
                 connectionState={state?.connection.state}
                 rawError={state?.connection.error}
+                onConnect={band.connect}
+                onDisconnect={band.disconnect}
+                busy={band.busy}
+                canConnect={band.canConnect}
               />
               {showAgents && <AgentSection />}
             </div>

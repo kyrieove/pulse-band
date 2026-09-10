@@ -1,16 +1,25 @@
 import React, { useState } from 'react';
 import { Watch, Package, ChevronDown, ChevronRight, Upload } from 'lucide-react';
+import { useBandConnection } from '../../hooks/useBandConnection';
 
 export interface BandManagementPageProps {
   onStartSetup?: () => void;
 }
 
+const CONN_STATE_TEXT: Record<string, string> = {
+  connected: '已连接',
+  connecting: '连接中…',
+  disconnected: '未连接',
+  error: '连接失败',
+};
+
 export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartSetup }) => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const conn = useBandConnection();
 
   return (
     <div className="space-y-5">
-      {/* 设备状态区域骨架 */}
+      {/* 设备状态区域 */}
       <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-4 transition-colors duration-200">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -19,10 +28,11 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
             </div>
             <div>
               <h2 className="text-base font-semibold text-[var(--text-primary)]">
-                Xiaomi Smart Band 10
+                {conn.device?.name ?? 'Xiaomi Smart Band 10'}
               </h2>
               <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                已配置手环 · 状态：未连接
+                {conn.device ? '已配置手环' : '尚未载入已配对手环'} · 状态：
+                {CONN_STATE_TEXT[conn.state] ?? '未连接'}
               </p>
             </div>
           </div>
@@ -36,15 +46,30 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
           </button>
         </div>
 
+        {conn.state === 'error' && conn.error && (
+          <p className="text-xs text-[var(--status-error)] leading-relaxed">{conn.error}</p>
+        )}
+
         <div className="pt-3 border-t border-[var(--border-default)] flex items-center justify-between text-xs text-[var(--text-muted)]">
           <span>日常连接与同步管理</span>
-          <button
-            type="button"
-            disabled
-            className="px-4 py-1.5 rounded-[var(--radius-md)] bg-[var(--accent-primary)] text-white text-xs font-medium opacity-60 cursor-not-allowed"
-          >
-            连接
-          </button>
+          <div className="flex items-center gap-2 select-none">
+            <button
+              type="button"
+              onClick={conn.connect}
+              disabled={!conn.canConnect}
+              className="px-4 py-1.5 rounded-[var(--radius-md)] bg-[var(--accent-primary)] text-white text-xs font-medium cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {conn.state === 'connecting' ? '连接中…' : '连接'}
+            </button>
+            <button
+              type="button"
+              onClick={conn.disconnect}
+              disabled={conn.state !== 'connected' || conn.busy}
+              className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-strong)] text-xs text-[var(--text-secondary)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              断开
+            </button>
+          </div>
         </div>
       </section>
 
