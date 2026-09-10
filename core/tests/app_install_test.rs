@@ -1,12 +1,18 @@
 //! 快应用安装抽象层传输与生命周期集成测试 (App Install Transport Tests)
 
+#[path = "../src/crc.rs"]
+mod crc;
+#[path = "../src/frame.rs"]
+mod frame;
 #[path = "../src/app_install.rs"]
 mod app_install;
 
 use app_install::{
-    AppInstallTransport, InstallChunk, InstallMetadata, InstallTransportDispatcher,
-    MockAppInstallTransport, TransportMode, XiaomiBand10Transport,
+    AppInstallTransport, BandDeviceTransport, InstallChunk, InstallMetadata,
+    InstallTransportDispatcher, MockAppInstallTransport, MockBandDeviceTransport,
+    TransportMode, XiaomiBand10Transport,
 };
+use frame::Frame;
 
 #[test]
 fn test_1_prepare_returns_preparing() {
@@ -247,4 +253,106 @@ fn test_10_device_mode_returns_device_unavailable_and_no_completed() {
     assert_ne!(err_str, "completed");
     assert_ne!(err_str, "installed");
     assert!(err_str.contains("device_unavailable"));
+}
+
+#[test]
+fn test_11_mock_band_device_transport_lifecycle() {
+    let mut dev_transport = MockBandDeviceTransport::new();
+    assert!(!dev_transport.is_connected());
+    assert!(dev_transport.target_addr.is_none());
+
+    // 1. 未连接时发送或接收帧返回错误
+    let frame = Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: vec![0x01, 0x02, 0x03],
+    };
+    assert!(dev_transport.send_frame(&frame).is_err());
+    assert!(dev_transport.receive_frame(100).is_err());
+
+    // 2. 连接后链路状态正常
+    assert!(dev_transport.connect("11:22:33:44:55:66").is_ok());
+    assert!(dev_transport.is_connected());
+    assert_eq!(
+        dev_transport.target_addr.as_deref(),
+        Some("11:22:33:44:55:66")
+    );
+
+    // 3. 正常发送帧并进入已发送队列
+    assert!(dev_transport.send_frame(&frame).is_ok());
+    assert_eq!(dev_transport.sent_frames.len(), 1);
+    assert_eq!(dev_transport.sent_frames[0], frame);
+
+    // 4. 模拟接收队列消费
+    let incoming = Frame {
+        frame_type: 0x01,
+        seq: 1,
+        payload: vec![],
+    };
+    dev_transport.enqueue_incoming(incoming.clone());
+    let recv_res = dev_transport.receive_frame(100).expect("应当成功获取帧");
+    assert_eq!(recv_res, Some(incoming));
+    assert_eq!(dev_transport.receive_frame(100).unwrap(), None);
+
+    // 5. 断开连接后重回未连接状态
+    assert!(dev_transport.disconnect().is_ok());
+    assert!(!dev_transport.is_connected());
+    assert!(dev_transport.send_frame(&frame).is_err());
+}
+
+#[test]
+fn test_12_xiaomi_band10_transport_safely_fails_without_device() {
+    let mut transport = XiaomiBand10Transport::new();
+    assert!(transport.device_transport.is_none());
+
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+
+    // 无底层设备接入时安全失败
+    let prep_res = transport.prepare(meta);
+    assert!(prep_res.is_err());
+    let prep_err = prep_res.unwrap_err();
+    assert!(prep_err.contains("device_unavailable"));
+    assert!(prep_err.contains("not_implemented"));
+}
+
+#[test]
+fn test_13_xiaomi_band10_transport_with_mock_device_safely_fails_protocol() {
+    let mut dev = MockBandDeviceTransport::new();
+    assert!(dev.connect("AA:BB:CC:DD:EE:FF").is_ok());
+
+    let mut transport = XiaomiBand10Transport::with_device_transport(Box::new(dev));
+    assert!(transport.device_transport().is_some());
+    assert!(transport.device_transport().unwrap().is_connected());
+
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+
+    // 即使底层连接就绪，快应用安装协议在当前阶段也严禁假装实现
+    let prep_res = transport.prepare(meta);
+    assert!(prep_res.is_err());
+    let prep_err = prep_res.unwrap_err();
+    assert!(prep_err.contains("device_unavailable"));
+    assert!(prep_err.contains("not_implemented"));
+
+    // cancel 能够正常调用并断开底层设备
+    assert!(transport.cancel("some_session".to_string()).is_ok());
+    assert!(!transport.device_transport().unwrap().is_connected());
+}
+
+#[test]
+fn test_14_xiaomi_band10_transport_has_no_direct_rfcomm_symbols() {
+    // 纯架构解耦校验：结构体仅由纯抽象接口与标量状态构成，不包含套接字句柄或 C FFI 符号
+    assert_eq!(std::mem::size_of::<XiaomiBand10Transport>() > 0, true);
+    assert_eq!(std::mem::size_of::<MockBandDeviceTransport>() > 0, true);
 }

@@ -6,8 +6,11 @@
 //! - 禁止真实手环连接或修改设备协议
 //! - 阶段状态仅允许 preparing / transferring / verifying / cancelled，禁止 completed 伪状态
 
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
+
+use crate::frame::Frame;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -180,32 +183,138 @@ impl AppInstallTransport for MockAppInstallTransport {
     }
 }
 
-/// 小米手环 10 快应用原生安装传输适配层（占位骨架，未接入真实硬件）
+/// 手环底层设备通信抽象 Trait
+///
+/// 职责：
+/// - connect: 建立底层传输连接
+/// - disconnect: 断开底层连接
+/// - is_connected: 链路状态检测
+/// - send_frame: 发送单个基础数据帧
+/// - receive_frame: 接收单个基础数据帧（带超时机制）
+///
+/// 纪律要求：
+/// - 禁止包含小米快应用安装业务协议实现
+/// - 禁止修改现有 RFCOMM / session 状态机
+/// - 禁止发送真实安装数据
+#[allow(dead_code)]
+pub trait BandDeviceTransport: std::fmt::Debug + Send + Sync {
+    fn connect(&mut self, target_addr: &str) -> Result<()>;
+    fn disconnect(&mut self) -> Result<()>;
+    fn is_connected(&self) -> bool;
+    fn send_frame(&mut self, frame: &Frame) -> Result<()>;
+    fn receive_frame(&mut self, timeout_ms: u64) -> Result<Option<Frame>>;
+}
+
+/// 用于测试与离线模拟的手环底层通信 Mock 实现
+#[allow(dead_code)]
+#[derive(Debug, Default, Clone)]
+pub struct MockBandDeviceTransport {
+    pub connected: bool,
+    pub target_addr: Option<String>,
+    pub sent_frames: Vec<Frame>,
+    pub incoming_queue: VecDeque<Frame>,
+}
+
+#[allow(dead_code)]
+impl MockBandDeviceTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn enqueue_incoming(&mut self, frame: Frame) {
+        self.incoming_queue.push_back(frame);
+    }
+}
+
+impl BandDeviceTransport for MockBandDeviceTransport {
+    fn connect(&mut self, target_addr: &str) -> Result<()> {
+        self.connected = true;
+        self.target_addr = Some(target_addr.to_string());
+        Ok(())
+    }
+
+    fn disconnect(&mut self) -> Result<()> {
+        self.connected = false;
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connected
+    }
+
+    fn send_frame(&mut self, frame: &Frame) -> Result<()> {
+        if !self.connected {
+            return Err("device_not_connected: 底层设备未连接".to_string());
+        }
+        self.sent_frames.push(frame.clone());
+        Ok(())
+    }
+
+    fn receive_frame(&mut self, _timeout_ms: u64) -> Result<Option<Frame>> {
+        if !self.connected {
+            return Err("device_not_connected: 底层设备未连接".to_string());
+        }
+        Ok(self.incoming_queue.pop_front())
+    }
+}
+
+/// 小米手环 10 快应用原生安装传输适配层（内部依赖 BandDeviceTransport 抽象）
 ///
 /// 纪律要求：
 /// - 只能作为设备适配占位层
-/// - 禁止 RFCOMM 调用
-/// - 禁止 BLE 调用
+/// - 禁止直接调用 RFCOMM
+/// - 禁止直接调用 BLE
 /// - 禁止修改 live.rs / session.rs
 /// - 严禁发送真实数据
-/// - 返回 device_unavailable / not_implemented
+/// - 无真实设备时安全失败（返回 device_unavailable / not_implemented）
 /// - 禁止返回 completed / installed
 #[derive(Debug, Default)]
 pub struct XiaomiBand10Transport {
     pub active_session_id: Option<String>,
+    pub device_transport: Option<Box<dyn BandDeviceTransport>>,
 }
 
+#[allow(dead_code)]
 impl XiaomiBand10Transport {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             active_session_id: None,
+            device_transport: None,
         }
+    }
+
+    pub fn with_device_transport(transport: Box<dyn BandDeviceTransport>) -> Self {
+        Self {
+            active_session_id: None,
+            device_transport: Some(transport),
+        }
+    }
+
+    pub fn set_device_transport(&mut self, transport: Box<dyn BandDeviceTransport>) {
+        self.device_transport = Some(transport);
+    }
+
+    pub fn device_transport(&self) -> Option<&dyn BandDeviceTransport> {
+        self.device_transport.as_deref()
+    }
+
+    pub fn device_transport_mut(&mut self) -> Option<&mut (dyn BandDeviceTransport + 'static)> {
+        self.device_transport.as_deref_mut()
     }
 }
 
 impl AppInstallTransport for XiaomiBand10Transport {
     fn prepare(&mut self, _metadata: InstallMetadata) -> Result<InstallSession> {
-        Err("device_unavailable: 小米手环10硬件传输层尚未接入 (not_implemented)".to_string())
+        match &self.device_transport {
+            None => Err("device_unavailable: 小米手环10底层设备通信未接入 (not_implemented)".to_string()),
+            Some(dt) => {
+                if !dt.is_connected() {
+                    Err("device_unavailable: 小米手环10底层设备未连接 (not_implemented)".to_string())
+                } else {
+                    Err("device_unavailable: 小米手环10快应用安装协议尚未实现 (not_implemented)".to_string())
+                }
+            }
+        }
     }
 
     fn send_chunk(&mut self, _chunk: InstallChunk) -> Result<ChunkAck> {
@@ -218,6 +327,9 @@ impl AppInstallTransport for XiaomiBand10Transport {
 
     fn cancel(&mut self, _session_id: String) -> Result<()> {
         self.active_session_id = None;
+        if let Some(dt) = self.device_transport.as_mut() {
+            let _ = dt.disconnect();
+        }
         Ok(())
     }
 }
@@ -242,7 +354,7 @@ impl InstallTransportDispatcher {
         Self::Mock(MockAppInstallTransport::new())
     }
 
-    pub const fn new_device() -> Self {
+    pub fn new_device() -> Self {
         Self::Device(XiaomiBand10Transport::new())
     }
 
