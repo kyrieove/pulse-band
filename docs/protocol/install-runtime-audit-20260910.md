@@ -201,7 +201,76 @@ rfcomm recv -> frame decode -> business decrypt (live.rs)
   只有同时命中才判成功。
 
 仍未完成：
-- **未做真机安装验证**，整条链路只经离线测试与 Mock 链路验证。
 - 已安装列表请求体按真机抓包 Pkt #176 构造为空 ThirdpartyApp，响应解析字段已实证；
   但"查询请求需要携带哪些字段设备才会应答"未在真机上确认。
 - `core/src/session.rs:179` 仍以 `"OronBox"` 作 companion 名（冻结文件，未改）。
+- Mass 分片编码与上游源码证据不一致（见第 9 节），是当前真机安装失败的直接原因。
+
+---
+
+## 9. 第一次真机安装实测（2026-09-10，小米手环 10）
+
+### 9.1 结果
+
+链路推进到**分片全部下发完毕**，但设备始终未上报安装结果，`commit` 以 `unknown` 结束。
+
+关键日志（真实设备 `core.log` 原文摘录）：
+
+```text
+install: prepare 开始 package=com.codeisland.band version_code=26 file_size=255523
+install: 下行 seq=2 明文=36B 帧=46B
+（prepare 成功 —— 否则不会有后续分片，说明手环应答了 type=20 id=1）
+install: chunk #499/500 已下发 (累计 255523B)     ← 500 片全部发出，字节数等于完整文件
+install: 下行 seq=237 明文=41B 帧=51B
+install: commit 开始，等待设备 id=2 安装结果
+install: commit 结束 status=unknown              ← 5 秒内没有任何 id=2
+```
+
+上一轮 `prepare` 因业务帧被前置 L2 前缀 `01 01` 而超时；去掉前缀后（`ffa4835`）
+`prepare` 一次通过，明文长度从 38B 变为 36B。
+
+### 9.2 本轮已确认（真机实证）
+
+| 结论 | 依据 |
+|---|---|
+| WearPacket 业务明文**不带** L2 前缀 | 去前缀后手环立即应答 id=1 |
+| `seq_out` 真实递增、下行真实写入 socket | 日志 seq 连续，累计字节数与会话计算一致 |
+| 500 片分片全部下发 | `累计 255523B` = 文件大小 |
+| 设备**未**上报 id=2 | `commit 结束 status=unknown` |
+
+### 9.3 当前 Mass 分片实际发出的字节
+
+```text
+L2 头:   02 01
+分片头:  total_parts[u16 LE] | current_part[u16 LE]   (current_part 从 1 开始)
+分片体:  原始 RPK 文件切片（512 字节），无附加头、无 CRC32
+```
+
+与上游源码证据的包体结构不一致。`core/src/install/xiaomi/mass.rs` 里**已经实现了正确的
+包体构造函数** `build_mass_inner_payload()`：
+
+```text
+00 | 0x40 | MD5[16] | file_length[u32 LE] | file_bytes | CRC32[u32 LE]
+```
+
+它有测试覆盖（`test_38_mass_inner_payload_crc32_and_validation`），
+**但安装流程从未调用它**——只有测试在用，分片体直接用了原始文件字节。
+
+另有三处与上游流程不一致：
+
+1. **未等待/校验 Mass Prepare 响应**：源码流程要求 Mass 准备后检查 READY、分片长度与续传响应；
+   当前发完 Mass Prepare 立即开始发分片。
+2. **未等待逐片 SAR ACK**：源码中"进度来自 SAR ACK 消费"，当前是盲发。
+3. **`expected_slice_length` 未被使用**：已从 id=1 响应解析并存入协议状态，
+   但分片尺寸固定按客户端 512 字节块切分。
+
+### 9.4 未验证的假设（禁止当作事实）
+
+- 分片是否真的需要 L2 头 `02 01`：Pb 通道已实证**不需要**前缀，Mass 是否不同未知。
+- 包体头 `00|40|MD5|length` 是只在第 1 片携带，还是先拼出完整 body 再整体切片。
+- `total_parts` 按组装后的 body（文件 + 26 字节头尾）计算，还是按原始文件长度计算。
+- Band 10 走 `mass_transfer.dart` 的常规分支还是 SPP v1 分支。
+- Mass ACK 的线上格式与发送窗口。
+
+**结论：本轮不修改 Mass 编码。** 以上假设缺可核验依据，按代码纪律不允许猜测实现；
+需先取得 `mass_transfer.dart` 的确切语义或一次真实安装抓包。
