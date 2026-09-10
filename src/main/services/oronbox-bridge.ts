@@ -344,7 +344,6 @@ export class OronBoxBridge {
     if (!this.ready) {
       this.ready = (async () => {
         await this.client.start();
-        await this.client.call('settings.set', { key: 'auto_reconnect', value: false });
         await this.applyBootMode();
         if (!this.pollTimer) this.pollTimer = setInterval(() => void this.refreshAll(), 5_000);
         await this.refreshAll();
