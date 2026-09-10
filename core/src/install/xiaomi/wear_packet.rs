@@ -1,8 +1,7 @@
 //! 小米 WearPacket 基础报文封装与编解码
 //!
 //! 依据源码证据：
-//! - `OronBox/protos/xiaomi/wear.proto`
-//! - `AstroBox-NG-Module-Pb/protos/xiaomi/wear.proto`
+//! - `wear.proto`
 
 use super::super::model::Result;
 use super::mass::Mass;

@@ -2051,3 +2051,197 @@ fn test_encrypted_payload_path() {
     assert_eq!(session.outgoing_install_frames.len(), 1);
     assert_eq!(&session.outgoing_install_frames[0].payload[0..2], &BIZ_PREFIX);
 }
+
+#[test]
+fn test_runtime_bridge_send_path() {
+    use app_install::xiaomi::*;
+
+    let mut bridge = XiaomiInstallRuntimeBridge::new();
+    let mut ctx = DownlinkCtx::new(
+        0,
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00],
+        7,
+    );
+
+    // 验证初始状态与无冗余连接
+    assert_eq!(bridge.state, RuntimeBridgeState::Disconnected);
+    assert_eq!(bridge.has_duplicate_connection(), false);
+    assert_eq!(bridge.install_session.underlying_handle, None);
+
+    // 构造下行明文 L2 报文 (安装请求)
+    let req_pb = encode_install_request("com.test.runtime", 1, 4096).unwrap();
+    let plaintext_l2 = L2Packet::pb_write(req_pb).to_bytes();
+
+    // 通过 DownlinkCtx 发送
+    let frame = bridge.send_install_packet(&mut ctx, &plaintext_l2).expect("send_install_packet 应当成功");
+
+    // 验证状态机流转与 Frame 结构
+    assert_eq!(bridge.state, RuntimeBridgeState::Sending);
+    assert_eq!(frame.frame_type, 0x03);
+    assert_eq!(frame.seq, 7);
+    assert_eq!(ctx.seq_out, 8); // seq_out 自增
+    assert_eq!(&frame.payload[0..2], &BIZ_PREFIX);
+
+    // 验证解密后明文与原 L2 完全一致
+    let decrypted = biz_stream(&ctx.enc_key, &frame.payload[2..]);
+    assert_eq!(decrypted, plaintext_l2);
+
+    // 确认：没有创建第二个 socket
+    assert_eq!(bridge.has_duplicate_connection(), false);
+    assert_eq!(bridge.install_session.outgoing_install_frames.len(), 1);
+}
+
+#[test]
+fn test_runtime_bridge_receive_install_result() {
+    use app_install::xiaomi::*;
+
+    let mut bridge = XiaomiInstallRuntimeBridge::new();
+    let enc_key = [0x12; 16];
+    let dec_key = [0x34; 16];
+    bridge.install_session.set_crypto_keys(enc_key, dec_key);
+    bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
+    bridge.state = RuntimeBridgeState::Transferring;
+
+    // 构造真实结果报文：type=20, id=2 且 result_code == 0
+    let app_res = AppInstallerResult::new(InstallResultCode::Success, Some("com.test.runtime".to_string()));
+    let wp = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(app_res));
+    let plain_l2 = L2Packet::pb_write(wp.encode()).to_bytes();
+    let enc_payload = business_frame_payload(&dec_key, &plain_l2);
+
+    let frame = Frame {
+        frame_type: 0x03,
+        seq: 42,
+        payload: enc_payload,
+    };
+
+    // 派发到全局入站队列并驱动 bridge 接收
+    clear_global_install_events();
+    dispatch_install_frame_event(InstallFrameEvent::Incoming(frame));
+
+    // 轮询安装结果
+    let res = bridge.poll_install_result().expect("poll_install_result 应当成功");
+    assert!(res.is_some());
+    assert_eq!(res.unwrap().status, "completed");
+
+    // 严格断言：状态变更为 Completed
+    assert_eq!(bridge.state, RuntimeBridgeState::Completed);
+}
+
+#[test]
+fn test_runtime_bridge_failure_state() {
+    use app_install::xiaomi::*;
+
+    let mut bridge = XiaomiInstallRuntimeBridge::new();
+    let enc_key = [0x12; 16];
+    let dec_key = [0x34; 16];
+    bridge.install_session.set_crypto_keys(enc_key, dec_key);
+    bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
+    bridge.state = RuntimeBridgeState::Transferring;
+
+    // 构造失败报文：type=20, id=2 且 code == Failed (1) (result != 0)
+    let app_res = AppInstallerResult::new(InstallResultCode::Failed, Some("com.test.runtime".to_string()));
+    let wp = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(app_res));
+    let plain_l2 = L2Packet::pb_write(wp.encode()).to_bytes();
+    let enc_payload = business_frame_payload(&dec_key, &plain_l2);
+
+    let frame = Frame {
+        frame_type: 0x03,
+        seq: 43,
+        payload: enc_payload,
+    };
+
+    clear_global_install_events();
+    dispatch_install_frame_event(InstallFrameEvent::Incoming(frame));
+
+    let res = bridge.poll_install_result().expect("poll_install_result 应当返回");
+    assert!(res.is_some());
+    assert_eq!(res.unwrap().status, "failed");
+
+    // 严格断言：状态变更为 Failed，绝不进入 Completed 假成功
+    assert_eq!(bridge.state, RuntimeBridgeState::Failed);
+    assert_ne!(bridge.state, RuntimeBridgeState::Completed);
+}
+
+#[test]
+fn test_runtime_bridge_normal_business_isolation() {
+    use app_install::xiaomi::*;
+
+    let mut bridge = XiaomiInstallRuntimeBridge::new();
+    let enc_key = [0x12; 16];
+    let dec_key = [0x34; 16];
+    bridge.install_session.set_crypto_keys(enc_key, dec_key);
+    bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
+
+    // 1. fetch 报文 (日常 interconnect 消息, id=9 SEND_WEAR_MESSAGE)
+    let wp_fetch = WearPacket::new(WearPacketType::ThirdpartyApp, 9);
+    let plain_fetch = L2Packet::pb_write(wp_fetch.encode()).to_bytes();
+    let frame_fetch = Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: business_frame_payload(&dec_key, &plain_fetch),
+    };
+
+    // 2. id=6 报文 (REQUEST_PHONE_APP_STATUS 状态查询)
+    let wp_id6 = WearPacket::new(WearPacketType::ThirdpartyApp, 6);
+    let plain_id6 = L2Packet::pb_write(wp_id6.encode()).to_bytes();
+    let frame_id6 = Frame {
+        frame_type: 0x03,
+        seq: 2,
+        payload: business_frame_payload(&dec_key, &plain_id6),
+    };
+
+    // 3. id=8 报文 (PHONE_APP_MESSAGE 业务消息)
+    let wp_id8 = WearPacket::new(WearPacketType::ThirdpartyApp, 8);
+    let plain_id8 = L2Packet::pb_write(wp_id8.encode()).to_bytes();
+    let frame_id8 = Frame {
+        frame_type: 0x03,
+        seq: 3,
+        payload: business_frame_payload(&dec_key, &plain_id8),
+    };
+
+    // 派发全部 3 个日常业务帧到全局队列
+    clear_global_install_events();
+    dispatch_install_frame_event(InstallFrameEvent::Incoming(frame_fetch));
+    dispatch_install_frame_event(InstallFrameEvent::Incoming(frame_id6));
+    dispatch_install_frame_event(InstallFrameEvent::Incoming(frame_id8));
+
+    // 尝试拉取安装帧
+    let install_frame = bridge.receive_frame().unwrap();
+    assert!(install_frame.is_none());
+
+    // 严格断言：日常报文绝不进入 install queue，全部隔离分流到 normal_message_queue
+    assert_eq!(bridge.install_session.incoming_install_queue.len(), 0);
+    assert_eq!(bridge.install_session.normal_message_queue.len(), 3);
+}
+
+#[test]
+fn test_no_oronbox_dependency() {
+    let files_to_check = [
+        "src/install/xiaomi/runtime_bridge.rs",
+        "src/install/xiaomi/protocol.rs",
+        "src/install/xiaomi/device_session.rs",
+        "src/install/xiaomi/mass.rs",
+        "src/install/xiaomi/l2.rs",
+        "src/install/xiaomi/thirdparty_app.rs",
+        "src/install/xiaomi/wear_packet.rs",
+        "src/install/xiaomi/codec.rs",
+        "src/install/xiaomi/wire.rs",
+    ];
+
+    let forbidden_patterns = ["oronbox", "install.local"];
+
+    for file_rel in files_to_check {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file_rel);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("无法读取文件 {:?}: {e}", path));
+        let lower = content.to_lowercase();
+        for pattern in forbidden_patterns {
+            assert!(
+                !lower.contains(pattern),
+                "违规依赖检测失败: 文件 {:?} 包含了禁用关键字 {:?}",
+                file_rel,
+                pattern
+            );
+        }
+    }
+}

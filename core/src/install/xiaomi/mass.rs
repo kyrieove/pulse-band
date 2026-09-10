@@ -1,9 +1,9 @@
 //! 小米 Mass 传输数据模型与报文装配
 //!
 //! 依据源码证据：
-//! - `OronBox/protos/xiaomi/wear_mass.proto`
-//! - `OronBox/lib/src/protocols/xiaomi/packet/mass_packet.dart`
-//! - `OronBox/lib/src/protocols/xiaomi/transport/mass_transfer.dart`
+//! - `wear_mass.proto`
+//! - `wear_mass_packet (MassPacket)`
+//! - `wear_mass_transfer (MassTransferPipeline)`
 
 use super::super::model::Result;
 use super::wire::*;

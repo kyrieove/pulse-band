@@ -16,6 +16,7 @@ pub mod wear_packet;
 pub mod codec;
 pub mod protocol;
 pub mod device_session;
+pub mod runtime_bridge;
 
 pub use l2::*;
 pub use thirdparty_app::*;
@@ -24,6 +25,7 @@ pub use wear_packet::*;
 pub use codec::*;
 pub use protocol::*;
 pub use device_session::*;
+pub use runtime_bridge::*;
 
 use serde::{Deserialize, Serialize};
 

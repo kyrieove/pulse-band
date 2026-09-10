@@ -317,7 +317,7 @@ fn connect_rfcomm(mac_u64: u64) -> Result<usize, String> {
     Ok(sock)
 }
 
-fn send_all(sock: usize, data: &[u8]) -> Result<(), String> {
+pub(crate) fn send_all(sock: usize, data: &[u8]) -> Result<(), String> {
     let n = unsafe { rfcomm::send(sock, data.as_ptr(), data.len() as i32, 0) };
     if n != data.len() as i32 {
         return Err(format!("send 失败 sent={n}"));
@@ -611,6 +611,10 @@ fn run_pump_loop(core: &Core, sock: usize, dec_key: &[u8; 16], rx: &mut Vec<u8>)
                     }
                     // 业务/握手数据帧：先回传输层 ACK（seq 回显），再处理。
                     let _ = ack_frame(sock, frame.seq);
+                    // 阶段 21：向快应用安装 Runtime Bridge 事件队列派发入站业务帧
+                    crate::install::xiaomi::runtime_bridge::dispatch_install_frame_event(
+                        crate::install::xiaomi::runtime_bridge::InstallFrameEvent::Incoming(frame.clone()),
+                    );
                     if !frame.payload.starts_with(&BIZ_PREFIX) {
                         continue;
                     }

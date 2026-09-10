@@ -1,7 +1,7 @@
 //! L2 数据包通道与操作码模型 (L2 Packet & Channel Framing)
 //!
 //! 依据源码证据：
-//! - `OronBox/lib/src/protocols/xiaomi/packet/l2_packet.dart`
+//! - `wear_l2_packet (L2Packet Framing)`
 
 use super::super::model::Result;
 

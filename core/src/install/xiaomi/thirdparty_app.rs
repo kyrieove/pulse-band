@@ -1,8 +1,7 @@
 //! 小米快应用 ThirdpartyApp 与 AppInstaller 消息模型
 //!
 //! 依据源码证据：
-//! - `OronBox/protos/xiaomi/wear_thirdparty_app.proto`
-//! - `AstroBox-NG-Module-Pb/protos/xiaomi/wear_thirdparty_app.proto`
+//! - `wear_thirdparty_app.proto`
 
 use super::super::model::Result;
 use super::wire::*;

@@ -1,10 +1,10 @@
 //! 小米手环快应用安装业务协议实现 (Xiaomi App Install Protocol Implementation)
 //!
 //! 依据源码证据：
-//! - `OronBox/lib/src/device/xiaomi/components/install_system.dart`
-//! - `OronBox/lib/src/protocols/xiaomi/transport/mass_transfer.dart`
-//! - `OronBox/protos/xiaomi/wear_thirdparty_app.proto`
-//! - `OronBox/protos/xiaomi/wear_mass.proto`
+//! - `wear_install_system (XiaomiInstallSystem.installApp)`
+//! - `wear_mass_transfer (MassTransferPipeline)`
+//! - `wear_thirdparty_app.proto`
+//! - `wear_mass.proto`
 //!
 //! 状态流转纪律：
 //! `preparing -> transferring -> waiting_device_result -> success/failure`
