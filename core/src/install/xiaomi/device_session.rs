@@ -13,11 +13,44 @@
 //! - 严禁返回 completed 或 installed 假成功状态
 
 use std::collections::VecDeque;
+use aes::cipher::{KeyIvInit, StreamCipher};
+use aes::Aes128;
+use ctr::Ctr128BE;
+
 use crate::frame::Frame;
 use super::super::model::Result;
 use super::super::transport::BandDeviceTransport;
 use super::l2::{L2Channel, L2Packet};
 use super::wear_packet::{WearPacket, WearPacketType};
+
+type BizCtr = Ctr128BE<Aes128>;
+
+/// 业务帧前缀标志（0x01, 0x02）
+pub const BIZ_PREFIX: [u8; 2] = [0x01, 0x02];
+
+/// 对业务载荷做 AES-128-CTR (IV=key) 流加解密
+pub fn biz_stream(key: &[u8; 16], data: &[u8]) -> Vec<u8> {
+    let mut buf = data.to_vec();
+    let mut cipher = BizCtr::new_from_slices(key, key).expect("AES-128-CTR key+IV 须为 16 字节");
+    cipher.apply_keystream(&mut buf);
+    buf
+}
+
+/// 解密业务数据帧载荷（01 02 || ct -> plaintext）
+pub fn decrypted_business_payload(key: &[u8; 16], payload: &[u8]) -> Option<Vec<u8>> {
+    if payload.len() < 2 || payload[0..2] != BIZ_PREFIX {
+        return None;
+    }
+    Some(biz_stream(key, &payload[2..]))
+}
+
+/// 封装业务明文为带 01 02 前缀与 CTR 密文的 payload
+pub fn business_frame_payload(key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + plaintext.len());
+    out.extend_from_slice(&BIZ_PREFIX);
+    out.extend_from_slice(&biz_stream(key, plaintext));
+    out
+}
 
 /// 检测指定载荷是否归属于快应用安装业务（过滤与分流规则）
 ///
@@ -82,6 +115,82 @@ fn is_wear_packet_install(wp: &WearPacket) -> bool {
     }
 }
 
+/// 快应用安装帧路由分发层 (Install Frame Router)
+///
+/// 职责：
+/// 1. 业务帧加解密通道支持 (Encrypted Payload Path: AES-128-CTR)
+/// 2. 安装帧编码 (Install Frame Encode: L2/WearPacket -> Wire Frame)
+/// 3. 安装报文路由与普通报文隔离 (Install Frame Routing & Normal Frame Isolation)
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct InstallFrameRouter {
+    pub enc_key: Option<[u8; 16]>,
+    pub dec_key: Option<[u8; 16]>,
+}
+
+#[allow(dead_code)]
+impl InstallFrameRouter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_keys(enc_key: [u8; 16], dec_key: [u8; 16]) -> Self {
+        Self {
+            enc_key: Some(enc_key),
+            dec_key: Some(dec_key),
+        }
+    }
+
+    /// 编码安装下行数据帧（支持明文与 AES-128-CTR 加密两种路径）
+    pub fn encode_install_frame(&self, plaintext_l2: &[u8], seq: u8) -> Frame {
+        let payload = if let Some(key) = &self.enc_key {
+            business_frame_payload(key, plaintext_l2)
+        } else {
+            plaintext_l2.to_vec()
+        };
+        Frame {
+            frame_type: 0x03,
+            seq,
+            payload,
+        }
+    }
+
+    /// 解析上行帧明文：若为加密业务帧 (01 02 || ciphertext) 且配置了 dec_key 则执行解密；否则提取有效载荷
+    pub fn resolve_payload(&self, frame: &Frame) -> Vec<u8> {
+        if frame.payload.len() >= 2 && frame.payload[0..2] == BIZ_PREFIX {
+            if let Some(key) = &self.dec_key {
+                if let Some(plain) = decrypted_business_payload(key, &frame.payload) {
+                    return plain;
+                }
+            }
+            return frame.payload[2..].to_vec();
+        }
+        frame.payload.clone()
+    }
+
+    /// 判定给定帧是否归属于安装业务协议
+    pub fn is_install_frame(&self, frame: &Frame) -> bool {
+        let plain = self.resolve_payload(frame);
+        filter_install_response(&plain)
+    }
+
+    /// 将收到的帧路由至安装队列或普通业务队列
+    pub fn route_frame(
+        &self,
+        frame: Frame,
+        install_queue: &mut VecDeque<Frame>,
+        normal_queue: &mut VecDeque<Frame>,
+    ) -> bool {
+        if self.is_install_frame(&frame) {
+            install_queue.push_back(frame);
+            true
+        } else {
+            normal_queue.push_back(frame);
+            false
+        }
+    }
+}
+
 /// 小米快应用安装设备会话适配器
 ///
 /// 架构定位：
@@ -100,6 +209,7 @@ pub struct XiaomiInstallDeviceSession {
     pub shared_connection: bool,
     pub duplicate_connection_created: bool,
     pub underlying_handle: Option<usize>,
+    pub router: InstallFrameRouter,
     pub outgoing_install_frames: VecDeque<Frame>,
     pub incoming_install_queue: VecDeque<Frame>,
     pub normal_message_queue: VecDeque<Frame>,
@@ -114,6 +224,7 @@ impl XiaomiInstallDeviceSession {
             shared_connection: true,
             duplicate_connection_created: false,
             underlying_handle: None,
+            router: InstallFrameRouter::new(),
             outgoing_install_frames: VecDeque::new(),
             incoming_install_queue: VecDeque::new(),
             normal_message_queue: VecDeque::new(),
@@ -128,10 +239,19 @@ impl XiaomiInstallDeviceSession {
             shared_connection: true,
             duplicate_connection_created: false,
             underlying_handle: Some(handle),
+            router: InstallFrameRouter::new(),
             outgoing_install_frames: VecDeque::new(),
             incoming_install_queue: VecDeque::new(),
             normal_message_queue: VecDeque::new(),
         }
+    }
+
+    pub fn set_crypto_keys(&mut self, enc_key: [u8; 16], dec_key: [u8; 16]) {
+        self.router = InstallFrameRouter::with_keys(enc_key, dec_key);
+    }
+
+    pub fn encode_install_frame(&self, plaintext_l2: &[u8], seq: u8) -> Frame {
+        self.router.encode_install_frame(plaintext_l2, seq)
     }
 
     /// 显式绑定已认证会话
@@ -162,13 +282,11 @@ impl XiaomiInstallDeviceSession {
 
     /// 分发传入帧：若归属安装业务则推入安装响应队列；若为日常业务则推入普通消息队列，保证日常业务完全不被拦截
     pub fn dispatch_incoming_frame(&mut self, frame: Frame) -> bool {
-        if filter_install_response(&frame.payload) {
-            self.incoming_install_queue.push_back(frame);
-            true
-        } else {
-            self.normal_message_queue.push_back(frame);
-            false
-        }
+        self.router.route_frame(
+            frame,
+            &mut self.incoming_install_queue,
+            &mut self.normal_message_queue,
+        )
     }
 
     pub fn is_shared_connection(&self) -> bool {
@@ -227,6 +345,7 @@ pub struct MockDeviceSession {
     pub authenticated: bool,
     pub target_addr: Option<String>,
     pub duplicate_connection_created: bool,
+    pub router: InstallFrameRouter,
     pub sent_install_frames: Vec<Frame>,
     pub incoming_install_queue: VecDeque<Frame>,
     pub normal_message_queue: VecDeque<Frame>,
@@ -236,6 +355,10 @@ pub struct MockDeviceSession {
 impl MockDeviceSession {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn set_crypto_keys(&mut self, enc_key: [u8; 16], dec_key: [u8; 16]) {
+        self.router = InstallFrameRouter::with_keys(enc_key, dec_key);
     }
 
     pub fn send_install_packet(&mut self, frame: &Frame) -> Result<()> {
@@ -254,13 +377,11 @@ impl MockDeviceSession {
     }
 
     pub fn dispatch_incoming_frame(&mut self, frame: Frame) -> bool {
-        if filter_install_response(&frame.payload) {
-            self.incoming_install_queue.push_back(frame);
-            true
-        } else {
-            self.normal_message_queue.push_back(frame);
-            false
-        }
+        self.router.route_frame(
+            frame,
+            &mut self.incoming_install_queue,
+            &mut self.normal_message_queue,
+        )
     }
 
     pub fn has_duplicate_connection(&self) -> bool {

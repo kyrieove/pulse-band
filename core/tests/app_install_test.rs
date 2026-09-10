@@ -1822,3 +1822,232 @@ fn test_no_duplicate_bluetooth_connection() {
     let mock = MockDeviceSession::new();
     assert!(!mock.has_duplicate_connection());
 }
+
+#[test]
+fn test_install_frame_routing() {
+    use std::collections::VecDeque;
+    use app_install::xiaomi::*;
+
+    let router = InstallFrameRouter::new();
+    let mut install_queue = VecDeque::new();
+    let mut normal_queue = VecDeque::new();
+
+    // 1. 安装准备请求帧 (L2 Pb + WearPacket ThirdpartyApp id=1)
+    let req_pb = encode_install_request("com.test.routing", 1, 2048).unwrap();
+    let frame_req = router.encode_install_frame(&L2Packet::pb_write(req_pb).to_bytes(), 1);
+    assert!(router.is_install_frame(&frame_req));
+    assert!(router.route_frame(frame_req, &mut install_queue, &mut normal_queue));
+
+    // 2. 安装准备响应帧 (L2 Pb + WearPacket ThirdpartyApp id=1)
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let wp_resp = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp));
+    let frame_resp = router.encode_install_frame(&L2Packet::pb_write(wp_resp.encode()).to_bytes(), 2);
+    assert!(router.is_install_frame(&frame_resp));
+    assert!(router.route_frame(frame_resp, &mut install_queue, &mut normal_queue));
+
+    // 3. Mass 传输准备控制帧 (L2 Pb + WearPacket Mass id=0)
+    let prep_pb = encode_mass_prepare(&vec![0u8; 100], &[0xCC; 16]).unwrap();
+    let frame_prep = router.encode_install_frame(&L2Packet::pb_write(prep_pb).to_bytes(), 3);
+    assert!(router.is_install_frame(&frame_prep));
+    assert!(router.route_frame(frame_prep, &mut install_queue, &mut normal_queue));
+
+    // 4. Mass 数据分片传输帧 (L2Channel::Mass)
+    let chunk_bytes = encode_mass_chunk(5, 1, &[0x33; 64]).unwrap();
+    let frame_chunk = Frame {
+        frame_type: 0x03,
+        seq: 4,
+        payload: chunk_bytes,
+    };
+    assert!(router.is_install_frame(&frame_chunk));
+    assert!(router.route_frame(frame_chunk, &mut install_queue, &mut normal_queue));
+
+    // 5. 安装结果上报帧 (L2 Pb + WearPacket ThirdpartyApp id=2)
+    let res = AppInstallerResult::new(InstallResultCode::Success, Some("com.test.routing".to_string()));
+    let wp_res = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(res));
+    let frame_res = router.encode_install_frame(&L2Packet::pb_write(wp_res.encode()).to_bytes(), 5);
+    assert!(router.is_install_frame(&frame_res));
+    assert!(router.route_frame(frame_res, &mut install_queue, &mut normal_queue));
+
+    // 验证路由队列统计与序列
+    assert_eq!(install_queue.len(), 5);
+    assert_eq!(normal_queue.len(), 0);
+    for i in 1..=5 {
+        assert_eq!(install_queue.pop_front().unwrap().seq, i);
+    }
+}
+
+#[test]
+fn test_normal_frame_isolation() {
+    use std::collections::VecDeque;
+    use app_install::xiaomi::*;
+
+    let router = InstallFrameRouter::new();
+    let mut install_queue = VecDeque::new();
+    let mut normal_queue = VecDeque::new();
+
+    // 1. 日常 interconnect fetch 上行业务帧 (id=9)
+    let wp_fetch = WearPacket::new(WearPacketType::ThirdpartyApp, 9);
+    let frame_fetch = Frame {
+        frame_type: 0x03,
+        seq: 10,
+        payload: L2Packet::pb_write(wp_fetch.encode()).to_bytes(),
+    };
+    assert!(!router.is_install_frame(&frame_fetch));
+    assert!(!router.route_frame(frame_fetch.clone(), &mut install_queue, &mut normal_queue));
+
+    // 2. 日常 interconnect __hs__ 握手帧 (id=9)
+    let wp_hs = WearPacket::new(WearPacketType::ThirdpartyApp, 9);
+    let frame_hs = Frame {
+        frame_type: 0x03,
+        seq: 11,
+        payload: L2Packet::pb_write(wp_hs.encode()).to_bytes(),
+    };
+    assert!(!router.is_install_frame(&frame_hs));
+    assert!(!router.route_frame(frame_hs.clone(), &mut install_queue, &mut normal_queue));
+
+    // 3. 日常手环端快应用状态请求 (id=6)
+    let wp_status = WearPacket::new(WearPacketType::ThirdpartyApp, 6);
+    let frame_status = Frame {
+        frame_type: 0x03,
+        seq: 12,
+        payload: L2Packet::pb_write(wp_status.encode()).to_bytes(),
+    };
+    assert!(!router.is_install_frame(&frame_status));
+    assert!(!router.route_frame(frame_status.clone(), &mut install_queue, &mut normal_queue));
+
+    // 4. 手环端快应用连接同步 (id=7)
+    let wp_sync = WearPacket::new(WearPacketType::ThirdpartyApp, 7);
+    let frame_sync = Frame {
+        frame_type: 0x03,
+        seq: 13,
+        payload: L2Packet::pb_write(wp_sync.encode()).to_bytes(),
+    };
+    assert!(!router.is_install_frame(&frame_sync));
+    assert!(!router.route_frame(frame_sync.clone(), &mut install_queue, &mut normal_queue));
+
+    // 5. 手机端下行通知业务帧 (id=8)
+    let wp_phone = WearPacket::new(WearPacketType::ThirdpartyApp, 8);
+    let frame_phone = Frame {
+        frame_type: 0x03,
+        seq: 14,
+        payload: L2Packet::pb_write(wp_phone.encode()).to_bytes(),
+    };
+    assert!(!router.is_install_frame(&frame_phone));
+    assert!(!router.route_frame(frame_phone.clone(), &mut install_queue, &mut normal_queue));
+
+    // 严格断言：安装队列无任何污染，日常报文 100% 隔离保存在普通队列中
+    assert_eq!(install_queue.len(), 0);
+    assert_eq!(normal_queue.len(), 5);
+    assert_eq!(normal_queue[0].seq, 10);
+    assert_eq!(normal_queue[1].seq, 11);
+    assert_eq!(normal_queue[2].seq, 12);
+    assert_eq!(normal_queue[3].seq, 13);
+    assert_eq!(normal_queue[4].seq, 14);
+}
+
+#[test]
+fn test_install_frame_encode() {
+    use app_install::xiaomi::*;
+
+    let router = InstallFrameRouter::new();
+
+    // 1. 验证编码安装准备请求帧
+    let req_pb = encode_install_request("com.encode.test", 42, 65536).unwrap();
+    let l2 = L2Packet::pb_write(req_pb.clone());
+    let frame = router.encode_install_frame(&l2.to_bytes(), 0x7F);
+
+    assert_eq!(frame.frame_type, 0x03);
+    assert_eq!(frame.seq, 0x7F);
+    assert_eq!(frame.payload, l2.to_bytes());
+
+    // 反向解码验证载荷字段
+    let decoded_l2 = L2Packet::from_bytes(&frame.payload).expect("L2 解码成功");
+    assert_eq!(decoded_l2.channel, L2Channel::Pb);
+    assert_eq!(decoded_l2.opcode, L2OpCode::Write);
+    let decoded_wp = WearPacket::decode(&decoded_l2.payload).expect("WearPacket 解码成功");
+    assert_eq!(decoded_wp.pkt_type, WearPacketType::ThirdpartyApp);
+    assert_eq!(decoded_wp.id, 1);
+
+    // 2. 验证编码 Mass 数据分片帧
+    let chunk_data = vec![0xAB; 244];
+    let mass_chunk_l2 = encode_mass_chunk(10, 3, &chunk_data).unwrap();
+    let frame_chunk = router.encode_install_frame(&mass_chunk_l2, 0x80);
+
+    assert_eq!(frame_chunk.frame_type, 0x03);
+    assert_eq!(frame_chunk.seq, 0x80);
+    let decoded_chunk_l2 = L2Packet::from_bytes(&frame_chunk.payload).unwrap();
+    assert_eq!(decoded_chunk_l2.channel, L2Channel::Mass);
+    assert_eq!(decoded_chunk_l2.opcode, L2OpCode::Write);
+}
+
+#[test]
+fn test_encrypted_payload_path() {
+    use std::collections::VecDeque;
+    use app_install::xiaomi::*;
+
+    // 模拟经过认证协商后的双向 16 字节 AES-128-CTR 密钥
+    let enc_key = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+    let dec_key = [0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12];
+
+    let router = InstallFrameRouter::with_keys(enc_key, dec_key);
+    let mut install_queue = VecDeque::new();
+    let mut normal_queue = VecDeque::new();
+
+    // 1. 下行加密路径验证 (Downlink Encryption Path)
+    let req_pb = encode_install_request("com.encrypted.app", 1, 1024).unwrap();
+    let plaintext_l2 = L2Packet::pb_write(req_pb).to_bytes();
+    let enc_frame = router.encode_install_frame(&plaintext_l2, 1);
+
+    assert_eq!(enc_frame.frame_type, 0x03);
+    assert_eq!(enc_frame.seq, 1);
+    assert_eq!(&enc_frame.payload[0..2], &BIZ_PREFIX);
+    assert_ne!(&enc_frame.payload[2..], &plaintext_l2); // 密文与明文不同
+
+    // 使用同方向 enc_key 解密 CTR 密文，验证明文完整性
+    let decrypted_downlink = biz_stream(&enc_key, &enc_frame.payload[2..]);
+    assert_eq!(decrypted_downlink, plaintext_l2);
+
+    // 2. 上行加密安装响应路由验证 (Uplink Encrypted Install Routing)
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let wp_resp = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp));
+    let plain_resp_l2 = L2Packet::pb_write(wp_resp.encode()).to_bytes();
+    let enc_resp_payload = business_frame_payload(&dec_key, &plain_resp_l2);
+    let enc_resp_frame = Frame {
+        frame_type: 0x03,
+        seq: 100,
+        payload: enc_resp_payload,
+    };
+
+    assert!(router.is_install_frame(&enc_resp_frame));
+    assert!(router.route_frame(enc_resp_frame.clone(), &mut install_queue, &mut normal_queue));
+    assert_eq!(install_queue.len(), 1);
+    assert_eq!(normal_queue.len(), 0);
+
+    let resolved = router.resolve_payload(&enc_resp_frame);
+    assert_eq!(resolved, plain_resp_l2);
+
+    // 3. 上行加密日常业务帧隔离验证 (Uplink Encrypted Normal Frame Isolation)
+    let wp_fetch = WearPacket::new(WearPacketType::ThirdpartyApp, 9);
+    let plain_fetch_l2 = L2Packet::pb_write(wp_fetch.encode()).to_bytes();
+    let enc_fetch_payload = business_frame_payload(&dec_key, &plain_fetch_l2);
+    let enc_fetch_frame = Frame {
+        frame_type: 0x03,
+        seq: 101,
+        payload: enc_fetch_payload,
+    };
+
+    assert!(!router.is_install_frame(&enc_fetch_frame));
+    assert!(!router.route_frame(enc_fetch_frame, &mut install_queue, &mut normal_queue));
+    assert_eq!(install_queue.len(), 1); // 安装队列未被污染
+    assert_eq!(normal_queue.len(), 1);  // 日常报文安全分流到普通队列
+
+    // 4. 会话级密钥配置与加解密集成测试
+    let mut session = XiaomiInstallDeviceSession::new();
+    session.set_crypto_keys(enc_key, dec_key);
+    session.connect("AA:BB:CC:11:22:33").unwrap();
+
+    let tx_frame = session.encode_install_frame(&plaintext_l2, 2);
+    session.send_install_packet(&tx_frame).unwrap();
+    assert_eq!(session.outgoing_install_frames.len(), 1);
+    assert_eq!(&session.outgoing_install_frames[0].payload[0..2], &BIZ_PREFIX);
+}
