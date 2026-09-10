@@ -8,11 +8,11 @@ mod frame;
 mod app_install;
 
 use app_install::{
-    AppInstallProtocol, AppInstallTransport, BandDeviceTransport, InstallChunk,
-    InstallMetadata, InstallProtocolRecorder, InstallTransportDispatcher,
+    compute_payload_sha256, AppInstallProtocol, AppInstallTransport, BandDeviceTransport,
+    InstallChunk, InstallMetadata, InstallProtocolRecorder, InstallTransportDispatcher,
     MockAppInstallProtocol, MockAppInstallTransport, MockBandDeviceTransport,
-    MockDeviceReplayTransport, PacketDirection, ProtocolInspector, TransportMode,
-    XiaomiBand10Transport,
+    MockDeviceReplayTransport, PacketDirection, ProtocolInspector, ProtocolReportGenerator,
+    TransportMode, XiaomiBand10Transport,
 };
 use frame::Frame;
 
@@ -660,4 +660,168 @@ fn test_22_unknown_payload_safely_rejected_never_completed() {
     let err_str = commit_res.unwrap_err();
     assert_ne!(err_str, "completed");
     assert_ne!(err_str, "installed");
+}
+
+#[test]
+fn test_23_protocol_report_generator_generates_markdown() {
+    let mut recorder = InstallProtocolRecorder::new();
+    let frame1 = Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: vec![0x08, 0x01, 0x10, 0x02], // Protobuf field 1, 2
+    };
+    let frame2 = Frame {
+        frame_type: 0x01,
+        seq: 1,
+        payload: vec![0x00], // ACK
+    };
+    let frame3 = Frame {
+        frame_type: 0x01,
+        seq: 2,
+        payload: vec![0x00], // duplicate payload
+    };
+
+    recorder.record_tx(&frame1);
+    recorder.record_rx(&frame2);
+    recorder.record_rx(&frame3);
+
+    let md_report = ProtocolReportGenerator::generate_markdown_report(&recorder)
+        .expect("报告生成应当成功");
+
+    assert!(md_report.contains("# 协议取证与流量分析报告"));
+    assert!(md_report.contains("## 1. 流量概要与方向统计"));
+    assert!(md_report.contains("- **总捕获帧数**: 3"));
+    assert!(md_report.contains("- **Host -> Band (下发)**: 1 帧"));
+    assert!(md_report.contains("- **Band -> Host (上报)**: 2 帧"));
+    assert!(md_report.contains("## 2. Frame Type 分布统计"));
+    assert!(md_report.contains("`0x03` | Business/Auth 业务或握手数据帧"));
+    assert!(md_report.contains("`0x01` | ACK 确认帧"));
+    assert!(md_report.contains("## 3. Payload 长度统计"));
+    assert!(md_report.contains("## 4. 重复 Payload 检测"));
+    assert!(md_report.contains("出现频次 | 说明"));
+    assert!(md_report.contains("## 5. Protobuf 字段候选"));
+    assert!(md_report.contains("`1` | 1 次"));
+    assert!(md_report.contains("`2` | 1 次"));
+    assert!(md_report.contains("## 6. Frame 时间线详细记录"));
+
+    // 验证从 JSON 序列化字符串恢复生成报告也是等价的
+    let json_str = recorder.to_json().expect("序列化 JSON 应当成功");
+    let json_md_report = ProtocolReportGenerator::generate_markdown_from_json(&json_str)
+        .expect("从 JSON 生成报告应当成功");
+    assert_eq!(md_report, json_md_report);
+
+    // 验证真实纳管的抓包模板样本文件可被无缝解析并生成有效报告
+    let template_json = include_str!("../../docs/protocol/captures/sample-rpk-exchange-template.json");
+    let template_report = ProtocolReportGenerator::generate_markdown_from_json(template_json)
+        .expect("解析样本模板并生成报告成功");
+    assert!(template_report.contains("- **总捕获帧数**: 4"));
+    assert!(template_report.contains("- **Host -> Band (下发)**: 2 帧"));
+    assert!(template_report.contains("- **Band -> Host (上报)**: 2 帧"));
+}
+
+#[test]
+fn test_24_replay_transport_expected_frames_assertion_success() {
+    let mut transport = MockDeviceReplayTransport::new();
+    transport.connect("AA:BB:CC:DD:EE:FF").expect("连接应当成功");
+
+    let p1 = vec![0x11, 0x22, 0x33];
+    let p2 = vec![0x44, 0x55];
+    let hash1 = compute_payload_sha256(&p1);
+    let hash2 = compute_payload_sha256(&p2);
+
+    // 设置预期的两帧断言
+    transport.expect_frame(0x03, Some(1), Some(&hash1));
+    transport.expect_frame(0x03, Some(2), Some(&hash2));
+
+    // 发送与预期完全一致的帧
+    let f1 = Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: p1,
+    };
+    let f2 = Frame {
+        frame_type: 0x03,
+        seq: 2,
+        payload: p2,
+    };
+
+    transport.send_frame(&f1).expect("发送 f1 成功");
+    transport.send_frame(&f2).expect("发送 f2 成功");
+
+    // 验证断言成功
+    let assert_res = transport.verify_expected_frames();
+    assert!(assert_res.is_ok(), "预期的帧断言应该完全通过");
+}
+
+#[test]
+fn test_25_replay_transport_expected_frames_assertion_failure() {
+    // 场景 1: 帧总数不匹配
+    {
+        let mut transport = MockDeviceReplayTransport::new();
+        transport.connect("AA:BB:CC:DD:EE:FF").unwrap();
+        transport.expect_frame(0x03, Some(1), None);
+        transport.expect_frame(0x03, Some(2), None);
+
+        let f1 = Frame {
+            frame_type: 0x03,
+            seq: 1,
+            payload: vec![0x01],
+        };
+        transport.send_frame(&f1).unwrap();
+
+        let err = transport.verify_expected_frames().unwrap_err();
+        assert!(err.contains("发送帧总数不匹配"));
+    }
+
+    // 场景 2: frame_type 不匹配
+    {
+        let mut transport = MockDeviceReplayTransport::new();
+        transport.connect("AA:BB:CC:DD:EE:FF").unwrap();
+        transport.expect_frame(0x01, Some(1), None); // 期望 0x01
+
+        let f1 = Frame {
+            frame_type: 0x03, // 实际发送 0x03
+            seq: 1,
+            payload: vec![0x01],
+        };
+        transport.send_frame(&f1).unwrap();
+
+        let err = transport.verify_expected_frames().unwrap_err();
+        assert!(err.contains("frame_type 不匹配"));
+    }
+
+    // 场景 3: seq 不匹配
+    {
+        let mut transport = MockDeviceReplayTransport::new();
+        transport.connect("AA:BB:CC:DD:EE:FF").unwrap();
+        transport.expect_frame(0x03, Some(5), None); // 期望 seq = 5
+
+        let f1 = Frame {
+            frame_type: 0x03,
+            seq: 1, // 实际 seq = 1
+            payload: vec![0x01],
+        };
+        transport.send_frame(&f1).unwrap();
+
+        let err = transport.verify_expected_frames().unwrap_err();
+        assert!(err.contains("seq 不匹配"));
+    }
+
+    // 场景 4: payload hash 不匹配
+    {
+        let mut transport = MockDeviceReplayTransport::new();
+        transport.connect("AA:BB:CC:DD:EE:FF").unwrap();
+        let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+        transport.expect_frame(0x03, Some(1), Some(wrong_hash));
+
+        let f1 = Frame {
+            frame_type: 0x03,
+            seq: 1,
+            payload: vec![0xAA, 0xBB],
+        };
+        transport.send_frame(&f1).unwrap();
+
+        let err = transport.verify_expected_frames().unwrap_err();
+        assert!(err.contains("payload hash 不匹配"));
+    }
 }
