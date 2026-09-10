@@ -24,7 +24,7 @@ import type {
   InstallProgressEvent,
 } from '../../common/types';
 import { inspectRpk } from './rpk-inspector.ts';
-import { calculateFileHash, readChunk } from './app-install-reader.ts';
+import { calculateFileHash, calculateFileMd5, readChunk } from './app-install-reader.ts';
 import type { CoreAppInstallBridge } from './core-app-install-bridge.ts';
 
 export { calculateFileHash } from './app-install-reader.ts';
@@ -346,6 +346,7 @@ export class AppInstallService {
     }
 
     const hash = await calculateFileHash(filePath);
+    const md5 = await calculateFileMd5(filePath);
     const totalChunks = Math.ceil(meta.fileSize / chunkSize);
     const installId =
       'inst_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 8);
@@ -385,6 +386,7 @@ export class AppInstallService {
           versionCode: meta.versionCode || 1,
           fileSize: meta.fileSize,
           hash,
+          md5,
         });
         if (coreRes?.sessionId) {
           this.session.coreSessionId = coreRes.sessionId;

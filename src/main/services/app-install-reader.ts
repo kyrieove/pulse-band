@@ -43,6 +43,41 @@ export function calculateFileHash(filePath: string): Promise<string> {
 }
 
 /**
+ * 流式计算本地文件的 MD5 哈希值
+ *
+ * 用途：Mass 传输的 data_id 与包体 MD5。上游源码确认必须是 `MD5(完整RPK)`，
+ * 与用于本地完整性校验的 SHA-256 不是同一个值，不能互相截断代替。
+ *
+ * @param filePath 本地文件路径
+ * @returns 32 位十六进制 MD5 哈希字符串
+ */
+export function calculateFileMd5(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!filePath || typeof filePath !== 'string') {
+      return reject(new Error('无效的文件路径'));
+    }
+    if (!fs.existsSync(filePath)) {
+      return reject(new Error(`文件不存在: ${filePath}`));
+    }
+
+    const hash = crypto.createHash('md5');
+    const stream = fs.createReadStream(filePath);
+
+    stream.on('data', (chunk) => {
+      hash.update(chunk);
+    });
+
+    stream.on('end', () => {
+      resolve(hash.digest('hex'));
+    });
+
+    stream.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+/**
  * 根据分块索引与分块大小，随机读取本地文件对应分片
  * 使用 fs.openSync + fs.readSync，绝不一次性读取整个文件
  *

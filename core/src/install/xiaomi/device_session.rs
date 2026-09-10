@@ -39,6 +39,9 @@ pub const BIZ_PREFIX: [u8; 2] = [0x01, 0x02];
 /// 没有安装侧的消费者，只保留最近若干条用于诊断，避免长时间传输时无界增长。
 pub const MAX_NORMAL_MESSAGE_QUEUE: usize = 64;
 
+/// 累积 ACK 队列上限（Mass 流控）。ACK 会被及时消费，限长只是防御性兜底。
+pub const MAX_PENDING_ACKS: usize = 256;
+
 /// 对业务载荷做 AES-128-CTR (IV=key) 流加解密
 pub fn biz_stream(key: &[u8; 16], data: &[u8]) -> Vec<u8> {
     let mut buf = data.to_vec();
@@ -193,6 +196,13 @@ pub trait InstallWireSender: std::fmt::Debug + Send + Sync {
     /// 返回本次实际使用的下行 seq；实现方必须递增共享 DownlinkCtx.seq_out。
     fn send_install_payload(&self, plaintext_l2: &[u8]) -> Result<u8>;
 
+    /// 发送 Mass 通道载荷：**不做** `01 02` 前缀、**不做** AES-128-CTR。
+    ///
+    /// 上游源码确认 Mass 分支不加密，payload 直接是
+    /// `02 01 | total_parts(u16LE) | current_part(u16LE) | fragment`，
+    /// 外层仍是同一个 Frame(A5A5) 封装。返回本次使用的下行 seq。
+    fn send_mass_payload(&self, payload: &[u8]) -> Result<u8>;
+
     /// 实时链路当前是否可用（Core.bt 已存在且已认证）。
     fn is_available(&self) -> bool;
 }
@@ -207,6 +217,7 @@ pub struct MockSentInstall {
 #[derive(Debug, Default)]
 struct MockInstallWireInner {
     sent: Mutex<Vec<MockSentInstall>>,
+    sent_mass: Mutex<Vec<MockSentInstall>>,
     next_seq: AtomicU8,
     authenticated: AtomicBool,
 }
@@ -235,6 +246,11 @@ impl MockInstallWireSender {
     pub fn sent_records(&self) -> Vec<MockSentInstall> {
         self.inner.sent.lock().unwrap().clone()
     }
+
+    /// Mass 明文通道的发送记录（与 Pb 通道分开，便于断言没有被套 `01 02`）
+    pub fn sent_mass_records(&self) -> Vec<MockSentInstall> {
+        self.inner.sent_mass.lock().unwrap().clone()
+    }
 }
 
 impl InstallWireSender for MockInstallWireSender {
@@ -247,6 +263,23 @@ impl InstallWireSender for MockInstallWireSender {
             seq,
             plaintext_l2: plaintext_l2.to_vec(),
         });
+        Ok(seq)
+    }
+
+    /// Mass 明文通道：记录原始载荷（**不加** `01 02`、**不加密**），供测试断言。
+    fn send_mass_payload(&self, payload: &[u8]) -> Result<u8> {
+        if !self.inner.authenticated.load(Ordering::SeqCst) {
+            return Err("device_unavailable: Mock 实时链路未认证".to_string());
+        }
+        let seq = self.inner.next_seq.fetch_add(1, Ordering::SeqCst);
+        self.inner
+            .sent_mass
+            .lock()
+            .unwrap()
+            .push(MockSentInstall {
+                seq,
+                plaintext_l2: payload.to_vec(),
+            });
         Ok(seq)
     }
 
@@ -307,6 +340,8 @@ pub struct XiaomiInstallDeviceSession {
     pub incoming_install_queue: VecDeque<Frame>,
     pub normal_message_queue: VecDeque<Frame>,
     pub wire: Option<Box<dyn InstallWireSender>>,
+    /// 已到达、尚未消费的 Frame 级累积 ACK 序号（Mass 分片流控）
+    pub pending_wire_acks: VecDeque<u8>,
 }
 
 #[allow(dead_code)]
@@ -323,6 +358,7 @@ impl XiaomiInstallDeviceSession {
             incoming_install_queue: VecDeque::new(),
             normal_message_queue: VecDeque::new(),
             wire: None,
+            pending_wire_acks: VecDeque::new(),
         }
     }
 
@@ -418,6 +454,7 @@ impl XiaomiInstallDeviceSession {
         self.drain_live_ingress();
         self.incoming_install_queue.clear();
         self.outgoing_install_frames.clear();
+        self.pending_wire_acks.clear();
     }
 
     /// 从 live.rs 统一入站队列同步事件，并按 InstallFrameRouter 分流。
@@ -427,8 +464,31 @@ impl XiaomiInstallDeviceSession {
                 InstallFrameEvent::Incoming(frame) => {
                     self.dispatch_incoming_frame(frame);
                 }
+                InstallFrameEvent::Ack { seq } => {
+                    self.note_frame_ack(seq);
+                }
             }
         }
+    }
+
+    /// 记录一个 Frame 级累积 ACK。
+    pub fn note_frame_ack(&mut self, seq: u8) {
+        self.pending_wire_acks.push_back(seq);
+        while self.pending_wire_acks.len() > MAX_PENDING_ACKS {
+            self.pending_wire_acks.pop_front();
+        }
+    }
+
+    /// 通过实时链路发送 Mass 明文载荷（不加密），返回使用的 seq。
+    pub fn send_plain_payload(&mut self, payload: &[u8]) -> Result<u8> {
+        if !self.is_linked() {
+            return Err("device_unavailable: 设备会话未就绪或未认证 (not_implemented)".to_string());
+        }
+        let wire = self
+            .wire
+            .as_ref()
+            .ok_or_else(|| "device_unavailable: 安装链路未绑定真实 Core.bt (not_implemented)".to_string())?;
+        wire.send_mass_payload(payload)
     }
 
     /// 接收安装响应：只从统一入站队列/本地 install_response_queue 读取。
@@ -473,8 +533,13 @@ impl XiaomiInstallDeviceSession {
 
     /// 分发传入帧：安装业务进安装响应队列，日常业务进普通消息队列（不被安装流程吞掉）。
     ///
+    /// Frame 级 ACK（type=0x01）不进业务队列，而是记入 Mass 流控的累积确认队列。
     /// 普通消息队列只用于隔离诊断，没有业务消费者；限长避免长时间连接时无界增长。
     pub fn dispatch_incoming_frame(&mut self, frame: Frame) -> bool {
+        if frame.frame_type == 0x01 {
+            self.note_frame_ack(frame.seq);
+            return false;
+        }
         let routed = self.router.route_frame(
             frame,
             &mut self.incoming_install_queue,
@@ -524,6 +589,27 @@ impl BandDeviceTransport for XiaomiInstallDeviceSession {
 
     fn receive_install_packet(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
         self.recv_install_frame(timeout_ms)
+    }
+
+    /// Mass 明文通道：交给绑定的实时链路，不套 `01 02`、不做 AES-CTR。
+    fn send_plain_payload(&mut self, payload: &[u8]) -> Result<u8> {
+        self.send_plain_payload(payload)
+    }
+
+    /// 等待 Frame 级累积 ACK：期间持续把 live.rs 派发的入站事件路由进队列
+    /// （安装响应帧进 install queue 不丢失），只消费 ACK。
+    fn wait_frame_ack(&mut self, wait_ms: u64) -> Option<u8> {
+        let deadline = Instant::now() + Duration::from_millis(wait_ms);
+        loop {
+            self.drain_live_ingress();
+            if let Some(seq) = self.pending_wire_acks.pop_front() {
+                return Some(seq);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     fn is_authenticated(&self) -> bool {

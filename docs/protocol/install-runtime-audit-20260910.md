@@ -274,3 +274,50 @@ L2 头:   02 01
 
 **结论：本轮不修改 Mass 编码。** 以上假设缺可核验依据，按代码纪律不允许猜测实现；
 需先取得 `mass_transfer.dart` 的确切语义或一次真实安装抓包。
+
+---
+
+## 10. 按上游源码语义修正 Mass 传输（2026-09-10 第 2 轮）
+
+第 9 节的未验证假设已由**上游固定提交 `26dd89e7` 的源码**确认（读取源码，非实机验证）。
+以下四项差异已全部修正：
+
+### 10.1 四处实质差异与修正
+
+| # | 差异 | 修正 |
+|---|---|---|
+| 1 | Mass 分片被套上 `01 02` + AES-128-CTR 业务加密 | 新增 `send_plain_payload` 通道：Mass 载荷**不加密**，直接是 `02 01 | 片头 | fragment` |
+| 2 | 分片体是裸 RPK 文件字节，缺 `00\|40\|MD5\|file_length` 头与 CRC32 | 改为 `build_mass_inner_payload` 组装完整 body 后**整体切片** |
+| 3 | `data_id` 与 body 内 MD5 用的是 SHA-256 前 16 字节 | 客户端新增 `calculateFileMd5`，core 侧 `resolve_md5` 显式取真实 MD5；缺失即报错，不再截断摘要 |
+| 4 | 分片盲发，不等 Mass 响应也不等 ACK | 发分片前等 Mass PrepareResponse(READY) 并取其 slice 长度；分片按 32 窗口 + 累积 ACK 流控 |
+
+### 10.2 关键协议事实（源码确认）
+
+- **Pb 的外层 `01 02` 本身就是 L2 头**（channel=protobuf, opcode=writeEnc），
+  所以加密明文内不应再有 L2 头 —— 这与第 9 节真机修复一致。
+- **Mass 的 `02 01` 在同一层**（channel=mass, opcode=write），但**该分支不加密**。
+- body：`00 | 40 | MD5[16] | file_length(u32LE) | 完整RPK | CRC32(u32LE)`，
+  CRC32 覆盖其前方全部内容，外层 Frame 的 CRC16 独立计算。
+- 分片：`total_parts(u16LE) | current_part(u16LE) | fragment`，片号从 1 开始；
+  `fragment` 上限 = `expected_slice_length - 6`（2B L2 + 4B 片头）；
+  `total_parts` 按**组装后的 body 长度**计算，不是文件长度。
+- `expected_slice_length` 取值优先级：显式传入 → Mass PrepareResponse.field5 → 非 SPP v1 默认 244。
+  `AppInstallerResponse.field2` 存在但该路径不传给 Mass 发送器。
+- ACK 是 **L1 控制帧**（`A5 A5 | 01 | seq | 00 00 | 00 00`），不带 L2，走的是 Frame 的 **8 位 seq**，
+  与 Mass 的 16 位 `current_part` 不是一回事；采用**累积确认**（模 256 半区间比较）。
+- 发送窗口 32 是**客户端策略**（上游本地 `_localTxWin=32`），不是设备协商结果。
+- Band 10（`o66`/`o66nfc`）在设备目录中属于 **sppV2**，走非 SPP v1 分支；SPP v1 使用 `BA DC FE` 前导，与本项目已验证的 `A5 A5 + 01 02 + CTR` 不同。
+- 安装结果等待超时为 60 秒（本项目原先 5 秒）。
+
+### 10.3 未改变的设计
+
+- 不新增 verify/commit opcode；安装成功仍以 `id=2` + `id=0` 已安装列表核验为准。
+- `02 01` 与 Frame 封装保持不变；未引入 OronBox 依赖。
+
+### 10.4 仍需真机验证的点
+
+- 上述全部为**源码语义**，本机固件是否一致未验证。
+- 分片是否真的走 `02 01` 这一层、Mass PrepareResponse 的实际字段取值、
+  设备对 32 窗口的接受程度、ACK 的实际到达时序，都需要一次真机安装来确认。
+- 本轮改动使「客户端到设备的字节」与上游分支一致，若仍失败，下一步应先抓 Mass PrepareResponse，
+  而不是继续调整后续参数。

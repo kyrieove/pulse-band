@@ -40,6 +40,7 @@ fn test_1_prepare_returns_preparing() {
         version_code: 26,
         file_size: 255523,
         hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+        md5: None,
     };
 
     let session = transport.prepare(meta).expect("prepare 应当成功");
@@ -59,6 +60,7 @@ fn test_2_chunk_can_be_received() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     let session = transport.prepare(meta).expect("prepare 应当成功");
@@ -96,6 +98,7 @@ fn test_3_commit_returns_verifying() {
         version_code: 26,
         file_size: 512,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     let session = transport.prepare(meta).unwrap();
@@ -115,6 +118,7 @@ fn test_4_cancel_releases_session() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     let session = transport.prepare(meta).unwrap();
@@ -144,6 +148,7 @@ fn test_5_no_completed_state_ever_returned() {
         version_code: 26,
         file_size: 512,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     let session = transport.prepare(meta).unwrap();
@@ -192,6 +197,7 @@ fn test_8_xiaomi_band10_transport_returns_not_implemented_without_sending_data()
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     // 1. prepare 必须明确拒绝，标明 device_unavailable / not_implemented
@@ -238,6 +244,7 @@ fn test_9_transport_dispatcher_switching_mode() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
     let res = dispatcher.prepare(meta.clone());
     assert!(res.is_err());
@@ -259,6 +266,7 @@ fn test_10_device_mode_returns_device_unavailable_and_no_completed() {
         version_code: 26,
         file_size: 512,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     let prep_res = dispatcher.prepare(meta);
@@ -328,6 +336,7 @@ fn test_12_xiaomi_band10_transport_safely_fails_without_device() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     // 无底层设备接入时安全失败
@@ -353,6 +362,7 @@ fn test_13_xiaomi_band10_transport_with_mock_device_safely_fails_protocol() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     // 即使底层连接就绪，快应用安装协议在当前阶段也严禁假装实现
@@ -390,6 +400,7 @@ fn test_15_protocol_and_transport_separation() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
     let prep_res = proto.prepare_install(&mut dev, &meta);
     assert!(prep_res.is_err());
@@ -407,6 +418,7 @@ fn test_16_mock_app_install_protocol_lifecycle() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     // 1. prepare (返回 preparing)
@@ -463,6 +475,7 @@ fn test_17_unknown_protocol_does_not_send_device_frames() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     let prep_res = transport.prepare(meta);
@@ -491,6 +504,7 @@ fn test_18_full_layered_mock_integration() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     // 底层设备未 connect 前 prepare 失败
@@ -594,6 +608,7 @@ fn test_20_replay_transport_drives_protocol_flow() {
         version_code: 26,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     // 驱动协议流程
@@ -667,6 +682,7 @@ fn test_22_unknown_payload_safely_rejected_never_completed() {
         version_code: 26,
         file_size: 512,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     assert!(transport.prepare(meta).is_err());
@@ -851,6 +867,7 @@ fn test_26_old_api_and_submodule_paths_fully_compatible() {
         version_code: 1,
         file_size: 1024,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
     let sess = old_transport.prepare(meta).expect("老 API prepare 成功");
     assert_eq!(sess.status, "preparing");
@@ -871,6 +888,7 @@ fn test_26_old_api_and_submodule_paths_fully_compatible() {
         version_code: 2,
         file_size: 2048,
         hash: "hash_sub".to_string(),
+        md5: None,
     };
     let mut sub_t = sub_transport::MockAppInstallTransport::new();
     let sub_sess = sub_transport::AppInstallTransport::prepare(&mut sub_t, sub_meta).unwrap();
@@ -1354,6 +1372,7 @@ fn test_39_protocol_state_machine_flow_to_waiting_device_result() {
         version_code: 10,
         file_size: 512,
         hash: "dummy_hash".to_string(),
+        md5: None,
     };
 
     let sess = mock_proto.prepare_install(&mut dev, &meta).unwrap();
@@ -1424,6 +1443,7 @@ fn test_xiaomi_protocol_prepare_encode() {
         version_code: 100,
         file_size: 1024,
         hash: "0123456789abcdef0123456789abcdef".to_string(),
+        md5: None,
     };
 
     let session = proto.prepare_install(&mut dev, &meta).expect("prepare_install 成功");
@@ -1477,11 +1497,13 @@ fn test_xiaomi_mass_transfer_sequence() {
         version_code: 100,
         file_size: 1024, // 2 chunks (512 each)
         hash: "0123456789abcdef0123456789abcdef".to_string(),
+        md5: None,
     };
     let session = proto.prepare_install(&mut dev, &meta).unwrap();
     assert_eq!(session.total_chunks, 2);
 
-    // 发送 chunk 0 (首块触发 Mass Prepare + Mass Chunk)
+    // 发送 chunk 0：只累积 + 触发 Mass Prepare 并等待设备 READY（不发数据分片）
+    enqueue_mass_prepare_ready(&mut dev, [0xAB; 16], None);
     let chunk0 = InstallChunk {
         session_id: session.session_id.clone(),
         index: 0,
@@ -1492,26 +1514,17 @@ fn test_xiaomi_mass_transfer_sequence() {
     assert_eq!(ack0.received_bytes, 512);
     assert_eq!(proto.state, XiaomiInstallState::Transferring);
 
-    // 检查发出帧：1 (prepare_install) + 1 (mass_prepare) + 1 (mass_chunk0)
-    assert_eq!(dev.sent_frames.len(), 3);
+    // 检查发出帧：1 (prepare_install) + 1 (mass_prepare)。
+    // 上游语义：必须先组装完整 body 再整体切片，所以此时还不能有数据分片。
+    assert_eq!(dev.sent_frames.len(), 2);
 
     let mass_prep_frame = &dev.sent_frames[1];
-    // Mass Prepare 是 WearPacket(type=22, id=0)，同样不带 L2 前缀
+    // Mass Prepare 是 WearPacket(type=22, id=0)，不带 L2 前缀
     let mass_prep_wp = WearPacket::decode(&mass_prep_frame.payload).unwrap();
     assert_eq!(mass_prep_wp.pkt_type, WearPacketType::Mass);
     assert_eq!(mass_prep_wp.id, 0);
 
-    // Mass 分片仍按上游源码证据使用 L2 channel=2/opcode=1 封装（设备未实测）
-    let chunk0_frame = &dev.sent_frames[2];
-    let chunk0_l2 = L2Packet::from_bytes(&chunk0_frame.payload).unwrap();
-    assert_eq!(chunk0_l2.channel, L2Channel::Mass);
-    assert_eq!(chunk0_l2.opcode, L2OpCode::Write);
-    let chunk0_mass = MassChunk::decode(&chunk0_l2.payload).unwrap();
-    assert_eq!(chunk0_mass.total_parts, 2);
-    assert_eq!(chunk0_mass.current_part, 1);
-    assert_eq!(chunk0_mass.fragment.len(), 512);
-
-    // 发送 chunk 1 (末尾块，完成后状态流转进入 waiting_device_result)
+    // 发送 chunk 1（最后一块）：此时才组装 body 并整体切片发送
     let chunk1 = InstallChunk {
         session_id: session.session_id.clone(),
         index: 1,
@@ -1521,17 +1534,115 @@ fn test_xiaomi_mass_transfer_sequence() {
     let ack1 = proto.send_package_chunk(&mut dev, &chunk1).expect("chunk1 发送成功");
     assert_eq!(ack1.received_bytes, 1024);
 
-    assert_eq!(dev.sent_frames.len(), 4);
-    let chunk1_frame = &dev.sent_frames[3];
-    let chunk1_l2 = L2Packet::from_bytes(&chunk1_frame.payload).unwrap();
-    let chunk1_mass = MassChunk::decode(&chunk1_l2.payload).unwrap();
-    assert_eq!(chunk1_mass.total_parts, 2);
-    assert_eq!(chunk1_mass.current_part, 2);
+    // body = 22B 头 + 1024B 文件 + 4B CRC32 = 1050B；默认 slice 244 → cap 238 → 5 片
+    let mass_frames: Vec<_> = dev
+        .sent_frames
+        .iter()
+        .skip(2)
+        .filter(|f| f.payload.first() == Some(&L2Channel::Mass.as_u8()))
+        .collect();
+    assert!(!mass_frames.is_empty(), "必须发出 Mass 数据分片");
+
+    let first = L2Packet::from_bytes(&mass_frames[0].payload).unwrap();
+    assert_eq!(first.channel, L2Channel::Mass);
+    assert_eq!(first.opcode, L2OpCode::Write);
+    let first_chunk = MassChunk::decode(&first.payload).unwrap();
+    assert_eq!(first_chunk.total_parts, 5, "total_parts 按组装后的 body 计算");
+    assert_eq!(first_chunk.current_part, 1, "片号从 1 开始");
+    assert_eq!(first_chunk.fragment.len(), 238, "fragment 上限 = slice - 6");
+
+    // 末片序号与总片数一致
+    let last = L2Packet::from_bytes(&mass_frames[mass_frames.len() - 1].payload).unwrap();
+    let last_chunk = MassChunk::decode(&last.payload).unwrap();
+    assert_eq!(last_chunk.current_part, 5);
 
     // 状态流转确认：进入 waiting_device_result，绝不产生 completed
     assert_eq!(proto.state, XiaomiInstallState::WaitingDeviceResult);
     assert_ne!(proto.state.as_str(), "completed");
     assert_ne!(proto.state.as_str(), "installed");
+}
+
+#[test]
+fn test_mass_body_matches_upstream_layout() {
+    use app_install::xiaomi::*;
+
+    // 上游源码确认：Mass 必须先组装完整 body 再整体切片，
+    // body = 00 | 40 | MD5[16] | file_length(u32LE) | RPK | CRC32(u32LE)。
+    let mut proto = XiaomiAppInstallProtocol::new();
+    let mut dev = MockBandDeviceTransport::new();
+    dev.connect("AA:BB:CC:11:22:33").unwrap();
+
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let wp_resp = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp));
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: wp_resp.encode(),
+    });
+
+    let md5_hex = "00112233445566778899aabbccddeeff".to_string();
+    let meta = InstallMetadata {
+        package_id: "com.xiaomi.mass".to_string(),
+        version_name: "1.0.0".to_string(),
+        version_code: 1,
+        file_size: 512,
+        hash: "0123456789abcdef0123456789abcdef".to_string(),
+        md5: Some(md5_hex.clone()),
+    };
+    let session = proto.prepare_install(&mut dev, &meta).unwrap();
+
+    enqueue_mass_prepare_ready(&mut dev, [0x00; 16], Some(244));
+    proto
+        .send_package_chunk(
+            &mut dev,
+            &InstallChunk {
+                session_id: session.session_id.clone(),
+                index: 0,
+                size: 512,
+                data: vec![0x5A; 512],
+            },
+        )
+        .unwrap();
+
+    // 把设备收到的所有 Mass 分片拼回完整 body
+    let mut body = Vec::new();
+    for f in dev.sent_frames.iter() {
+        if f.payload.first() != Some(&L2Channel::Mass.as_u8()) {
+            continue;
+        }
+        let l2 = L2Packet::from_bytes(&f.payload).unwrap();
+        let chunk = MassChunk::decode(&l2.payload).unwrap();
+        body.extend_from_slice(&chunk.fragment);
+    }
+
+    // 头 22 字节 + 文件 512 + CRC 4 = 538
+    assert_eq!(body.len(), 22 + 512 + 4);
+    assert_eq!(body[0], 0x00);
+    assert_eq!(body[1], 0x40, "data_type=64");
+    // body 内嵌的 MD5 必须是元数据里的真实 MD5（不是 SHA-256 截断）
+    let expected_md5 = [
+        0x00u8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+        0xee, 0xff,
+    ];
+    assert_eq!(&body[2..18], &expected_md5, "body 内嵌 MD5 必须是 MD5(完整RPK)");
+    assert_eq!(&body[18..22], &512u32.to_le_bytes(), "file_length 小端");
+    assert_eq!(&body[22..534], &vec![0x5Au8; 512][..], "文件字节原样进入 body");
+    verify_mass_inner_payload(&body).expect("CRC32 必须覆盖前面所有内容");
+
+    // Mass Prepare 请求里的 data_id 也必须是同一个真实 MD5
+    let prep_wp = WearPacket::decode(&dev.sent_frames[1].payload).unwrap();
+    let prep_req = match prep_wp.payload {
+        Some(WearPacketPayload::Mass(m)) => match m.payload {
+            Some(MassPayload::PrepareRequest(r)) => r,
+            _ => panic!("Mass Prepare 载荷不是 PrepareRequest"),
+        },
+        _ => panic!("Mass Prepare 不是 Mass 报文"),
+    };
+    assert_eq!(prep_req.data_id, expected_md5.to_vec(), "data_id 必须是 MD5(完整RPK)");
+    assert_eq!(prep_req.data_type, 64);
+    assert_eq!(prep_req.data_length, 512);
+
+    assert_eq!(proto.expected_slice_length, 244);
 }
 
 #[test]
@@ -1557,6 +1668,7 @@ fn test_xiaomi_result_decode() {
         version_code: 100,
         file_size: 512,
         hash: "0123456789abcdef0123456789abcdef".to_string(),
+        md5: None,
     };
     let session = proto.prepare_install(&mut dev, &meta).unwrap();
 
@@ -1566,6 +1678,7 @@ fn test_xiaomi_result_decode() {
         size: 512,
         data: vec![0x11; 512],
     };
+    enqueue_mass_prepare_ready(&mut dev, [0xAB; 16], None);
     proto.send_package_chunk(&mut dev, &chunk).unwrap();
     assert_eq!(proto.state, XiaomiInstallState::WaitingDeviceResult);
 
@@ -1600,6 +1713,7 @@ fn test_xiaomi_protocol_failure_states() {
         version_code: 100,
         file_size: 512,
         hash: "0123456789abcdef0123456789abcdef".to_string(),
+        md5: None,
     };
 
     // 1. 未连接设备时调用 prepare 拒绝
@@ -1636,6 +1750,7 @@ fn test_xiaomi_protocol_failure_states() {
         size: 512,
         data: vec![0u8; 512],
     };
+    enqueue_mass_prepare_ready(&mut dev, [0xAB; 16], None);
     proto.send_package_chunk(&mut dev, &chunk).unwrap();
 
     // 注入失败结果 (INSTALL_FAILED)
@@ -2351,6 +2466,7 @@ fn test_xiaomi_install_result_wrong_package_rejected() {
         version_code: 1,
         file_size: 4096,
         hash: "test_hash".to_string(),
+        md5: None,
     });
     bridge.protocol = protocol;
 
@@ -2401,6 +2517,7 @@ fn test_transport_commit_requires_installed_list_confirmation() {
         version_code: 26,
         file_size: 4096,
         hash: "test_hash".to_string(),
+        md5: None,
     });
 
     // 1. 设备上报 id=2 且 result_code=0（成功），目标包名一致
@@ -2461,6 +2578,7 @@ fn test_transport_commit_completes_only_when_installed_list_matches() {
         version_code: 26,
         file_size: 4096,
         hash: "test_hash".to_string(),
+        md5: None,
     });
 
     // id=2 成功
@@ -2520,6 +2638,7 @@ fn test_wait_result_skips_unrelated_frames_before_install_result() {
         version_code: 26,
         file_size: 4096,
         hash: "test_hash".to_string(),
+        md5: None,
     });
 
     // 队首先放一个 Mass 通道帧（分片传输期间累积、无人消费），再放真正的 id=2 结果。
@@ -2568,6 +2687,7 @@ fn test_install_prepare_frame_has_no_l2_prefix() {
         version_code: 26,
         file_size: 255523,
         hash: "0123456789abcdef0123456789abcdef".to_string(),
+        md5: None,
     };
 
     // prepare 会等到超时才返回（Mock 队列为空 → 立即 None），这里只关心发出去的帧
@@ -2596,6 +2716,129 @@ fn test_installed_list_query_has_no_l2_prefix() {
     let wp = WearPacket::decode(&payload).expect("查询明文必须可直接解析为 WearPacket");
     assert_eq!(wp.pkt_type.as_u32(), 20);
     assert_eq!(wp.id, 0);
+}
+
+/// 投放一个 Mass PrepareResponse（READY），模拟设备接受 Mass 会话。
+///
+/// 上游源码确认的响应路径：`WearPacket(type=22, id=0) -> field24 Mass -> field2 PrepareResponse`。
+fn enqueue_mass_prepare_ready(
+    dev: &mut MockBandDeviceTransport,
+    md5: [u8; 16],
+    slice_len: Option<u32>,
+) {
+    use app_install::xiaomi::*;
+    let resp = PrepareResponse {
+        data_id: md5.to_vec(),
+        prepare_status: 0, // READY
+        select_compress_mode: None,
+        remained_data_length: None,
+        expected_slice_length: slice_len,
+    };
+    let wp = WearPacket::new_mass(0, Mass::from_prepare_response(resp));
+    dev.incoming_queue.push_back(Frame {
+        frame_type: 0x03,
+        seq: 200,
+        payload: wp.encode(),
+    });
+}
+
+#[test]
+fn test_mass_payload_is_not_business_encrypted() {
+    use app_install::xiaomi::*;
+
+    let _serial = lock_global_queue();
+    clear_global_install_events();
+
+    let wire = MockInstallWireSender::new();
+    wire.set_authenticated(true);
+    let handle = wire.clone();
+    let mut transport = XiaomiInstallTransport::with_wire(Box::new(wire));
+
+    let md5 = "00112233445566778899aabbccddeeff".to_string();
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 512,
+        hash: "0123456789abcdef0123456789abcdef".to_string(),
+        md5: Some(md5),
+    };
+
+    // 安装准备响应 (id=1 READY) 与 Mass PrepareResponse (READY, slice=244) 都预先入队
+    let resp = AppInstallerResponse::new(0, Some(244));
+    let wp_resp = WearPacket::new_thirdparty_app(1, ThirdpartyApp::from_install_response(resp));
+    transport.bridge.process_incoming_frame(Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: wp_resp.encode(),
+    });
+    let mass_resp = PrepareResponse {
+        data_id: vec![0u8; 16],
+        prepare_status: 0,
+        select_compress_mode: None,
+        remained_data_length: None,
+        expected_slice_length: Some(244),
+    };
+    transport.bridge.process_incoming_frame(Frame {
+        frame_type: 0x03,
+        seq: 2,
+        payload: WearPacket::new_mass(0, Mass::from_prepare_response(mass_resp)).encode(),
+    });
+
+    let session = transport
+        .bridge
+        .protocol
+        .prepare_install(&mut transport.bridge.install_session, &meta)
+        .expect("prepare 应成功");
+
+    // 设备收到分片后会回 Frame 级累积 ACK；这里预置对应序号。
+    // Mock 链路序号：0=安装准备, 1=Mass 准备, 2..=Mass 分片
+    for seq in 2u8..=8u8 {
+        transport.bridge.install_session.note_frame_ack(seq);
+    }
+
+    transport
+        .bridge
+        .protocol
+        .send_package_chunk(
+            &mut transport.bridge.install_session,
+            &InstallChunk {
+                session_id: session.session_id.clone(),
+                index: 0,
+                size: 512,
+                data: vec![0x5A; 512],
+            },
+        )
+        .expect("分片传输应成功");
+
+    // Pb 通道：安装准备 + Mass 准备，都是 WearPacket protobuf（不以 02 01 开头）
+    let pb_records = handle.sent_records();
+    assert_eq!(pb_records.len(), 2, "安装准备与 Mass 准备走 Pb 通道");
+    for r in &pb_records {
+        assert_ne!(
+            &r.plaintext_l2[0..2],
+            &[0x02u8, 0x01u8],
+            "Pb 通道不应出现 Mass 分片"
+        );
+    }
+
+    // Mass 通道：必须带 02 01，且**不得**被套 01 02 业务加密前缀
+    let mass_records = handle.sent_mass_records();
+    assert_eq!(mass_records.len(), 3, "538B body / cap 238 = 3 片");
+    for r in &mass_records {
+        assert_eq!(
+            &r.plaintext_l2[0..2],
+            &[0x02u8, 0x01u8],
+            "Mass 分片必须带 L2 channel=2/opcode=1"
+        );
+        assert_ne!(
+            &r.plaintext_l2[0..2],
+            &[0x01u8, 0x02u8],
+            "Mass 分片不得被套 01 02 业务加密（该分支不加密）"
+        );
+        // 6B = 2B L2 + 4B 片头；fragment 上限 slice-6=238，末片可短
+        assert!(r.plaintext_l2.len() > 6 && r.plaintext_l2.len() <= 6 + 238);
+    }
 }
 
 #[test]

@@ -18,6 +18,8 @@ export interface CoreInstallMetadata {
   versionCode: number;
   fileSize: number;
   hash: string;
+  /** 完整 RPK 的 MD5（32 位 hex）。Mass 传输的 data_id 与包体 MD5 用它，不可用 hash 截断代替。 */
+  md5?: string;
 }
 
 export interface CoreInstallChunk {
@@ -82,7 +84,12 @@ export class CoreAppInstallBridge {
 
   async prepare(metadata: CoreInstallMetadata): Promise<CorePrepareResult> {
     try {
-      return await this.client.call<CorePrepareResult>('device.app.install.prepare', metadata as any);
+      // prepare 内部会等待手环的安装准备响应
+      return await this.client.call<CorePrepareResult>(
+        'device.app.install.prepare',
+        metadata as any,
+        60_000,
+      );
     } catch (err: any) {
       const sanitized = desensitizeCoreError(err);
       const wrapped = new Error(sanitized.userMessage);
@@ -94,7 +101,12 @@ export class CoreAppInstallBridge {
 
   async sendChunk(chunk: CoreInstallChunk): Promise<CoreChunkAck> {
     try {
-      return await this.client.call<CoreChunkAck>('device.app.install.chunk', chunk as any);
+      // 最后一块会触发完整的 Mass 传输（组装 body + 分片 + 等 ACK），必须给足超时
+      return await this.client.call<CoreChunkAck>(
+        'device.app.install.chunk',
+        chunk as any,
+        300_000,
+      );
     } catch (err: any) {
       const sanitized = desensitizeCoreError(err);
       const wrapped = new Error(sanitized.userMessage);
@@ -106,7 +118,12 @@ export class CoreAppInstallBridge {
 
   async commit(sessionId: string): Promise<CoreCommitResult> {
     try {
-      return await this.client.call<CoreCommitResult>('device.app.install.commit', { sessionId });
+      // core 侧等待设备安装结果最长 60 秒，再叠加 id=0 已安装列表核验
+      return await this.client.call<CoreCommitResult>(
+        'device.app.install.commit',
+        { sessionId },
+        300_000,
+      );
     } catch (err: any) {
       const sanitized = desensitizeCoreError(err);
       const wrapped = new Error(sanitized.userMessage);

@@ -276,6 +276,36 @@ impl crate::install::xiaomi::device_session::InstallWireSender for CoreBtInstall
             .map(|guard| guard.is_some())
             .unwrap_or(false)
     }
+
+    /// 发送 Mass 通道载荷：**不套** `01 02` 前缀、**不做** AES-128-CTR。
+    ///
+    /// 上游源码确认该分支不加密：payload 直接是
+    /// `02 01 | total_parts(u16LE) | current_part(u16LE) | fragment`，
+    /// 外层仍走同一个 Frame(A5A5) 封装。
+    fn send_mass_payload(&self, payload: &[u8]) -> std::result::Result<u8, String> {
+        let mut guard = self
+            .bt
+            .lock()
+            .map_err(|_| "device_unavailable: Core.bt 锁不可用".to_string())?;
+        let ctx = guard.as_mut().ok_or_else(|| {
+            "device_unavailable: Core.bt 无已认证连接 (not_connected)".to_string()
+        })?;
+        let seq = ctx.seq_out;
+        let frame = Frame {
+            frame_type: 0x03,
+            seq,
+            payload: payload.to_vec(),
+        };
+        let raw = encode(&frame);
+        send_all(ctx.sock, &raw)?;
+        ctx.seq_out = ctx.seq_out.wrapping_add(1);
+        crate::install::xiaomi::runtime_bridge::install_log(&format!(
+            "install: Mass 下行 seq={seq} 明文={}B 帧={}B (未加密)",
+            payload.len(),
+            raw.len()
+        ));
+        Ok(seq)
+    }
 }
 
 fn read_device_auth_mac() -> Result<([u8; 16], u64), String> {
@@ -660,6 +690,11 @@ fn run_pump_loop(core: &Core, sock: usize, dec_key: &[u8; 16], rx: &mut Vec<u8>)
                 Ok((frame, consumed)) => {
                     rx.drain(..consumed);
                     if frame.frame_type == 0x01 {
+                        // Mass 分片流控依赖 Frame 级累积 ACK（type=0x01）。
+                        // 只在安装进行中派发，避免空闲时无意义地堆积。
+                        if crate::install::xiaomi::runtime_bridge::is_install_pipeline_active() {
+                            crate::install::xiaomi::runtime_bridge::dispatch_install_ack(frame.seq);
+                        }
                         continue;
                     }
                     if frame.frame_type == 0x02 {

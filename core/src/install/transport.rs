@@ -161,6 +161,24 @@ pub trait BandDeviceTransport: std::fmt::Debug + Send + Sync {
     fn has_duplicate_connection(&self) -> bool {
         false
     }
+
+    /// 发送**不做业务加密**的原始 Frame 载荷（Mass 通道专用）。
+    ///
+    /// 上游源码确认：Mass 分支不套 `01 02` + AES-128-CTR，payload 直接是
+    /// `02 01 | total_parts(u16LE) | current_part(u16LE) | fragment`，
+    /// 外层仍走同一个 Frame(A5A5) 封装。返回本次使用的 Frame 序号（流控用）。
+    ///
+    /// 默认实现返回不支持；真实链路与离线 Mock 各自覆盖。
+    fn send_plain_payload(&mut self, _payload: &[u8]) -> Result<u8> {
+        Err("device_unavailable: 该传输不支持 Mass 明文通道 (not_implemented)".to_string())
+    }
+
+    /// 等待一个 Frame 级累积 ACK 序号（Mass 分片流控用），最多等 wait_ms。
+    ///
+    /// 返回 None 表示在窗口内没有收到 ACK。默认实现无 ACK 能力。
+    fn wait_frame_ack(&mut self, _wait_ms: u64) -> Option<u8> {
+        None
+    }
 }
 
 /// 用于测试与离线模拟的手环底层通信 Mock 实现
@@ -171,16 +189,30 @@ pub struct MockBandDeviceTransport {
     pub target_addr: Option<String>,
     pub sent_frames: Vec<Frame>,
     pub incoming_queue: VecDeque<Frame>,
+    /// Mass 明文通道使用的自增序号（真实链路由 Core.bt 的 seq_out 承担）
+    pub next_plain_seq: u8,
+    /// 已到达的累积 ACK 序号（Mass 分片流控）
+    pub acked_queue: VecDeque<u8>,
+    /// 是否模拟"健康设备即时累积确认"；置 false 可测试 ACK 超时路径
+    pub auto_ack: bool,
 }
 
 #[allow(dead_code)]
 impl MockBandDeviceTransport {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            auto_ack: true,
+            ..Default::default()
+        }
     }
 
     pub fn enqueue_incoming(&mut self, frame: Frame) {
         self.incoming_queue.push_back(frame);
+    }
+
+    /// 手动投递一个 Frame 级累积 ACK（auto_ack=false 时使用）
+    pub fn enqueue_ack(&mut self, seq: u8) {
+        self.acked_queue.push_back(seq);
     }
 }
 
@@ -213,6 +245,27 @@ impl BandDeviceTransport for MockBandDeviceTransport {
             return Err("device_not_connected: 底层设备未连接".to_string());
         }
         Ok(self.incoming_queue.pop_front())
+    }
+
+    fn send_plain_payload(&mut self, payload: &[u8]) -> Result<u8> {
+        if !self.connected {
+            return Err("device_not_connected: 底层设备未连接".to_string());
+        }
+        let seq = self.next_plain_seq;
+        self.next_plain_seq = self.next_plain_seq.wrapping_add(1);
+        self.sent_frames.push(Frame {
+            frame_type: 0x03,
+            seq,
+            payload: payload.to_vec(),
+        });
+        if self.auto_ack {
+            self.acked_queue.push_back(seq);
+        }
+        Ok(seq)
+    }
+
+    fn wait_frame_ack(&mut self, _wait_ms: u64) -> Option<u8> {
+        self.acked_queue.pop_front()
     }
 }
 

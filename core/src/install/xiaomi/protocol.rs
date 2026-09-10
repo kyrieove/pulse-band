@@ -16,16 +16,50 @@ use super::super::model::{
 use super::super::protocol::AppInstallProtocol;
 use super::super::transport::BandDeviceTransport;
 use super::codec::{
-    decode_install_response, decode_install_result, encode_install_request, encode_mass_chunk,
-    encode_mass_prepare,
+    decode_install_response, decode_install_result, decode_mass_prepare_response,
+    encode_install_request, encode_mass_prepare_len,
 };
+use super::l2::L2Packet;
+use super::mass::{build_mass_inner_payload, MassChunk, MASS_DATA_TYPE_THIRDPARTY_APP};
 use super::thirdparty_app::InstallResultCode;
 use super::XiaomiInstallState;
 use crate::frame::Frame;
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 /// 等待设备上报的单次超时预算（毫秒）。
 const DEVICE_REPLY_TIMEOUT_MS: u64 = 5000;
+
+/// 等待 Mass PrepareResponse 的时长（上游源码为 10 秒）。
+const MASS_PREPARE_TIMEOUT_MS: u64 = 10_000;
+
+/// 等待设备上报安装结果 id=2 的时长（上游源码为 60 秒）。
+const INSTALL_RESULT_TIMEOUT_MS: u64 = 60_000;
+
+/// Mass 分片发送窗口。
+///
+/// 这是**客户端策略**（上游该版本本地 `_localTxWin=32`），不是 Band 10 的设备协商结果。
+const MASS_TX_WINDOW: usize = 32;
+
+/// 单次等待 Mass 分片 ACK 的时长。
+const MASS_ACK_WAIT_MS: u64 = 2_000;
+
+/// 整个 Mass 传输的截止预算。
+const MASS_TRANSFER_TIMEOUT_MS: u64 = 120_000;
+
+/// 累积确认：把序号不晚于 `ack_seq` 的在途项移出（模 256 半区间判断）。
+///
+/// 与上游 `_handleAck` 的"从队首开始标记序号不晚于 ACK.seq 的待发送项"一致；
+/// ACK 对应的是 Frame 的 8 位 seq，不是 Mass 的 16 位 current_part。
+fn ack_cumulative(inflight: &mut VecDeque<u8>, ack_seq: u8) {
+    while let Some(&front) = inflight.front() {
+        if ack_seq.wrapping_sub(front) < 128 {
+            inflight.pop_front();
+        } else {
+            break;
+        }
+    }
+}
 
 /// 小米快应用原生安装业务协议状态机实现
 #[derive(Debug, Clone)]
@@ -40,6 +74,10 @@ pub struct XiaomiAppInstallProtocol {
     pub expected_slice_length: u32,
     pub md5: Vec<u8>,
     pub seq: u8,
+    /// 累积的原始 RPK 字节：Mass 必须先组装完整 body 再整体切片
+    pub transfer_buffer: Vec<u8>,
+    /// 已发出但尚未被累积 ACK 覆盖的 Frame 序号（流控）
+    pub inflight: VecDeque<u8>,
 }
 
 impl Default for XiaomiAppInstallProtocol {
@@ -55,6 +93,8 @@ impl Default for XiaomiAppInstallProtocol {
             expected_slice_length: 244,
             md5: vec![0u8; 16],
             seq: 0,
+            transfer_buffer: Vec::new(),
+            inflight: VecDeque::new(),
         }
     }
 }
@@ -69,32 +109,183 @@ impl XiaomiAppInstallProtocol {
         self.seq = self.seq.wrapping_add(1);
         s
     }
+
+    /// 发起 Mass Prepare 并**等待设备 READY**。
+    ///
+    /// 上游源码确认：Mass 准备后必须校验响应（READY / 分片长度 / 续传），确认后才发分片；
+    /// 未收到响应或非 READY 时终止，不自动重发。
+    fn send_mass_prepare_and_wait_ready(
+        &mut self,
+        device_transport: &mut dyn BandDeviceTransport,
+    ) -> Result<()> {
+        let data_length = self
+            .metadata
+            .as_ref()
+            .map(|m| m.file_size as u32)
+            .ok_or("缺少安装元数据")?;
+        let prep_pb = encode_mass_prepare_len(data_length, &self.md5)?;
+        // Mass Prepare 本身是 WearPacket(type=22, id=0)，不加 L2 前缀。
+        let frame = Frame {
+            frame_type: 0x03,
+            seq: self.next_seq(),
+            payload: prep_pb,
+        };
+        device_transport.send_frame(&frame)?;
+
+        let deadline = Instant::now() + Duration::from_millis(MASS_PREPARE_TIMEOUT_MS);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.state = XiaomiInstallState::Failure;
+                return Err("等待 Mass PrepareResponse 超时 (timeout)".to_string());
+            }
+            let Some(f) = device_transport.receive_frame(remaining.as_millis() as u64)? else {
+                self.state = XiaomiInstallState::Failure;
+                return Err("等待 Mass PrepareResponse 超时 (timeout)".to_string());
+            };
+            let Ok(resp) = decode_mass_prepare_response(&f.payload) else {
+                continue;
+            };
+            if !resp.is_ready() {
+                self.state = XiaomiInstallState::Failure;
+                return Err(format!(
+                    "Mass 准备未就绪 (prepare_status={})",
+                    resp.prepare_status
+                ));
+            }
+            if let Some(slice_len) = resp.expected_slice_length {
+                if slice_len > 6 {
+                    self.expected_slice_length = slice_len;
+                }
+            }
+            self.mass_prepared = true;
+            return Ok(());
+        }
+    }
+
+    /// 组装完整 Mass body、整体切片，并按发送窗口做累积 ACK 流控。
+    ///
+    /// body 结构（上游源码确认）：`00 | 40 | MD5[16] | file_length(u32LE) | RPK | CRC32(u32LE)`；
+    /// 切片格式：`02 01 | total_parts(u16LE) | current_part(u16LE) | fragment`，
+    /// 其中 fragment 上限 = `expected_slice_length - 6`（2 字节 L2 + 4 字节片头）。
+    fn transfer_mass_body(&mut self, device_transport: &mut dyn BandDeviceTransport) -> Result<()> {
+        let expected_size = self
+            .metadata
+            .as_ref()
+            .map(|m| m.file_size as usize)
+            .unwrap_or(0);
+        if self.transfer_buffer.len() != expected_size {
+            return Err(format!(
+                "已接收字节数与声明 file_size 不一致: {} != {}",
+                self.transfer_buffer.len(),
+                expected_size
+            ));
+        }
+
+        let body = build_mass_inner_payload(
+            &self.transfer_buffer,
+            MASS_DATA_TYPE_THIRDPARTY_APP,
+            &self.md5,
+        )?;
+
+        let slice_len = self.expected_slice_length as usize;
+        if slice_len <= 6 {
+            return Err(format!("非法的 expected_slice_length: {slice_len}"));
+        }
+        let capacity = slice_len - 6;
+        let total_parts = body.len().div_ceil(capacity);
+        if total_parts == 0 || total_parts > u16::MAX as usize {
+            return Err(format!("Mass 分片数超出 u16 范围: {total_parts}"));
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(MASS_TRANSFER_TIMEOUT_MS);
+        self.inflight.clear();
+
+        for i in 0..total_parts {
+            let start = i * capacity;
+            let end = (start + capacity).min(body.len());
+            let payload = L2Packet::mass_write(
+                MassChunk::new(total_parts as u16, (i + 1) as u16, body[start..end].to_vec())
+                    .encode(),
+            )
+            .to_bytes();
+
+            while self.inflight.len() >= MASS_TX_WINDOW {
+                self.wait_one_ack(device_transport, deadline)?;
+            }
+            let seq = device_transport.send_plain_payload(&payload)?;
+            self.inflight.push_back(seq);
+        }
+
+        while !self.inflight.is_empty() {
+            self.wait_one_ack(device_transport, deadline)?;
+        }
+
+        super::runtime_bridge::install_log(&format!(
+            "install: Mass 传输完成 body={}B 分片={} slice={} cap={}",
+            body.len(),
+            total_parts,
+            slice_len,
+            capacity
+        ));
+        Ok(())
+    }
+
+    /// 等待一个累积 ACK 并推进在途窗口。
+    fn wait_one_ack(
+        &mut self,
+        device_transport: &mut dyn BandDeviceTransport,
+        deadline: Instant,
+    ) -> Result<()> {
+        if Instant::now() >= deadline {
+            return Err("等待 Mass 分片 ACK 超时 (timeout)".to_string());
+        }
+        match device_transport.wait_frame_ack(MASS_ACK_WAIT_MS) {
+            Some(seq) => {
+                ack_cumulative(&mut self.inflight, seq);
+                Ok(())
+            }
+            None => Err("等待 Mass 分片 ACK 超时 (timeout)".to_string()),
+        }
+    }
 }
 
-/// 解析 32 字符 hex 格式 MD5，或推导出 16 字节固定摘要
-fn parse_or_derive_md5(hash_str: &str) -> Vec<u8> {
-    if hash_str.len() >= 32 {
-        let mut bytes = Vec::with_capacity(16);
-        let hex_slice = &hash_str[..32];
-        let mut chars = hex_slice.chars();
-        while let (Some(c1), Some(c2)) = (chars.next(), chars.next()) {
-            if let Ok(b) = u8::from_str_radix(&format!("{c1}{c2}"), 16) {
-                bytes.push(b);
-            } else {
-                break;
-            }
-        }
-        if bytes.len() == 16 {
-            return bytes;
-        }
+/// 解析 32 位 hex 为 16 字节；非 32 位 hex 返回 None。
+fn hex16(s: &str) -> Option<Vec<u8>> {
+    if s.len() != 32 {
+        return None;
     }
+    let mut out = Vec::with_capacity(16);
+    let mut chars = s.chars();
+    while let (Some(a), Some(b)) = (chars.next(), chars.next()) {
+        let hi = a.to_digit(16)?;
+        let lo = b.to_digit(16)?;
+        out.push(((hi << 4) | lo) as u8);
+    }
+    Some(out)
+}
 
-    // 降级兜底：提取字节前 16 字节填充
-    let mut fallback = vec![0u8; 16];
-    for (i, &b) in hash_str.as_bytes().iter().take(16).enumerate() {
-        fallback[i] = b;
+/// 解析 Mass 传输要用的 MD5。
+///
+/// 上游源码确认是 `MD5(完整RPK)`：
+/// - 优先取元数据里显式的 `md5`；
+/// - 缺失时，仅当 `hash` 恰好是 32 位 hex（调用方直接传了 MD5）才接受；
+/// - 其余情况一律报错。
+///
+/// 这里**不允许**再从更长的摘要里截断取前 16 字节 —— 客户端 `hash` 是 SHA-256，
+/// 之前那样做会把错误的 data_id 与包体 MD5 发给设备，是本轮真机失败的根因之一。
+fn resolve_md5(metadata: &InstallMetadata) -> Result<Vec<u8>> {
+    if let Some(md5_hex) = metadata.md5.as_deref() {
+        return hex16(md5_hex).ok_or_else(|| {
+            format!(
+                "metadata.md5 不是合法的 32 位 hex (长度 {})",
+                md5_hex.len()
+            )
+        });
     }
-    fallback
+    hex16(&metadata.hash).ok_or_else(|| {
+        "缺少 RPK 的 MD5: metadata.md5 未提供，且 hash 不是 32 位 hex".to_string()
+    })
 }
 
 impl AppInstallProtocol for XiaomiAppInstallProtocol {
@@ -115,6 +306,8 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
 
         self.state = XiaomiInstallState::Preparing;
         self.metadata = Some(metadata.clone());
+        // Mass 传输要用的 MD5 必须在发出任何流量之前确定，缺失即失败。
+        let md5 = resolve_md5(metadata)?;
 
         // 1. 编码安装准备请求: WearPacket(type=20, id=1, ThirdpartyApp.install_request)
         //
@@ -182,7 +375,7 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
         self.sent_chunks = 0;
         self.total_sent_bytes = 0;
         self.mass_prepared = false;
-        self.md5 = parse_or_derive_md5(&metadata.hash);
+        self.md5 = md5;
 
         Ok(session)
     }
@@ -200,38 +393,23 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
             return Err("session_id 不匹配".to_string());
         }
 
-        // 1. 如果是首个分片且尚未发起 Mass Prepare，先发起 Mass Prepare
-        if !self.mass_prepared {
-            let metadata = self.metadata.as_ref().ok_or("缺少安装元数据")?;
-            let mass_prep_pb =
-                encode_mass_prepare(&vec![0u8; metadata.file_size as usize], &self.md5)?;
-            // Mass Prepare 本身是 WearPacket(type=22, id=0)，同样不加 L2 前缀（理由同上）。
-            let frame = Frame {
-                frame_type: 0x03,
-                seq: self.next_seq(),
-                payload: mass_prep_pb,
-            };
-            device_transport.send_frame(&frame)?;
-            self.mass_prepared = true;
-        }
-
-        // 2. 构造 Mass Chunk (total_parts, current_part 1-indexed, fragment)
-        let total_parts = self.total_chunks.max(1) as u16;
-        let current_part = (chunk.index + 1) as u16;
-        let chunk_l2_bytes = encode_mass_chunk(total_parts, current_part, &chunk.data)?;
-
-        let frame = Frame {
-            frame_type: 0x03,
-            seq: self.next_seq(),
-            payload: chunk_l2_bytes,
-        };
-        device_transport.send_frame(&frame)?;
-
+        // 1. 累积客户端分块。
+        //
+        // 上游源码确认：Mass 必须先组装出**完整 body** 再整体切片，不能按文件偏移逐片发。
+        // body = 00 | 40 | MD5[16] | file_length(u32LE) | 完整RPK | CRC32(u32LE)
+        self.transfer_buffer.extend_from_slice(&chunk.data);
         self.sent_chunks += 1;
         self.total_sent_bytes += chunk.size as u64;
 
-        // 3. 若所有分片传输完毕，状态流转为 waiting_device_result
+        // 2. 首个分块时发起 Mass Prepare，并**等待设备 READY** 才继续。
+        //    上游要求：Mass 准备后检查 READY、分片长度与续传响应，确认后才发分片。
+        if !self.mass_prepared {
+            self.send_mass_prepare_and_wait_ready(device_transport)?;
+        }
+
+        // 3. 收齐全部分块后才做真正的 Mass 传输（组装 -> 切片 -> 流控发送）。
         if self.sent_chunks >= self.total_chunks {
+            self.transfer_mass_body(device_transport)?;
             self.state = XiaomiInstallState::WaitingDeviceResult;
         }
 
@@ -255,12 +433,11 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
             return Err("session_id 不匹配".to_string());
         }
 
-        // 监听设备响应: 期望 WearPacket(type=20, id=2) AppInstaller.Result
         // 监听设备响应: 期望 WearPacket(type=20, id=2) AppInstaller.Result。
         //
-        // 队列里会混有 Mass 通道 ACK / 其它已过滤安装帧（分片传输期间无人消费），
-        // 因此按截止时间循环跳过无法解码为安装结果的帧，直到拿到真正的 id=2 或超时。
-        let deadline = Instant::now() + Duration::from_millis(DEVICE_REPLY_TIMEOUT_MS);
+        // 队列里会混有其它已过滤安装帧，因此按截止时间循环跳过无法解码为安装结果的帧，
+        // 直到拿到真正的 id=2 或超时。超时预算取上游源码的 60 秒。
+        let deadline = Instant::now() + Duration::from_millis(INSTALL_RESULT_TIMEOUT_MS);
         let resp_frame = loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -349,6 +526,8 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
         self.mass_prepared = false;
         self.sent_chunks = 0;
         self.total_sent_bytes = 0;
+        self.transfer_buffer.clear();
+        self.inflight.clear();
         Ok(())
     }
 }

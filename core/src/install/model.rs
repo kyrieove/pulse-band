@@ -16,6 +16,12 @@ pub struct InstallMetadata {
     #[serde(alias = "fileSize")]
     pub file_size: u64,
     pub hash: String,
+    /// 完整 RPK 的 MD5（32 位 hex）。
+    ///
+    /// Mass 传输的 `data_id` 与包体里的 MD5 都必须用它 —— 上游源码确认是
+    /// `MD5(完整RPK)`，**不能**用 `hash`（客户端那边是 SHA-256）截断代替。
+    #[serde(default)]
+    pub md5: Option<String>,
 }
 
 /// 快应用安装分块数据契约

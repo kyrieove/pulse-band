@@ -84,7 +84,10 @@ impl RuntimeBridgeState {
 /// 全局安装帧事件
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallFrameEvent {
+    /// 一条安装业务入站帧（payload 已解密为 WearPacket 明文）
     Incoming(Frame),
+    /// 一个 Frame 级累积 ACK 序号（Mass 分片流控用）
+    Ack { seq: u8 },
 }
 
 /// 安装入站帧统一队列（由 live.rs 数据泵在安装管线激活时派发）。
@@ -164,6 +167,11 @@ pub fn clear_global_install_events() {
     if let Ok(mut q) = GLOBAL_INSTALL_EVENT_QUEUE.lock() {
         q.clear();
     }
+}
+
+/// 派发一个 Frame 级累积 ACK（由 live.rs 数据泵在收到 type=0x01 帧时调用）。
+pub fn dispatch_install_ack(seq: u8) {
+    dispatch_install_frame_event(InstallFrameEvent::Ack { seq });
 }
 
 /// 设备安装能力检测模型
@@ -497,6 +505,14 @@ impl BandDeviceTransport for XiaomiInstallRuntimeBridge {
 
     fn receive_install_packet(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
         self.install_session.receive_install_packet(timeout_ms)
+    }
+
+    fn send_plain_payload(&mut self, payload: &[u8]) -> Result<u8> {
+        self.install_session.send_plain_payload(payload)
+    }
+
+    fn wait_frame_ack(&mut self, wait_ms: u64) -> Option<u8> {
+        self.install_session.wait_frame_ack(wait_ms)
     }
 
     fn is_authenticated(&self) -> bool {

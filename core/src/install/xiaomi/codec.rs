@@ -4,7 +4,9 @@
 
 use super::super::model::Result;
 use super::l2::{L2Channel, L2OpCode, L2Packet};
-use super::mass::{Mass, MassAck, MassChunk, PrepareRequest, MASS_DATA_TYPE_THIRDPARTY_APP};
+use super::mass::{
+    Mass, MassAck, MassChunk, PrepareRequest, PrepareResponse, MASS_DATA_TYPE_THIRDPARTY_APP,
+};
 use super::thirdparty_app::{
     AppInstallerRequest, AppInstallerResponse, AppInstallerResult, InstallResultCode,
     ThirdpartyApp, ThirdpartyAppPayload,
@@ -44,6 +46,19 @@ pub fn encode_install_result(code: InstallResultCode, package_name: &str) -> Vec
     packet.encode()
 }
 
+/// 编码 Mass 准备请求（按数据长度，不分配整个文件缓冲区）
+///
+/// 生成 WearPacket(type=MASS(22), id=PREPARE(0))，内嵌 PrepareRequest(dataType=64, MD5, dataLength)
+pub fn encode_mass_prepare_len(data_length: u32, md5: &[u8]) -> Result<Vec<u8>> {
+    if md5.len() != 16 {
+        return Err(format!("MD5 长度必须为 16 字节: 实际 {} 字节", md5.len()));
+    }
+    let req = PrepareRequest::new(MASS_DATA_TYPE_THIRDPARTY_APP, md5.to_vec(), data_length);
+    let mass = Mass::from_prepare_request(req);
+    let packet = WearPacket::new_mass(0, mass);
+    Ok(packet.encode())
+}
+
 /// 编码 Mass 准备请求
 ///
 /// 生成 WearPacket(type=MASS(22), id=PREPARE(0))，内嵌 PrepareRequest(dataType=64, MD5, dataLength)
@@ -59,6 +74,36 @@ pub fn encode_mass_prepare(rpk_bytes: &[u8], md5: &[u8]) -> Result<Vec<u8>> {
     let mass = Mass::from_prepare_request(req);
     let packet = WearPacket::new_mass(0, mass);
     Ok(packet.encode())
+}
+
+/// 解码 Mass PrepareResponse
+///
+/// 上游源码确认的响应路径：`WearPacket(type=22, id=0) → field24: Mass → field2: PrepareResponse`。
+pub fn decode_mass_prepare_response(bytes: &[u8]) -> Result<PrepareResponse> {
+    let pb_bytes = if bytes.len() >= 2
+        && bytes[0] == L2Channel::Pb.as_u8()
+        && bytes[1] == L2OpCode::Write.as_u8()
+    {
+        &bytes[2..]
+    } else {
+        bytes
+    };
+
+    let packet = WearPacket::decode(pb_bytes)?;
+    if packet.pkt_type != super::wear_packet::WearPacketType::Mass {
+        return Err(format!(
+            "Mass 准备响应不是 Mass 报文: 实际 type={}",
+            packet.pkt_type.as_u32()
+        ));
+    }
+    let mass = match packet.payload {
+        Some(WearPacketPayload::Mass(m)) => m,
+        _ => return Err("Mass 准备响应缺少 Mass 载荷 (field24)".to_string()),
+    };
+    match mass.payload {
+        Some(super::mass::MassPayload::PrepareResponse(resp)) => Ok(resp),
+        _ => Err("Mass 载荷不是 PrepareResponse (field2)".to_string()),
+    }
 }
 
 /// 编码 Mass 分片数据包 (封装为 L2 channel=2, opcode=1)
