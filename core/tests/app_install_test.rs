@@ -4,7 +4,8 @@
 mod app_install;
 
 use app_install::{
-    AppInstallTransport, InstallChunk, InstallMetadata, MockAppInstallTransport,
+    AppInstallTransport, InstallChunk, InstallMetadata, InstallTransportDispatcher,
+    MockAppInstallTransport, TransportMode, XiaomiBand10Transport,
 };
 
 #[test]
@@ -150,4 +151,100 @@ fn test_6_no_bluetooth_handles_or_calls() {
 
     // 结构体验证：仅纯数据与标量计数
     assert_eq!(std::mem::size_of::<MockAppInstallTransport>() > 0, true);
+}
+
+#[test]
+fn test_7_xiaomi_band10_transport_can_be_initialized() {
+    let transport = XiaomiBand10Transport::new();
+    assert!(transport.active_session_id.is_none());
+    assert_eq!(std::mem::size_of::<XiaomiBand10Transport>() > 0, true);
+}
+
+#[test]
+fn test_8_xiaomi_band10_transport_returns_not_implemented_without_sending_data() {
+    let mut transport = XiaomiBand10Transport::new();
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+
+    // 1. prepare 必须明确拒绝，标明 device_unavailable / not_implemented
+    let prep_res = transport.prepare(meta);
+    assert!(prep_res.is_err());
+    let prep_err = prep_res.err().unwrap();
+    assert!(prep_err.contains("device_unavailable"));
+    assert!(prep_err.contains("not_implemented"));
+
+    // 2. send_chunk 必须明确拒绝
+    let chunk = InstallChunk {
+        session_id: "test_sess".to_string(),
+        index: 0,
+        size: 512,
+        data: vec![0u8; 512],
+    };
+    let chunk_res = transport.send_chunk(chunk);
+    assert!(chunk_res.is_err());
+    let chunk_err = chunk_res.err().unwrap();
+    assert!(chunk_err.contains("device_unavailable"));
+
+    // 3. commit 必须明确拒绝，且绝不返回 completed / installed
+    let commit_res = transport.commit("test_sess".to_string());
+    assert!(commit_res.is_err());
+
+    // 4. cancel 应当安全退出
+    let cancel_res = transport.cancel("test_sess".to_string());
+    assert!(cancel_res.is_ok());
+}
+
+#[test]
+fn test_9_transport_dispatcher_switching_mode() {
+    let mut dispatcher = InstallTransportDispatcher::new_mock();
+    assert_eq!(dispatcher.mode(), TransportMode::Mock);
+
+    // 切到 Device 模式
+    dispatcher.set_mode(TransportMode::Device);
+    assert_eq!(dispatcher.mode(), TransportMode::Device);
+
+    // Device 模式下调用 prepare 拒绝
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+    let res = dispatcher.prepare(meta.clone());
+    assert!(res.is_err());
+
+    // 切回 Mock 模式
+    dispatcher.set_mode(TransportMode::Mock);
+    assert_eq!(dispatcher.mode(), TransportMode::Mock);
+    let mock_res = dispatcher.prepare(meta);
+    assert!(mock_res.is_ok());
+    assert_eq!(mock_res.unwrap().status, "preparing");
+}
+
+#[test]
+fn test_10_device_mode_returns_device_unavailable_and_no_completed() {
+    let mut dispatcher = InstallTransportDispatcher::new_device();
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 512,
+        hash: "dummy_hash".to_string(),
+    };
+
+    let prep_res = dispatcher.prepare(meta);
+    assert!(prep_res.is_err());
+
+    let commit_res = dispatcher.commit("any_session".to_string());
+    assert!(commit_res.is_err());
+    let err_str = commit_res.err().unwrap();
+    assert_ne!(err_str, "completed");
+    assert_ne!(err_str, "installed");
+    assert!(err_str.contains("device_unavailable"));
 }

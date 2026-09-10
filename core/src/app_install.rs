@@ -180,7 +180,140 @@ impl AppInstallTransport for MockAppInstallTransport {
     }
 }
 
-/// 全局 Mock 传输实例（受互斥锁保护）
+/// 小米手环 10 快应用原生安装传输适配层（占位骨架，未接入真实硬件）
+///
+/// 纪律要求：
+/// - 只能作为设备适配占位层
+/// - 禁止 RFCOMM 调用
+/// - 禁止 BLE 调用
+/// - 禁止修改 live.rs / session.rs
+/// - 严禁发送真实数据
+/// - 返回 device_unavailable / not_implemented
+/// - 禁止返回 completed / installed
+#[derive(Debug, Default)]
+pub struct XiaomiBand10Transport {
+    pub active_session_id: Option<String>,
+}
+
+impl XiaomiBand10Transport {
+    pub const fn new() -> Self {
+        Self {
+            active_session_id: None,
+        }
+    }
+}
+
+impl AppInstallTransport for XiaomiBand10Transport {
+    fn prepare(&mut self, _metadata: InstallMetadata) -> Result<InstallSession> {
+        Err("device_unavailable: 小米手环10硬件传输层尚未接入 (not_implemented)".to_string())
+    }
+
+    fn send_chunk(&mut self, _chunk: InstallChunk) -> Result<ChunkAck> {
+        Err("device_unavailable: 小米手环10硬件传输层尚未接入 (not_implemented)".to_string())
+    }
+
+    fn commit(&mut self, _session_id: String) -> Result<InstallResult> {
+        Err("device_unavailable: 小米手环10硬件传输层尚未接入 (not_implemented)".to_string())
+    }
+
+    fn cancel(&mut self, _session_id: String) -> Result<()> {
+        self.active_session_id = None;
+        Ok(())
+    }
+}
+
+/// 快应用传输层运行模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportMode {
+    Mock,
+    Device,
+}
+
+/// 传输后端枚举分发器（支持 Mock 与 Device 双模式切换）
+#[derive(Debug)]
+pub enum InstallTransportDispatcher {
+    Mock(MockAppInstallTransport),
+    Device(XiaomiBand10Transport),
+}
+
+impl InstallTransportDispatcher {
+    pub const fn new_mock() -> Self {
+        Self::Mock(MockAppInstallTransport::new())
+    }
+
+    pub const fn new_device() -> Self {
+        Self::Device(XiaomiBand10Transport::new())
+    }
+
+    pub fn set_mode(&mut self, mode: TransportMode) {
+        match mode {
+            TransportMode::Mock => {
+                if !matches!(self, Self::Mock(_)) {
+                    *self = Self::Mock(MockAppInstallTransport::new());
+                }
+            }
+            TransportMode::Device => {
+                if !matches!(self, Self::Device(_)) {
+                    *self = Self::Device(XiaomiBand10Transport::new());
+                }
+            }
+        }
+    }
+
+    pub fn mode(&self) -> TransportMode {
+        match self {
+            Self::Mock(_) => TransportMode::Mock,
+            Self::Device(_) => TransportMode::Device,
+        }
+    }
+}
+
+impl AppInstallTransport for InstallTransportDispatcher {
+    fn prepare(&mut self, metadata: InstallMetadata) -> Result<InstallSession> {
+        match self {
+            Self::Mock(t) => t.prepare(metadata),
+            Self::Device(t) => t.prepare(metadata),
+        }
+    }
+
+    fn send_chunk(&mut self, chunk: InstallChunk) -> Result<ChunkAck> {
+        match self {
+            Self::Mock(t) => t.send_chunk(chunk),
+            Self::Device(t) => t.send_chunk(chunk),
+        }
+    }
+
+    fn commit(&mut self, session_id: String) -> Result<InstallResult> {
+        match self {
+            Self::Mock(t) => t.commit(session_id),
+            Self::Device(t) => t.commit(session_id),
+        }
+    }
+
+    fn cancel(&mut self, session_id: String) -> Result<()> {
+        match self {
+            Self::Mock(t) => t.cancel(session_id),
+            Self::Device(t) => t.cancel(session_id),
+        }
+    }
+}
+
+/// 全局可切换传输实例（受互斥锁保护，默认 Mock 模式）
 #[allow(dead_code)]
-pub static GLOBAL_INSTALL_TRANSPORT: Mutex<MockAppInstallTransport> =
-    Mutex::new(MockAppInstallTransport::new());
+pub static GLOBAL_INSTALL_TRANSPORT: Mutex<InstallTransportDispatcher> =
+    Mutex::new(InstallTransportDispatcher::new_mock());
+
+/// 切换全局快应用传输后端模式
+#[allow(dead_code)]
+pub fn set_global_transport_mode(mode: TransportMode) {
+    let mut transport = GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
+    transport.set_mode(mode);
+}
+
+/// 获取当前全局快应用传输后端模式
+#[allow(dead_code)]
+pub fn get_global_transport_mode() -> TransportMode {
+    let transport = GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
+    transport.mode()
+}

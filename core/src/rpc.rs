@@ -301,6 +301,30 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 false,
             )
         }
+        "device.app.install.mode" => {
+            if let Some(mode_str) = params["mode"].as_str() {
+                let mode = match mode_str {
+                    "device" => crate::app_install::TransportMode::Device,
+                    _ => crate::app_install::TransportMode::Mock,
+                };
+                crate::app_install::set_global_transport_mode(mode);
+            }
+            let current = crate::app_install::get_global_transport_mode();
+            (
+                serde_json::json!({
+                    "id": id,
+                    "ok": true,
+                    "result": {
+                        "mode": match current {
+                            crate::app_install::TransportMode::Mock => "mock",
+                            crate::app_install::TransportMode::Device => "device",
+                        }
+                    }
+                })
+                .to_string(),
+                false,
+            )
+        }
         other => (
             error_resp(&id, "method_not_found", &format!("未知方法 {other}")).to_string(),
             false,
@@ -478,5 +502,42 @@ mod tests {
         let cancel_val: serde_json::Value = serde_json::from_str(&cancel_resp).unwrap();
         assert_eq!(cancel_val["ok"], true);
         assert_eq!(cancel_val["result"]["status"], "cancelled");
+
+        // 5. mode endpoint (query and set)
+        let mode_query_req = serde_json::json!({
+            "id": "mode_q1",
+            "method": "device.app.install.mode",
+            "token": "test_token",
+            "params": {}
+        })
+        .to_string();
+        let (mode_q_resp, _) = dispatch(&fake_core, &mode_query_req);
+        let mode_q_val: serde_json::Value = serde_json::from_str(&mode_q_resp).unwrap();
+        assert_eq!(mode_q_val["ok"], true);
+        assert_eq!(mode_q_val["result"]["mode"], "mock");
+
+        let mode_set_req = serde_json::json!({
+            "id": "mode_s1",
+            "method": "device.app.install.mode",
+            "token": "test_token",
+            "params": { "mode": "device" }
+        })
+        .to_string();
+        let (mode_s_resp, _) = dispatch(&fake_core, &mode_set_req);
+        let mode_s_val: serde_json::Value = serde_json::from_str(&mode_s_resp).unwrap();
+        assert_eq!(mode_s_val["ok"], true);
+        assert_eq!(mode_s_val["result"]["mode"], "device");
+
+        // 还原回 mock，保持默认状态
+        let _ = dispatch(
+            &fake_core,
+            &serde_json::json!({
+                "id": "mode_reset",
+                "method": "device.app.install.mode",
+                "token": "test_token",
+                "params": { "mode": "mock" }
+            })
+            .to_string(),
+        );
     }
 }
