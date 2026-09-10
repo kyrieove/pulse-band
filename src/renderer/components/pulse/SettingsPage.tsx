@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { Palette, Bot, RefreshCw, Wrench, Sun, Moon, ChevronDown, ChevronUp } from 'lucide-react';
+import { Palette, Bot, Wrench, Sun, Moon, ChevronDown, ChevronUp, PanelTop } from 'lucide-react';
+import { Toggle } from './ui';
+import { useMiniBar } from '../../hooks/useMiniBar';
 
 export interface SettingsPageProps {
   theme: 'light' | 'dark';
@@ -15,6 +17,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onShowAgentsChange,
 }) => {
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const miniBar = useMiniBar();
 
   return (
     <div className="space-y-5">
@@ -99,34 +102,34 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
       </section>
 
-      {/* 分组 3：手环连接设置 */}
+      {/* 分组 3：额度悬浮窗（与侧栏、托盘控制同一个真实窗口） */}
       <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-4 transition-colors duration-200">
         <div className="flex items-center gap-2">
-          <RefreshCw className="w-4 h-4 text-[var(--accent-primary)]" />
+          <PanelTop className="w-4 h-4 text-[var(--accent-primary)]" />
           <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-            手环连接设置
+            额度悬浮窗
           </h3>
         </div>
 
         <div className="space-y-3">
-          <div className="flex items-center justify-between py-1">
+          <div className="flex items-center justify-between">
             <div>
-              <div className="text-xs font-medium text-[var(--text-primary)]">连接恢复策略</div>
-              <div className="text-[11px] text-[var(--text-muted)]">手环断开后需在概览页手动重新连接</div>
+              <div className="text-xs font-medium text-[var(--text-primary)]">显示额度悬浮窗</div>
+              <div className="text-[11px] text-[var(--text-muted)]">
+                独立于手环，未配置手环也可使用；关闭只隐藏窗口，不影响额度采集
+              </div>
             </div>
-            <span className="text-xs px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--bg-app)] border border-[var(--border-default)] text-[var(--text-secondary)]">
-              手动重新连接
-            </span>
+            <Toggle
+              checked={miniBar.visible}
+              disabled={miniBar.busy}
+              onChange={(v) => void miniBar.setVisible(v)}
+            />
           </div>
-
-          <div className="flex items-center justify-between py-1 border-t border-[var(--border-default)]/60 pt-3">
-            <div>
-              <div className="text-xs font-medium text-[var(--text-primary)]">同步策略</div>
-              <div className="text-[11px] text-[var(--text-muted)]">状态变更实时推送到手环端快应用</div>
-            </div>
-            <span className="text-xs text-[var(--text-muted)] font-mono">
-              实时同步
-            </span>
+          {miniBar.error && (
+            <p className="text-[11px] leading-relaxed text-[var(--status-error)]">{miniBar.error}</p>
+          )}
+          <div className="text-[11px] text-[var(--text-muted)] pt-3 border-t border-[var(--border-default)]/60">
+            「显示 Agent 状态」控制概览与悬浮条内是否呈现 Agent 内容，与悬浮窗显隐是两件事。
           </div>
         </div>
       </section>

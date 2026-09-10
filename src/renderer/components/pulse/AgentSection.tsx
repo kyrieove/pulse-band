@@ -16,7 +16,7 @@ export type SupportedAgent = typeof SUPPORTED_AGENTS[number];
 
 const AGENT_DISPLAY_NAMES: Record<SupportedAgent, string> = {
   claude: 'Claude Code',
-  codex: 'Codex CLI',
+  codex: 'Codex',
   antigravity: 'Antigravity',
 };
 
@@ -175,7 +175,7 @@ export const AgentSection: React.FC = () => {
               尚未检测到活跃或已配置的 AI Agent
             </p>
             <p className="text-xs text-[var(--text-muted)] max-w-sm mx-auto leading-relaxed">
-              当本地启动 Claude Code、Codex CLI 或配置额度源后，系统将自动识别并在此呈现，无虚假数据占位。
+              当本地启动 Claude Code、Codex 或配置额度源后，系统将自动识别并在此呈现，无虚假数据占位。
             </p>
           </div>
         </div>

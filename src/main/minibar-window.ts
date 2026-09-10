@@ -66,6 +66,41 @@ function saveBounds() {
   }
 }
 
+/**
+ * 把窗口位置夹回可见工作区。
+ *
+ * 场景：用户改过显示器布局（拔掉外接屏、改分辨率/缩放）后，上次保存的坐标
+ * 可能落在所有显示器之外，窗口就会"消失"。只要仍与任一显示器工作区相交就保持原位，
+ * 否则移回主显示器右上角默认位。
+ */
+function clampToVisibleArea(x: number, y: number, w: number, h: number): { x: number; y: number } {
+  try {
+    const intersects = screen.getAllDisplays().some((d) => {
+      const a = d.workArea;
+      return x + w > a.x && x < a.x + a.width && y + h > a.y && y < a.y + a.height;
+    });
+    if (intersects) return { x, y };
+    const primary = screen.getPrimaryDisplay().workArea;
+    return {
+      x: Math.round(primary.x + primary.width - w - 24),
+      y: Math.round(primary.y + 24),
+    };
+  } catch {
+    return { x, y };
+  }
+}
+
+/** 显示前确保窗口在当前可见区域内（运行期显示器变化也需要纠正）。 */
+function ensureOnScreen(): void {
+  if (!minibarWin || minibarWin.isDestroyed()) return;
+  const b = minibarWin.getBounds();
+  const fixed = clampToVisibleArea(b.x, b.y, b.width, b.height);
+  if (fixed.x !== b.x || fixed.y !== b.y) {
+    minibarWin.setPosition(fixed.x, fixed.y);
+    saveBounds();
+  }
+}
+
 function pushState() {
   if (!minibarWin || minibarWin.isDestroyed() || !sessionManagerRef || !statusServerRef) return;
   const state: MinibarState = {
@@ -95,6 +130,7 @@ export function toggleMiniBar(): void {
     minibarWin.hide();
     saveVisibility(false);
   } else {
+    ensureOnScreen();
     minibarWin.show();
     saveVisibility(true);
     pushState();
@@ -131,6 +167,11 @@ export function createMiniBarWindow(
       defaultX = 100;
       defaultY = 100;
     }
+  } else {
+    // 上次保存的位置可能已经不在任何显示器内（换了显示器/分辨率），夹回可见区域
+    const fixed = clampToVisibleArea(defaultX, defaultY, COLLAPSED_WIDTH, COLLAPSED_HEIGHT);
+    defaultX = fixed.x;
+    defaultY = fixed.y;
   }
 
   minibarWin = new BrowserWindow({
@@ -226,6 +267,7 @@ export function createMiniBarWindow(
   ipcMain.handle('minibar:set-visible', (_, show: boolean) => {
     if (!minibarWin || minibarWin.isDestroyed()) return false;
     if (show) {
+      ensureOnScreen();
       minibarWin.show();
       pushState();
     } else {

@@ -606,7 +606,13 @@ export class AppInstallService {
     return this.cancelFileTransfer(req.installId);
   }
 
-  async sendFileChunks(installId?: string): Promise<{ sentChunks: number; totalBytes: number; status: InstallSessionStatus }> {
+  async sendFileChunks(installId?: string): Promise<{
+    sentChunks: number;
+    totalBytes: number;
+    status: InstallSessionStatus;
+    /** pulse-core 依据真实设备结果给出的结论；completed 才代表设备已确认安装 */
+    coreStatus: string | null;
+  }> {
     if (!this.session) {
       throw new Error('未找到当前活动的安装会话');
     }
@@ -688,6 +694,7 @@ export class AppInstallService {
         sentChunks,
         totalBytes: this.session.receivedBytes,
         status: this.session.status,
+        coreStatus: this.session.coreStatus ?? null,
       };
     } catch (err: any) {
       if (err?.message === 'cancelled') {

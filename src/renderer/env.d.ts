@@ -25,7 +25,13 @@ export interface AppInstallBridge {
   prepare: (req: InstallPrepareRequest) => Promise<InstallPrepareResult>;
   prepareFile: (filePath: string) => Promise<InstallPrepareResult>;
   sendChunk: (req: InstallChunkRequest) => Promise<InstallChunkResult>;
-  sendChunks: (installId?: string) => Promise<{ sentChunks: number; totalBytes: number; status: InstallSessionStatus }>;
+  sendChunks: (installId?: string) => Promise<{
+    sentChunks: number;
+    totalBytes: number;
+    status: InstallSessionStatus;
+    /** pulse-core 依据真实设备结果给出的结论；completed 才代表设备已确认安装 */
+    coreStatus: string | null;
+  }>;
   commit: (req: InstallCommitRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus; error?: string }>;
   cancel: (req: InstallCancelRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus }>;
   cancelTransfer: (installId: string) => Promise<{ ok: boolean; status?: InstallSessionStatus }>;

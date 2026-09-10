@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Watch, Package, ChevronDown, ChevronRight, Upload } from 'lucide-react';
+import { Watch, Package, Upload } from 'lucide-react';
 import { useBandConnection } from '../../hooks/useBandConnection';
+import { OtherAppInstall } from './OtherAppInstall';
 
 export interface BandManagementPageProps {
   onStartSetup?: () => void;
@@ -23,7 +24,6 @@ interface BundledInfo {
 }
 
 export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartSetup }) => {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const conn = useBandConnection();
 
   // 内置手环端快应用的版本信息来自真实 manifest（安装动作在设置向导第 6 步）
@@ -69,7 +69,7 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
             className="px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-strong)] text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-app)] transition-colors cursor-pointer"
             title="进入手环设置向导，重新配置设备"
           >
-            更换手环
+            配置手环
           </button>
         </div>
 
@@ -119,45 +119,20 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
         </div>
         <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
           配套手环端快应用负责在手环屏幕上实时渲染 Agent 运行状态与配额。安装包随桌面端发布，
-          在「更换手环」向导的「安装Pulse快应用」步骤一键安装。
+          在「配置手环」向导的「安装Pulse快应用」步骤一键安装。
         </p>
       </section>
 
-      {/* 高级区域：推送其他快应用 (默认折叠) */}
-      <section className="rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden transition-colors duration-200">
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen(!advancedOpen)}
-          className="w-full p-4 flex items-center justify-between text-left hover:bg-[var(--bg-app)] transition-colors"
-        >
-          <div className="flex items-center gap-2">
-            {advancedOpen ? (
-              <ChevronDown className="w-4 h-4 text-[var(--text-muted)]" />
-            ) : (
-              <ChevronRight className="w-4 h-4 text-[var(--text-muted)]" />
-            )}
-            <span className="text-xs font-medium text-[var(--text-primary)]">
-              高级工具：推送其他快应用
-            </span>
-          </div>
-          <span className="text-[11px] text-[var(--text-muted)]">
-            {advancedOpen ? '点击收起' : '默认折叠'}
-          </span>
-        </button>
-
-        {advancedOpen && (
-          <div className="p-5 pt-1 border-t border-[var(--border-default)] space-y-3">
-            <div className="p-6 rounded-[var(--radius-md)] border border-dashed border-[var(--border-strong)] text-center space-y-2 bg-[var(--bg-app)]">
-              <Upload className="w-6 h-6 mx-auto text-[var(--text-muted)]" />
-              <p className="text-xs text-[var(--text-secondary)]">
-                支持拖入或选择单个 .rpk 文件
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)]">
-                高级开发工具，非页面主要视觉中心
-              </p>
-            </div>
-          </div>
-        )}
+      {/* 推送其他快应用：常驻可用区域 */}
+      <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-3">
+        <div className="flex items-center gap-2.5">
+          <Upload className="w-4 h-4 text-[var(--text-muted)]" />
+          <h3 className="text-sm font-semibold text-[var(--text-primary)]">推送其他快应用</h3>
+        </div>
+        <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+          安装第三方或自行构建的 .rpk 到手环。与内置安装共用同一条安装通道，同一时间只允许一个安装任务。
+        </p>
+        <OtherAppInstall connected={conn.state === 'connected'} />
       </section>
     </div>
   );

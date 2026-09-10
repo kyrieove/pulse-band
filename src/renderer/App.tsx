@@ -166,7 +166,7 @@ export const App: React.FC = () => {
         </ContentArea>
       </div>
 
-      {/* 首次设置 / 更换手环向导 (默认隐藏，仅在触发更换手环时展示) */}
+      {/* 配置手环向导 (默认隐藏，仅在触发「配置手环」时展示) */}
       {showSetup && (
         <SetupWizard
           onClose={() => setShowSetup(false)}
