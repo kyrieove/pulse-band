@@ -9,8 +9,9 @@ mod app_install;
 
 use app_install::{
     AppInstallProtocol, AppInstallTransport, BandDeviceTransport, InstallChunk,
-    InstallMetadata, InstallTransportDispatcher, MockAppInstallProtocol,
-    MockAppInstallTransport, MockBandDeviceTransport, TransportMode,
+    InstallMetadata, InstallProtocolRecorder, InstallTransportDispatcher,
+    MockAppInstallProtocol, MockAppInstallTransport, MockBandDeviceTransport,
+    MockDeviceReplayTransport, PacketDirection, ProtocolInspector, TransportMode,
     XiaomiBand10Transport,
 };
 use frame::Frame;
@@ -502,4 +503,161 @@ fn test_18_full_layered_mock_integration() {
     assert_eq!(res.status, "verifying");
     assert_ne!(res.status, "completed");
     assert_ne!(res.status, "installed");
+}
+
+#[test]
+fn test_19_recorder_transparently_logs_without_modifying_traffic() {
+    let recorder = InstallProtocolRecorder::new();
+    let mut replay = MockDeviceReplayTransport::with_recorder(recorder);
+
+    assert!(replay.connect("11:22:33:44:55:66").is_ok());
+
+    // 预装入待接收的帧
+    let rx_frame = Frame {
+        frame_type: 0x01,
+        seq: 42,
+        payload: vec![0xAA, 0xBB],
+    };
+    replay.queue_rx_frame(rx_frame.clone());
+
+    // 发送一帧
+    let tx_frame = Frame {
+        frame_type: 0x03,
+        seq: 1,
+        payload: vec![0x01, 0x02, 0x03, 0x04],
+    };
+    assert!(replay.send_frame(&tx_frame).is_ok());
+
+    // 接收一帧
+    let received = replay.receive_frame(100).expect("应当成功接收");
+    assert_eq!(received, Some(rx_frame));
+
+    // 校验录制器捕获了双向帧且内容准确无篡改
+    let rec = replay.recorder.as_ref().unwrap();
+    assert_eq!(rec.packets.len(), 2);
+    assert_eq!(rec.packets[0].direction, PacketDirection::HostToBand);
+    assert_eq!(rec.packets[0].frame_type, 0x03);
+    assert_eq!(rec.packets[0].seq, 1);
+    assert_eq!(rec.packets[0].payload_hex, "01020304");
+
+    assert_eq!(rec.packets[1].direction, PacketDirection::BandToHost);
+    assert_eq!(rec.packets[1].frame_type, 0x01);
+    assert_eq!(rec.packets[1].seq, 42);
+    assert_eq!(rec.packets[1].payload_hex, "aabb");
+
+    // 校验序列化与反序列化对齐
+    let json = rec.to_json().expect("序列化 JSON 成功");
+    let loaded = InstallProtocolRecorder::from_json(&json).expect("反序列化 JSON 成功");
+    assert_eq!(loaded.packets.len(), 2);
+    assert_eq!(loaded.packets[0], rec.packets[0]);
+}
+
+#[test]
+fn test_20_replay_transport_drives_protocol_flow() {
+    let mut recorder = InstallProtocolRecorder::new();
+    // 模拟录制到的历史手环 ACK / 应答帧
+    recorder.record_rx(&Frame {
+        frame_type: 0x01,
+        seq: 0,
+        payload: vec![0x00],
+    });
+
+    let mut replay = MockDeviceReplayTransport::new();
+    replay.load_from_recorder(&recorder);
+    assert_eq!(replay.rx_replay_queue.len(), 1);
+
+    assert!(replay.connect("11:22:33:44:55:66").is_ok());
+
+    // 注入到 XiaomiBand10Transport
+    let proto = MockAppInstallProtocol::new();
+    let mut transport =
+        XiaomiBand10Transport::with_protocol_and_device(Box::new(proto), Box::new(replay));
+
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+
+    // 驱动协议流程
+    let session = transport.prepare(meta).expect("prepare 成功");
+    assert_eq!(session.status, "preparing");
+
+    let chunk = InstallChunk {
+        session_id: session.session_id.clone(),
+        index: 0,
+        size: 512,
+        data: vec![0u8; 512],
+    };
+    let ack = transport.send_chunk(chunk).expect("send_chunk 成功");
+    assert_eq!(ack.received_bytes, 512);
+
+    let res = transport.commit(session.session_id).expect("commit 成功");
+    assert_eq!(res.status, "verifying");
+    assert_ne!(res.status, "completed");
+    assert_ne!(res.status, "installed");
+}
+
+#[test]
+fn test_21_protocol_inspector_parses_frames_and_protobuf() {
+    // 1. 测试标准 A5A5 二进制帧解码与分析
+    let payload = vec![0x08, 0x01, 0x10, 0x09]; // 模拟合法 Protobuf (field 1 = 1, field 2 = 9)
+    let len_bytes = (payload.len() as u16).to_le_bytes();
+    let crc = crate::crc::crc16_arc(&payload);
+    let crc_bytes = crc.to_le_bytes();
+
+    let mut raw = vec![
+        0xA5, 0xA5, 0x03, 0x05, len_bytes[0], len_bytes[1], crc_bytes[0], crc_bytes[1],
+    ];
+    raw.extend_from_slice(&payload);
+
+    let inspection = ProtocolInspector::inspect_raw_bytes(&raw).expect("解析原始帧成功");
+    assert!(inspection.magic_valid);
+    assert_eq!(inspection.frame_type, 0x03);
+    assert_eq!(inspection.frame_type_desc, "Business/Auth");
+    assert_eq!(inspection.seq, 0x05);
+    assert_eq!(inspection.payload_len, 4);
+    assert_eq!(inspection.payload_hex, "08011009");
+    assert!(inspection.crc_valid);
+    assert!(inspection.protobuf_attempt.success);
+    assert_eq!(inspection.protobuf_attempt.field_tags, vec![1, 2]);
+
+    // 2. 测试非 Protobuf 载荷（例如 TLV 协商帧）
+    let nego_payload = vec![0x01, 0x01, 0x03]; // 非法 Protobuf (field 0)
+    let nego_frame = Frame {
+        frame_type: 0x02,
+        seq: 0,
+        payload: nego_payload,
+    };
+    let nego_insp = ProtocolInspector::inspect_frame(&nego_frame);
+    assert_eq!(nego_insp.frame_type_desc, "Negotiation");
+    assert!(!nego_insp.protobuf_attempt.success);
+}
+
+#[test]
+fn test_22_unknown_payload_safely_rejected_never_completed() {
+    // 构造未知未实证的 payload
+    let unknown_payload = vec![0xFE, 0xED, 0xBE, 0xEF];
+    let proto_insp = ProtocolInspector::try_inspect_protobuf(&unknown_payload);
+    // 未经实证协议不会误判为合法 Protobuf
+    assert!(!proto_insp.success);
+
+    // 未知安装协议在 XiaomiBand10Transport 下绝不能进入 completed 或 installed
+    let mut transport = XiaomiBand10Transport::new();
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 512,
+        hash: "dummy_hash".to_string(),
+    };
+
+    assert!(transport.prepare(meta).is_err());
+    let commit_res = transport.commit("dummy".to_string());
+    assert!(commit_res.is_err());
+    let err_str = commit_res.unwrap_err();
+    assert_ne!(err_str, "completed");
+    assert_ne!(err_str, "installed");
 }

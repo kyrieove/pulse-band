@@ -671,3 +671,448 @@ pub fn get_global_transport_mode() -> TransportMode {
     let transport = GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
     transport.mode()
 }
+
+// =========================================================================
+// 阶段 15: 快应用安装协议取证与 Replay 基础设施
+// =========================================================================
+
+/// 数据包传输方向
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PacketDirection {
+    HostToBand,
+    BandToHost,
+}
+
+/// 录制的数据帧项
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedPacket {
+    pub direction: PacketDirection,
+    pub timestamp_ms: u64,
+    pub frame_type: u8,
+    pub seq: u8,
+    pub len: u16,
+    pub crc: u16,
+    pub payload_hex: String,
+}
+
+/// 协议录制调试层：用于捕获双向数据帧并导出日志
+#[allow(dead_code)]
+#[derive(Debug, Default, Clone)]
+pub struct InstallProtocolRecorder {
+    pub packets: Vec<RecordedPacket>,
+}
+
+#[allow(dead_code)]
+impl InstallProtocolRecorder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_tx(&mut self, frame: &Frame) {
+        self.record(PacketDirection::HostToBand, frame);
+    }
+
+    pub fn record_rx(&mut self, frame: &Frame) {
+        self.record(PacketDirection::BandToHost, frame);
+    }
+
+    pub fn record(&mut self, direction: PacketDirection, frame: &Frame) {
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let crc = crate::crc::crc16_arc(&frame.payload);
+        let payload_hex = frame
+            .payload
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join("");
+        self.packets.push(RecordedPacket {
+            direction,
+            timestamp_ms,
+            frame_type: frame.frame_type,
+            seq: frame.seq,
+            len: frame.payload.len() as u16,
+            crc,
+            payload_hex,
+        });
+    }
+
+    pub fn to_json(&self) -> Result<String> {
+        serde_json::to_string_pretty(&self.packets)
+            .map_err(|e| format!("序列化录制记录失败: {e}"))
+    }
+
+    pub fn from_json(json: &str) -> Result<Self> {
+        let packets: Vec<RecordedPacket> =
+            serde_json::from_str(json).map_err(|e| format!("反序列化录制记录失败: {e}"))?;
+        Ok(Self { packets })
+    }
+
+    pub fn clear(&mut self) {
+        self.packets.clear();
+    }
+}
+
+/// 基于回放与捕获的设备传输实现
+#[allow(dead_code)]
+#[derive(Debug, Default, Clone)]
+pub struct MockDeviceReplayTransport {
+    pub connected: bool,
+    pub target_addr: Option<String>,
+    pub rx_replay_queue: VecDeque<Frame>,
+    pub tx_sent_frames: Vec<Frame>,
+    pub expected_tx_frames: VecDeque<Frame>,
+    pub recorder: Option<InstallProtocolRecorder>,
+}
+
+#[allow(dead_code)]
+impl MockDeviceReplayTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_recorder(recorder: InstallProtocolRecorder) -> Self {
+        Self {
+            connected: false,
+            target_addr: None,
+            rx_replay_queue: VecDeque::new(),
+            tx_sent_frames: Vec::new(),
+            expected_tx_frames: VecDeque::new(),
+            recorder: Some(recorder),
+        }
+    }
+
+    /// 从录制器中加载回放流（筛选手环发往主机的数据帧作为 rx 队列）
+    pub fn load_from_recorder(&mut self, recorder: &InstallProtocolRecorder) {
+        for p in &recorder.packets {
+            if p.direction == PacketDirection::BandToHost {
+                if let Ok(payload) = hex_to_bytes(&p.payload_hex) {
+                    self.rx_replay_queue.push_back(Frame {
+                        frame_type: p.frame_type,
+                        seq: p.seq,
+                        payload,
+                    });
+                }
+            }
+        }
+    }
+
+    /// 从录制器中加载期望的下发流（筛选主机发往手环的数据帧作为 tx 预期断言队列）
+    pub fn load_expected_tx(&mut self, recorder: &InstallProtocolRecorder) {
+        for p in &recorder.packets {
+            if p.direction == PacketDirection::HostToBand {
+                if let Ok(payload) = hex_to_bytes(&p.payload_hex) {
+                    self.expected_tx_frames.push_back(Frame {
+                        frame_type: p.frame_type,
+                        seq: p.seq,
+                        payload,
+                    });
+                }
+            }
+        }
+    }
+
+    pub fn queue_rx_frame(&mut self, frame: Frame) {
+        self.rx_replay_queue.push_back(frame);
+    }
+}
+
+impl BandDeviceTransport for MockDeviceReplayTransport {
+    fn connect(&mut self, target_addr: &str) -> Result<()> {
+        self.connected = true;
+        self.target_addr = Some(target_addr.to_string());
+        Ok(())
+    }
+
+    fn disconnect(&mut self) -> Result<()> {
+        self.connected = false;
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connected
+    }
+
+    fn send_frame(&mut self, frame: &Frame) -> Result<()> {
+        if !self.connected {
+            return Err("device_not_connected: 底层设备未连接".to_string());
+        }
+        if let Some(recorder) = self.recorder.as_mut() {
+            recorder.record_tx(frame);
+        }
+        self.tx_sent_frames.push(frame.clone());
+        Ok(())
+    }
+
+    fn receive_frame(&mut self, _timeout_ms: u64) -> Result<Option<Frame>> {
+        if !self.connected {
+            return Err("device_not_connected: 底层设备未连接".to_string());
+        }
+        if let Some(frame) = self.rx_replay_queue.pop_front() {
+            if let Some(recorder) = self.recorder.as_mut() {
+                recorder.record_rx(&frame);
+            }
+            Ok(Some(frame))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// 协议分析输出结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameInspection {
+    pub magic_valid: bool,
+    pub frame_type: u8,
+    pub frame_type_desc: String,
+    pub seq: u8,
+    pub payload_len: usize,
+    pub payload_hex: String,
+    pub crc_expected: u16,
+    pub crc_actual: u16,
+    pub crc_valid: bool,
+    pub protobuf_attempt: ProtobufInspection,
+}
+
+/// Protobuf 解析尝试结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtobufInspection {
+    pub success: bool,
+    pub fields_count: usize,
+    pub field_tags: Vec<u32>,
+    pub note: String,
+}
+
+/// 协议分析工具：用于对捕获的原始字节与数据帧进行结构解析与有效性审计
+#[allow(dead_code)]
+pub struct ProtocolInspector;
+
+#[allow(dead_code)]
+impl ProtocolInspector {
+    /// 分析已解析的 Frame 结构体
+    pub fn inspect_frame(frame: &Frame) -> FrameInspection {
+        let crc_actual = crate::crc::crc16_arc(&frame.payload);
+        let payload_hex = frame
+            .payload
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join("");
+        let frame_type_desc = match frame.frame_type {
+            0x01 => "ACK".to_string(),
+            0x02 => "Negotiation".to_string(),
+            0x03 => "Business/Auth".to_string(),
+            other => format!("Unknown(0x{other:02x})"),
+        };
+        let protobuf_attempt = Self::try_inspect_protobuf(&frame.payload);
+
+        FrameInspection {
+            magic_valid: true,
+            frame_type: frame.frame_type,
+            frame_type_desc,
+            seq: frame.seq,
+            payload_len: frame.payload.len(),
+            payload_hex,
+            crc_expected: crc_actual,
+            crc_actual,
+            crc_valid: true,
+            protobuf_attempt,
+        }
+    }
+
+    /// 分析原始二进制字节流（包含 Magic 字节与 CRC 头部校验）
+    pub fn inspect_raw_bytes(bytes: &[u8]) -> Result<FrameInspection> {
+        if bytes.len() < 8 {
+            return Err("数据长度不足 8 字节最小帧头".to_string());
+        }
+        let magic_valid = bytes[0] == 0xA5 && bytes[1] == 0xA5;
+        if !magic_valid {
+            return Err(format!(
+                "Magic 无效: 0x{:02x}{:02x} (期望 0xa5a5)",
+                bytes[0], bytes[1]
+            ));
+        }
+        let frame_type = bytes[2];
+        let seq = bytes[3];
+        let len = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+        let crc_expected = u16::from_le_bytes([bytes[6], bytes[7]]);
+
+        if bytes.len() < 8 + len {
+            return Err(format!("帧载荷截断: 期望 {len} 字节，实际剩余 {} 字节", bytes.len() - 8));
+        }
+
+        let payload = &bytes[8..8 + len];
+        let crc_actual = crate::crc::crc16_arc(payload);
+        let crc_valid = crc_actual == crc_expected;
+
+        let frame = Frame {
+            frame_type,
+            seq,
+            payload: payload.to_vec(),
+        };
+
+        let mut inspection = Self::inspect_frame(&frame);
+        inspection.crc_expected = crc_expected;
+        inspection.crc_actual = crc_actual;
+        inspection.crc_valid = crc_valid;
+        Ok(inspection)
+    }
+
+    /// 尝试按 Protobuf wire format 进行格式探测
+    pub fn try_inspect_protobuf(payload: &[u8]) -> ProtobufInspection {
+        if payload.is_empty() {
+            return ProtobufInspection {
+                success: false,
+                fields_count: 0,
+                field_tags: Vec::new(),
+                note: "载荷为空".to_string(),
+            };
+        }
+
+        let mut offset = 0;
+        let mut field_tags = Vec::new();
+
+        while offset < payload.len() {
+            // 读取 key varint
+            let (key, bytes_read) = match read_varint(&payload[offset..]) {
+                Some(res) => res,
+                None => {
+                    return ProtobufInspection {
+                        success: false,
+                        fields_count: field_tags.len(),
+                        field_tags,
+                        note: "读取 Key Varint 失败或截断".to_string(),
+                    }
+                }
+            };
+            offset += bytes_read;
+
+            let wire_type = (key & 0x07) as u8;
+            let field_number = (key >> 3) as u32;
+
+            if field_number == 0 {
+                return ProtobufInspection {
+                    success: false,
+                    fields_count: field_tags.len(),
+                    field_tags,
+                    note: "非法 Protobuf 字段序号 0".to_string(),
+                };
+            }
+
+            field_tags.push(field_number);
+
+            match wire_type {
+                0 => {
+                    // Varint
+                    match read_varint(&payload[offset..]) {
+                        Some((_, v_read)) => offset += v_read,
+                        None => {
+                            return ProtobufInspection {
+                                success: false,
+                                fields_count: field_tags.len(),
+                                field_tags,
+                                note: "Varint 字段截断".to_string(),
+                            }
+                        }
+                    }
+                }
+                1 => {
+                    // 64-bit
+                    if offset + 8 > payload.len() {
+                        return ProtobufInspection {
+                            success: false,
+                            fields_count: field_tags.len(),
+                            field_tags,
+                            note: "64-bit 字段数据不足".to_string(),
+                        };
+                    }
+                    offset += 8;
+                }
+                2 => {
+                    // Length-delimited
+                    let (len, len_read) = match read_varint(&payload[offset..]) {
+                        Some(res) => res,
+                        None => {
+                            return ProtobufInspection {
+                                success: false,
+                                fields_count: field_tags.len(),
+                                field_tags,
+                                note: "读取 Length-delimited 长度失败".to_string(),
+                            }
+                        }
+                    };
+                    offset += len_read;
+                    let len = len as usize;
+                    if offset + len > payload.len() {
+                        return ProtobufInspection {
+                            success: false,
+                            fields_count: field_tags.len(),
+                            field_tags,
+                            note: "Length-delimited 载荷截断".to_string(),
+                        };
+                    }
+                    offset += len;
+                }
+                5 => {
+                    // 32-bit
+                    if offset + 4 > payload.len() {
+                        return ProtobufInspection {
+                            success: false,
+                            fields_count: field_tags.len(),
+                            field_tags,
+                            note: "32-bit 字段数据不足".to_string(),
+                        };
+                    }
+                    offset += 4;
+                }
+                other => {
+                    return ProtobufInspection {
+                        success: false,
+                        fields_count: field_tags.len(),
+                        field_tags,
+                        note: format!("遇到不支持或非法的 Protobuf WireType: {other}"),
+                    };
+                }
+            }
+        }
+
+        ProtobufInspection {
+            success: true,
+            fields_count: field_tags.len(),
+            field_tags: field_tags.clone(),
+            note: format!("成功解析为有效 Protobuf Wire 格式 ({} 个字段)", field_tags.len()),
+        }
+    }
+}
+
+fn read_varint(bytes: &[u8]) -> Option<(u64, usize)> {
+    let mut val = 0u64;
+    let mut shift = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        if i >= 10 {
+            return None; // varint 溢出
+        }
+        val |= ((b & 0x7F) as u64) << shift;
+        if (b & 0x80) == 0 {
+            return Some((val, i + 1));
+        }
+        shift += 7;
+    }
+    None
+}
+
+fn hex_to_bytes(hex: &str) -> std::result::Result<Vec<u8>, String> {
+    if hex.len() % 2 != 0 {
+        return Err("Hex 字符串长度必须为偶数".to_string());
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|e| format!("解析 Hex 字节失败: {e}"))
+        })
+        .collect()
+}
