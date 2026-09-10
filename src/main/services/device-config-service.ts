@@ -7,11 +7,32 @@
  * 3. 结合日志提取的 32 位 authkey 与选定手环的 MAC 地址，校验后原子写入 device.json；
  * 4. 遵守纪律：authkey 与完整物理 MAC 绝对不返回给 Renderer（通过 maskedAddr 脱敏）。
  */
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { extractFromPath } from './band-key-extract.ts';
 import { getDeviceConfigFile } from './oronbox-client.ts';
+
+/**
+ * 异步执行 PowerShell 并取回 stdout。
+ *
+ * 纪律：主进程里**禁止**用 execFileSync —— Get-PnpDevice 需要拉起 PowerShell，
+ * 同步调用会阻塞 Electron 主进程事件循环（窗口不刷新、IPC 与调试端口全部无响应），
+ * 首开向导时会出现数秒级卡死。
+ */
+function execPowerShell(command: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', command],
+      { encoding: 'utf8', timeout: timeoutMs, windowsHide: true },
+      (err, stdout) => {
+        if (err) reject(err);
+        else resolve(typeof stdout === 'string' ? stdout : String(stdout ?? ''));
+      }
+    );
+  });
+}
 
 export interface DeviceConfigStatus {
   exists: boolean;
@@ -116,17 +137,15 @@ export class DeviceConfigService {
   }
 
   /**
-   * 枚举 Windows 系统中已配对的蓝牙设备列表，筛选匹配手环
+   * 枚举 Windows 系统中已配对的蓝牙设备列表，筛选匹配手环。
+   *
+   * 异步：底层走 `execPowerShell`，不阻塞主进程（详见该函数注释）。
    */
-  public getPairedBandDevices(): PairedBandDevice[] {
+  public async getPairedBandDevices(): Promise<PairedBandDevice[]> {
     try {
       const psCommand =
         'Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName, InstanceId, Status | ConvertTo-Json';
-      const output = execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', psCommand],
-        { encoding: 'utf8', timeout: 8000 }
-      );
+      const output = await execPowerShell(psCommand, 8000);
 
       if (!output || !output.trim()) return [];
 
@@ -168,9 +187,11 @@ export class DeviceConfigService {
   }
 
   /**
-   * 保存设备配置至 device.json
+   * 保存设备配置至 device.json（异步：内部需枚举已配对设备）
    */
-  public saveDeviceConfig(payload: SaveDeviceConfigPayload): SaveDeviceConfigResult {
+  public async saveDeviceConfig(
+    payload: SaveDeviceConfigPayload
+  ): Promise<SaveDeviceConfigResult> {
     // 1. 若声明直接使用已有配置
     if (payload.useExisting) {
       const status = this.getDeviceConfigStatus();
@@ -203,7 +224,7 @@ export class DeviceConfigService {
     }
 
     // 3. 匹配选定手环设备
-    const pairedDevices = this.getPairedBandDevices();
+    const pairedDevices = await this.getPairedBandDevices();
     let selectedDevice: PairedBandDevice | undefined;
 
     if (payload.selectedDeviceId) {
@@ -243,7 +264,19 @@ export class DeviceConfigService {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      fs.writeFileSync(this.configPath, JSON.stringify(configContent, null, 2), 'utf8');
+      // 原子写入：先写同目录临时文件，再 rename 覆盖。
+      //
+      // 直接 writeFileSync 覆盖目标文件时，若进程在写入中途被终止（被 kill / 断电），
+      // 会留下截断的 JSON —— pulse-core 读它时解析失败，且报错信息很难定位到"配置写坏了"。
+      // 同目录 rename 在 NTFS 上是原子替换，失败时旧配置保持完整。
+      const tmpPath = `${this.configPath}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(configContent, null, 2), 'utf8');
+      try {
+        fs.renameSync(tmpPath, this.configPath);
+      } catch (err) {
+        fs.rmSync(tmpPath, { force: true });
+        throw err;
+      }
 
       return {
         ok: true,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Watch } from 'lucide-react';
+import { Watch, Clock3 } from 'lucide-react';
 import { TopBar } from './components/layout/TopBar';
 import { Sidebar, type PulsePage } from './components/layout/Sidebar';
 import { ContentArea } from './components/layout/ContentArea';
@@ -7,7 +7,7 @@ import { BandConnectionCard } from './components/pulse/BandConnectionCard';
 import { AgentSection } from './components/pulse/AgentSection';
 import { BandManagementPage } from './components/pulse/BandManagementPage';
 import { SettingsPage } from './components/pulse/SettingsPage';
-import { SetupWizard } from './components/setup';
+import { SetupWizard, type QuotaVerifyOutcome } from './components/setup';
 import { MiniBar } from './components/minibar/MiniBar';
 import { useBandConnection } from './hooks/useBandConnection';
 import type { PulseOronboxState } from '../main/services/oronbox-bridge';
@@ -37,6 +37,10 @@ export const App: React.FC = () => {
   });
   const [showAgents, setShowAgents] = useState<boolean>(true);
   const [showSetup, setShowSetup] = useState<boolean>(false);
+  /** 向导打开时落在第几步（0-based）：稍后验证后可回到第 4 步继续 */
+  const [setupStartIndex, setSetupStartIndex] = useState<number>(0);
+  /** 额度验证结果：deferred 表示用户选择了稍后验证，**不得**当作已验证 */
+  const [quotaVerify, setQuotaVerify] = useState<QuotaVerifyOutcome | 'unknown'>('unknown');
   const [configStatus, setConfigStatus] = useState<{ exists: boolean; valid: boolean } | null>(null);
   const [state, setState] = useState<PulseOronboxState | null>(null);
   // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
@@ -172,6 +176,34 @@ export const App: React.FC = () => {
                   </button>
                 </div>
               )}
+              {/* 额度验证未完成：明确标注"未验证"，并提供继续验证入口 */}
+              {quotaVerify === 'deferred' && (
+                <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-[var(--radius-md)] bg-[var(--bg-app)] flex items-center justify-center text-[var(--text-muted)] shrink-0">
+                      <Clock3 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-semibold text-[var(--text-primary)]">
+                        额度验证未完成
+                      </h4>
+                      <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                        你选择了稍后验证，本项不会记录为已验证。可在手环上打开 Pulse 后回到向导第 4 步继续。
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSetupStartIndex(3);
+                      setShowSetup(true);
+                    }}
+                    className="px-3.5 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-strong)] text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors shrink-0"
+                  >
+                    继续验证
+                  </button>
+                </div>
+              )}
               <BandConnectionCard
                 connectionState={state?.connection.state}
                 rawError={state?.connection.error}
@@ -185,7 +217,12 @@ export const App: React.FC = () => {
           )}
 
           {page === 'band' && (
-            <BandManagementPage onStartSetup={() => setShowSetup(true)} />
+            <BandManagementPage
+              onStartSetup={() => {
+                setSetupStartIndex(0);
+                setShowSetup(true);
+              }}
+            />
           )}
 
           {page === 'settings' && (
@@ -202,8 +239,12 @@ export const App: React.FC = () => {
       {/* 配置手环向导 (默认隐藏，仅在触发「配置手环」时展示) */}
       {showSetup && (
         <SetupWizard
+          initialStepIndex={setupStartIndex}
           onClose={() => setShowSetup(false)}
-          onFinish={() => setShowSetup(false)}
+          onFinish={(outcome) => {
+            if (outcome) setQuotaVerify(outcome);
+            setShowSetup(false);
+          }}
         />
       )}
     </div>

@@ -5,7 +5,11 @@ export { CredentialSaveStep, type CredentialSaveStepProps } from './CredentialSa
 export { WindowsPairingStep, type WindowsPairingStepProps } from './WindowsPairingStep';
 export { RfcommAuthStep, type RfcommAuthStepProps } from './RfcommAuthStep';
 export { InstallAppStep, type InstallAppStepProps } from './InstallAppStep';
-export { VerifyQuotaStep, type VerifyQuotaStepProps } from './VerifyQuotaStep';
+export {
+  VerifyQuotaStep,
+  type VerifyQuotaStepProps,
+  type QuotaVerifyOutcome,
+} from './VerifyQuotaStep';
 export {
   type SetupStatus,
   type SetupStepId,

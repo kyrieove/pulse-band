@@ -23,11 +23,14 @@ import {
 import { LogImportStep } from './LogImportStep';
 import { ConnectBandStep } from './ConnectBandStep';
 import { InstallAppStep } from './InstallAppStep';
-import { VerifyQuotaStep } from './VerifyQuotaStep';
+import { VerifyQuotaStep, type QuotaVerifyOutcome } from './VerifyQuotaStep';
 
 export interface SetupWizardProps {
   onClose: () => void;
-  onFinish?: () => void;
+  /** 完成向导时回报额度验证结果（deferred = 稍后验证，不代表已验证） */
+  onFinish?: (outcome?: QuotaVerifyOutcome) => void;
+  /** 打开时直接落在第几步（0-based）。用于"稍后验证"后回到第 4 步继续。 */
+  initialStepIndex?: number;
 }
 
 const STEP_ICONS: Record<SetupStepId, React.ElementType> = {
@@ -42,8 +45,12 @@ const STEP_ICONS: Record<SetupStepId, React.ElementType> = {
   rfcomm_auth: Network,
 };
 
-export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish }) => {
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
+export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, initialStepIndex }) => {
+  const [currentIndex, setCurrentIndex] = useState<number>(() => {
+    const max = INITIAL_SETUP_STEPS.length - 1;
+    const start = typeof initialStepIndex === 'number' ? initialStepIndex : 0;
+    return Math.min(Math.max(0, start), max);
+  });
   const [stepError, setStepError] = useState<string | null>(null);
 
   const steps: SetupStep[] = INITIAL_SETUP_STEPS.map((step, idx) => {
@@ -86,8 +93,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish }) =
     setCurrentIndex(index);
   };
 
-  const handleFinish = () => {
-    onFinish?.();
+  const handleFinish = (outcome?: QuotaVerifyOutcome) => {
+    onFinish?.(outcome);
     onClose();
   };
 

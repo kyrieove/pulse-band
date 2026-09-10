@@ -10,8 +10,15 @@ import {
 import { AgentLogo } from '../pulse/AgentLogo';
 
 export interface VerifyQuotaStepProps {
-  onComplete?: () => void;
+  /**
+   * 额度验证结果：
+   * - `confirmed` = 用户亲自确认手环屏幕显示正常
+   * - `deferred`  = 稍后验证，**不标记为已验证**，之后可回到本步继续
+   */
+  onComplete?: (outcome: QuotaVerifyOutcome) => void;
 }
+
+export type QuotaVerifyOutcome = 'confirmed' | 'deferred';
 
 interface QuotaLimit {
   pct5h: number | null;
@@ -64,8 +71,8 @@ export const VerifyQuotaStep: React.FC<VerifyQuotaStepProps> = ({ onComplete }) 
     limits !== null &&
     Object.values(limits).some((q) => q && (q.pct5h != null || q.pct7d != null));
 
-  const handleConfirmFinish = () => {
-    onComplete?.();
+  const handleConfirmFinish = (outcome: QuotaVerifyOutcome) => {
+    onComplete?.(outcome);
   };
 
   return (
@@ -169,23 +176,24 @@ export const VerifyQuotaStep: React.FC<VerifyQuotaStepProps> = ({ onComplete }) 
         </div>
       </div>
 
-      {/* 操作按钮组 */}
+      {/* 操作按钮组：两种结果语义不同，必须分开记录 */}
       <div className="pt-2 flex items-center justify-between">
         <button
           type="button"
-          onClick={handleConfirmFinish}
+          onClick={() => handleConfirmFinish('deferred')}
           className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] underline cursor-pointer"
+          title="本次不记录为已验证，之后可从本步继续验证"
         >
-          稍后验证 (直接进入主界面)
+          稍后验证（不标记为已验证）
         </button>
 
         <button
           type="button"
-          onClick={handleConfirmFinish}
+          onClick={() => handleConfirmFinish('confirmed')}
           className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium transition-colors shadow-sm cursor-pointer flex items-center gap-1.5"
         >
           <Check className="w-3.5 h-3.5" />
-          <span>由用户确认手环显示正常 (完成配置)</span>
+          <span>我已在手环上确认显示正常</span>
         </button>
       </div>
     </div>
