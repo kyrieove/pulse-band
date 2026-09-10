@@ -1285,4 +1285,42 @@ mod tests {
         };
         drop(ctx);
     }
+
+    #[test]
+    fn test_core_bt_install_wire_never_fakes_success() {
+        use crate::install::xiaomi::device_session::InstallWireSender;
+
+        // 1. Core.bt 为空：必须报 device_unavailable，绝不能假成功
+        let empty: std::sync::Arc<std::sync::Mutex<Option<DownlinkCtx>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let wire = CoreBtInstallWire {
+            bt: std::sync::Arc::clone(&empty),
+        };
+        assert!(!wire.is_available());
+        let err = wire
+            .send_install_payload(&[0x01, 0x01])
+            .expect_err("无已认证连接时必须失败");
+        assert!(err.contains("device_unavailable"), "err={err}");
+
+        // 2. Core.bt 存在但 sock 无效（0）：必须由 send_all 真实失败，绝不返回 Ok
+        let filled: std::sync::Arc<std::sync::Mutex<Option<DownlinkCtx>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Some(DownlinkCtx {
+                sock: 0,
+                enc_key: [0x11u8; 16],
+                basic: None,
+                seq_out: 7,
+            })));
+        let wire = CoreBtInstallWire {
+            bt: std::sync::Arc::clone(&filled),
+        };
+        assert!(wire.is_available());
+        assert!(
+            wire.send_install_payload(&[0x01, 0x01]).is_err(),
+            "无效 socket 上必须失败，绝不假成功"
+        );
+
+        // 发送失败时 seq_out 不得前进（否则会与真实链路序号错位）
+        let guard = filled.lock().unwrap();
+        assert_eq!(guard.as_ref().unwrap().seq_out, 7);
+    }
 }
