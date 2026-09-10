@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Watch, Package, ChevronDown, ChevronRight, Upload } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Watch, Package, ChevronDown, ChevronRight, Upload, Download, Loader2 } from 'lucide-react';
 import { useBandConnection } from '../../hooks/useBandConnection';
+import type { InstallProgressEvent } from '../../../common/types';
 
 export interface BandManagementPageProps {
   onStartSetup?: () => void;
@@ -13,9 +14,82 @@ const CONN_STATE_TEXT: Record<string, string> = {
   error: '连接失败',
 };
 
+interface BundledInfo {
+  exists: boolean;
+  packageId?: string;
+  versionName?: string;
+  versionCode?: number;
+  fileSize?: number;
+  manifestValid?: boolean;
+}
+
 export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartSetup }) => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const conn = useBandConnection();
+
+  // 内置手环端快应用：版本信息来自真实 manifest，安装为一键动作
+  const [bundled, setBundled] = useState<BundledInfo | null>(null);
+  const [installBusy, setInstallBusy] = useState(false);
+  const [installProgress, setInstallProgress] = useState<number | null>(null);
+  const [installMessage, setInstallMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    window.pulse?.appInstall
+      ?.getBundledInfo?.()
+      .then((info) => {
+        if (alive && info) setBundled(info as BundledInfo);
+      })
+      .catch(() => {
+        if (alive) setBundled({ exists: false });
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.pulse?.appInstall?.onProgress?.((ev: InstallProgressEvent) => {
+      if (typeof ev.percentage === 'number') setInstallProgress(ev.percentage);
+      if (ev.status === 'failed') {
+        setInstallBusy(false);
+        setInstallProgress(null);
+      }
+    });
+    return () => unsubscribe?.();
+  }, []);
+
+  const installBundled = useCallback(async () => {
+    setInstallBusy(true);
+    setInstallProgress(0);
+    setInstallMessage(null);
+    try {
+      const res = await window.pulse?.appInstall?.installBundled?.();
+      if (!res) {
+        setInstallMessage({ ok: false, text: '安装接口不可用' });
+        return;
+      }
+      // 只有 pulse-core 依据真实设备结果返回 completed 才算成功
+      if (res.coreStatus === 'completed') {
+        setInstallMessage({
+          ok: true,
+          text: `设备已确认安装完成（${res.packageId ?? '未知包'} / versionCode ${res.versionCode ?? '?'}）`,
+        });
+      } else {
+        setInstallMessage({
+          ok: false,
+          text: `设备未确认安装完成（core 状态：${res.coreStatus ?? 'unknown'}）`,
+        });
+      }
+    } catch (err: any) {
+      setInstallMessage({ ok: false, text: err?.message ?? '安装失败' });
+    } finally {
+      setInstallBusy(false);
+      setInstallProgress(null);
+    }
+  }, []);
+
+  const canInstall = conn.state === 'connected' && !installBusy && bundled?.exists === true;
 
   return (
     <div className="space-y-5">
@@ -73,8 +147,8 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
         </div>
       </section>
 
-      {/* Pulse 快应用版本区域骨架 */}
-      <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-3 transition-colors duration-200">
+      {/* Pulse 快应用：真实版本信息 + 一键安装 */}
+      <section className="p-5 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <Package className="w-4 h-4 text-[var(--text-muted)]" />
@@ -83,12 +157,52 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
             </h3>
           </div>
           <span className="text-xs font-mono text-[var(--text-muted)]">
-            v1.1.0 (内置版本)
+            {bundled === null
+              ? '读取中…'
+              : !bundled.exists
+              ? '内置包缺失'
+              : `v${bundled.versionName ?? '?'} (versionCode ${bundled.versionCode ?? '?'})`}
           </span>
         </div>
         <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-          配套手环端快应用负责在手环屏幕上实时渲染 Agent 运行状态与配额。
+          配套手环端快应用负责在手环屏幕上实时渲染 Agent 运行状态与配额。安装包随桌面端发布，无需自行选择文件。
         </p>
+
+        <div className="flex items-center gap-2 select-none">
+          <button
+            type="button"
+            onClick={installBundled}
+            disabled={!canInstall}
+            title={
+              conn.state !== 'connected'
+                ? '请先连接手环'
+                : bundled?.exists !== true
+                ? '内置安装包缺失，无法安装'
+                : '安装或重新安装内置手环端快应用'
+            }
+            className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--accent-primary)] text-white text-xs font-medium cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+          >
+            {installBusy ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
+            <span>{installBusy ? '正在安装…' : '安装／重新安装手环端'}</span>
+          </button>
+          {installProgress !== null && (
+            <span className="text-xs text-[var(--text-muted)]">{installProgress}%</span>
+          )}
+        </div>
+
+        {installMessage && (
+          <p
+            className={`text-xs leading-relaxed ${
+              installMessage.ok ? 'text-emerald-400' : 'text-[var(--status-error)]'
+            }`}
+          >
+            {installMessage.text}
+          </p>
+        )}
       </section>
 
       {/* 高级区域：推送其他快应用 (默认折叠) */}

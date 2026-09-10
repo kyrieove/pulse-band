@@ -382,3 +382,97 @@ test('12. 单任务互斥仍通过', () => {
     { message: /已有正在进行的安装会话/ }
   );
 });
+
+test('13. 内置包信息来自真实 manifest（不写死版本号）', () => {
+  const service = new AppInstallService();
+  const info = service.getBundledInfo();
+
+  assert.equal(info.exists, true, '内置 assets/band-app.rpk 必须存在');
+  assert.equal(info.manifestValid, true);
+  assert.equal(info.packageId, 'com.codeisland.band');
+  assert.equal(info.versionCode, 26);
+  assert.ok(typeof info.versionName === 'string' && info.versionName.length > 0);
+  assert.ok(info.fileSize > 0);
+
+  // 结果应被缓存，且不影响再次读取
+  assert.deepEqual(service.getBundledInfo(), info);
+});
+
+test('14. 一键安装内置包: prepare -> chunks -> commit 且上报 core 真实结论', async () => {
+  const calls = [];
+  const mockBridge = {
+    async prepare(metadata) {
+      calls.push({ method: 'prepare', metadata });
+      return {
+        status: 'preparing',
+        sessionId: 'core_session_1',
+        fileSize: metadata.fileSize,
+        chunkSize: 512,
+        totalChunks: Math.ceil(metadata.fileSize / 512),
+      };
+    },
+    async sendChunk(chunk) {
+      calls.push({ method: 'sendChunk', index: chunk.index });
+      return {
+        status: 'transferring',
+        sessionId: chunk.sessionId,
+        index: chunk.index,
+        receivedBytes: 0,
+      };
+    },
+    async commit(sessionId) {
+      calls.push({ method: 'commit', sessionId });
+      return { status: 'completed' };
+    },
+    async cancel() {
+      return { status: 'cancelled' };
+    },
+  };
+
+  const service = new AppInstallService(mockBridge);
+  const res = await service.installBundled();
+
+  // 用户不需要选择文件：走了真实的内置包路径
+  assert.equal(res.packageId, 'com.codeisland.band');
+  assert.equal(res.versionCode, 26);
+  assert.ok(res.totalChunks > 0);
+  assert.equal(res.sentChunks, res.totalChunks);
+
+  // 顺序必须是 prepare -> 全部 chunk -> commit
+  assert.equal(calls[0].method, 'prepare');
+  assert.equal(calls[calls.length - 1].method, 'commit');
+  assert.equal(calls.filter((c) => c.method === 'sendChunk').length, res.totalChunks);
+
+  // 只有 core 返回 completed 才把 coreStatus 标为 completed
+  assert.equal(res.coreStatus, 'completed');
+});
+
+test('15. core 未确认时不得谎报完成', async () => {
+  const mockBridge = {
+    async prepare(metadata) {
+      return {
+        status: 'preparing',
+        sessionId: 'core_session_2',
+        fileSize: metadata.fileSize,
+        chunkSize: 512,
+        totalChunks: Math.ceil(metadata.fileSize / 512),
+      };
+    },
+    async sendChunk(chunk) {
+      return { status: 'transferring', sessionId: chunk.sessionId, index: chunk.index, receivedBytes: 0 };
+    },
+    async commit() {
+      // 设备没回结果 -> core 返回 unknown
+      return { status: 'unknown' };
+    },
+    async cancel() {
+      return { status: 'cancelled' };
+    },
+  };
+
+  const service = new AppInstallService(mockBridge);
+  const res = await service.installBundled();
+
+  assert.notEqual(res.coreStatus, 'completed');
+  assert.notEqual(res.status, 'completed');
+});

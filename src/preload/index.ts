@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld('pulse', {
     cancel: (req: any) => ipcRenderer.invoke('pulse:app-install:cancel', req),
     cancelTransfer: (installId: string) =>
       ipcRenderer.invoke('pulse:app-install:cancel-transfer', { installId }),
+    // 内置手环端快应用：一键安装（无需用户选择文件）
+    getBundledInfo: () => ipcRenderer.invoke('pulse:app-install:bundled-info'),
+    installBundled: () => ipcRenderer.invoke('pulse:app-install:install-bundled'),
     onProgress: (callback: (event: any) => void) => {
       const subscription = (_: any, ev: any) => callback(ev);
       ipcRenderer.on('pulse:app-install-progress', subscription);

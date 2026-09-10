@@ -29,6 +29,28 @@ export interface AppInstallBridge {
   commit: (req: InstallCommitRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus; error?: string }>;
   cancel: (req: InstallCancelRequest) => Promise<{ ok: boolean; status?: InstallSessionStatus }>;
   cancelTransfer: (installId: string) => Promise<{ ok: boolean; status?: InstallSessionStatus }>;
+  /** 内置手环端安装包信息（版本号来自真实 manifest，不写死） */
+  getBundledInfo: () => Promise<{
+    exists: boolean;
+    packageId?: string;
+    versionName?: string;
+    versionCode?: number;
+    fileSize?: number;
+    manifestValid?: boolean;
+  }>;
+  /** 一键安装内置手环端快应用（prepare -> 全部分块 -> commit），无需用户选择文件 */
+  installBundled: () => Promise<{
+    installId: string;
+    status: InstallSessionStatus;
+    /** pulse-core 依据真实设备结果给出的结论；completed 才是设备已确认安装 */
+    coreStatus: string | null;
+    packageId?: string;
+    versionName?: string;
+    versionCode?: number;
+    fileSize: number;
+    totalChunks: number;
+    sentChunks: number;
+  }>;
   onProgress: (cb: (event: InstallProgressEvent) => void) => () => void;
 }
 

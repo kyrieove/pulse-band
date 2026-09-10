@@ -10,6 +10,8 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import type {
   InstallSessionStatus,
@@ -67,6 +69,64 @@ export interface InstallSession {
   cancelRequested: boolean;
   createdAt: number;
   coreSessionId?: string;
+  /**
+   * pulse-core 上报的真实安装结论（例如 completed / failed / unknown）。
+   *
+   * 与 `status` 分开保存：`status` 是本地会话阶段，禁止凭本地动作进入 completed；
+   * 只有 core 依据真实设备结果给出的结论才写进这里。
+   */
+  coreStatus?: string | null;
+}
+
+/** 内置手环端安装包信息（来自真实 rpk manifest，不写死版本号） */
+export interface BundledAppInfo {
+  exists: boolean;
+  packageId?: string;
+  versionName?: string;
+  versionCode?: number;
+  fileSize?: number;
+  manifestValid?: boolean;
+}
+
+/** 一键安装内置手环端的结果 */
+export interface BundledInstallResult {
+  installId: string;
+  status: InstallSessionStatus;
+  /** core 依据真实设备结果给出的结论；completed 表示设备已确认安装且已安装列表命中 */
+  coreStatus: string | null;
+  packageId?: string;
+  versionName?: string;
+  versionCode?: number;
+  fileSize: number;
+  totalChunks: number;
+  sentChunks: number;
+}
+
+/**
+ * 解析随桌面端发布的内置手环端 .rpk 路径（无需用户选择文件）。
+ *
+ * 依次尝试几种布局，命中第一个真实存在的文件：
+ * - 构建产物 / 打包：`dist-electron/main` 或 `app.asar` 内的 `../../assets`
+ * - 源码直跑（脚本、测试）：`src/main/services` 的 `../../../assets`
+ * - 仓库根直接运行
+ *
+ * 打包后资源位于 app.asar 内：Node 的 fs 能透明读取，但 zip 随机读在 asar 上
+ * 行为不一致，因此统一复制到临时文件，保证读取确定性并在用完后可清理。
+ */
+function resolveBundledRpk(): { filePath: string; cleanup: () => void } | null {
+  const candidates = [
+    path.join(import.meta.dirname, '../../assets/band-app.rpk'),
+    path.join(import.meta.dirname, '../../../assets/band-app.rpk'),
+    path.join(process.cwd(), 'assets/band-app.rpk'),
+  ];
+  const found = candidates.find((p) => fs.existsSync(p));
+  if (!found) return null;
+  if (!found.includes('app.asar')) {
+    return { filePath: found, cleanup: () => {} };
+  }
+  const tmp = path.join(os.tmpdir(), `pulse-bundled-band-app-${process.pid}.rpk`);
+  fs.writeFileSync(tmp, fs.readFileSync(found));
+  return { filePath: tmp, cleanup: () => fs.rmSync(tmp, { force: true }) };
 }
 
 export class AppInstallService {
@@ -74,6 +134,7 @@ export class AppInstallService {
   private win: BrowserWindow | null = null;
   private listeners: Set<(event: InstallProgressEvent) => void> = new Set();
   private coreBridge: CoreAppInstallBridge | null = null;
+  private bundledInfoCache: BundledAppInfo | null = null;
 
   constructor(coreBridge?: CoreAppInstallBridge | null) {
     this.coreBridge = coreBridge ?? null;
@@ -117,6 +178,66 @@ export class AppInstallService {
       ...this.session,
       receivedChunks: new Set(this.session.receivedChunks),
     };
+  }
+
+  /**
+   * 读取内置手环端安装包信息（版本号来自真实 manifest，不写死）。
+   * 结果做进程内缓存，避免每次渲染都解压 asar。
+   */
+  getBundledInfo(): BundledAppInfo {
+    if (this.bundledInfoCache) return this.bundledInfoCache;
+    const resolved = resolveBundledRpk();
+    if (!resolved) {
+      this.bundledInfoCache = { exists: false };
+      return this.bundledInfoCache;
+    }
+    try {
+      const meta = inspectRpk(resolved.filePath);
+      this.bundledInfoCache = {
+        exists: true,
+        packageId: meta.packageId,
+        versionName: meta.versionName,
+        versionCode: meta.versionCode,
+        fileSize: meta.fileSize,
+        manifestValid: meta.manifestValid,
+      };
+    } catch {
+      this.bundledInfoCache = { exists: false };
+    } finally {
+      resolved.cleanup();
+    }
+    return this.bundledInfoCache;
+  }
+
+  /**
+   * 一键安装内置手环端快应用：prepare -> 全部分块 -> commit。
+   *
+   * 用户不需要选择文件；内置包随桌面端发布。
+   * 只有 pulse-core 依据真实设备结果返回 completed 时，coreStatus 才会是 completed。
+   */
+  async installBundled(): Promise<BundledInstallResult> {
+    const resolved = resolveBundledRpk();
+    if (!resolved) {
+      throw new Error('内置手环端安装包缺失：assets/band-app.rpk 不在发布包里');
+    }
+    try {
+      const prepared = await this.prepareFromFile(resolved.filePath);
+      const sent = await this.sendFileChunks(prepared.installId);
+      const session = this.getSession();
+      return {
+        installId: prepared.installId,
+        status: (session?.status ?? sent.status) as InstallSessionStatus,
+        coreStatus: session?.coreStatus ?? null,
+        packageId: prepared.packageId,
+        versionName: prepared.versionName,
+        versionCode: prepared.versionCode,
+        fileSize: prepared.fileSize,
+        totalChunks: prepared.totalChunks,
+        sentChunks: sent.sentChunks,
+      };
+    } finally {
+      resolved.cleanup();
+    }
   }
 
   createSession(req: InstallPrepareRequest): InstallPrepareResult {
@@ -409,8 +530,10 @@ export class AppInstallService {
       const p = (async () => {
         try {
           const coreRes = await this.coreBridge!.commit(targetSessionId);
-          if (coreRes?.status && coreRes.status !== 'completed' && coreRes.status !== 'installed') {
-            if (this.session) {
+          if (this.session) {
+            // 记录 core 的真实结论（含 completed），但不把它当作本地阶段使用
+            this.session.coreStatus = coreRes?.status ?? null;
+            if (coreRes?.status && coreRes.status !== 'completed' && coreRes.status !== 'installed') {
               this.session.status = coreRes.status as InstallSessionStatus;
             }
           }
@@ -675,5 +798,13 @@ export function registerAppInstallIpc(
     if (winGetter) service.attach(winGetter());
     const installId = typeof req === 'string' ? req : req?.installId;
     return await service.cancelFileTransfer(installId);
+  });
+
+  // 内置手环端快应用：一键安装，不需要用户选择文件
+  ipc.handle('pulse:app-install:bundled-info', () => service.getBundledInfo());
+
+  ipc.handle('pulse:app-install:install-bundled', async () => {
+    if (winGetter) service.attach(winGetter());
+    return await service.installBundled();
   });
 }
