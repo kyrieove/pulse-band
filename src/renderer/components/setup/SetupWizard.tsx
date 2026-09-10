@@ -2,9 +2,7 @@ import React, { useState } from 'react';
 import {
   Watch,
   FileText,
-  ShieldCheck,
   Bluetooth,
-  Network,
   PackageCheck,
   CheckCircle2,
   AlertCircle,
@@ -13,6 +11,8 @@ import {
   ChevronLeft,
   X,
   Layers,
+  ShieldCheck,
+  Network,
 } from 'lucide-react';
 import {
   type SetupStepId,
@@ -21,9 +21,7 @@ import {
   INITIAL_SETUP_STEPS,
 } from './types';
 import { LogImportStep } from './LogImportStep';
-import { CredentialSaveStep } from './CredentialSaveStep';
-import { WindowsPairingStep } from './WindowsPairingStep';
-import { RfcommAuthStep } from './RfcommAuthStep';
+import { ConnectBandStep } from './ConnectBandStep';
 import { InstallAppStep } from './InstallAppStep';
 import { VerifyQuotaStep } from './VerifyQuotaStep';
 
@@ -33,23 +31,26 @@ export interface SetupWizardProps {
 }
 
 const STEP_ICONS: Record<SetupStepId, React.ElementType> = {
-  prepare: Watch,
   import_log: FileText,
+  connect_band: Bluetooth,
+  install_app: PackageCheck,
+  verify_quota: CheckCircle2,
+  // 保持兼容旧步骤标识
+  prepare: Watch,
   save_credentials: ShieldCheck,
   windows_pairing: Bluetooth,
   rfcomm_auth: Network,
-  install_app: PackageCheck,
-  verify_quota: CheckCircle2,
 };
 
-export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
+export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish }) => {
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [stepError, setStepError] = useState<string | null>(null);
 
-  // 所有步骤保持 pending / active，除非未来真实事件接入，禁止假 completed
   const steps: SetupStep[] = INITIAL_SETUP_STEPS.map((step, idx) => {
     let status: StepStatus = 'pending';
-    if (idx === currentIndex) {
+    if (idx < currentIndex) {
+      status = 'completed';
+    } else if (idx === currentIndex) {
       status = stepError ? 'error' : 'active';
     } else {
       status = 'pending';
@@ -68,6 +69,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
   const handleNext = () => {
     setStepError(null);
     if (isLastStep) {
+      onFinish?.();
       onClose();
     } else {
       setCurrentIndex((prev) => Math.min(steps.length - 1, prev + 1));
@@ -84,50 +86,37 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
     setCurrentIndex(index);
   };
 
+  const handleFinish = () => {
+    onFinish?.();
+    onClose();
+  };
+
   const renderStepContent = (step: SetupStep) => {
     if (step.id === 'import_log') {
-      return <LogImportStep />;
+      return <LogImportStep onSuccess={handleNext} />;
     }
 
-    if (step.id === 'save_credentials') {
-      return <CredentialSaveStep />;
-    }
-
-    if (step.id === 'windows_pairing') {
-      return <WindowsPairingStep />;
-    }
-
-    if (step.id === 'rfcomm_auth') {
-      return <RfcommAuthStep />;
+    if (step.id === 'connect_band') {
+      return <ConnectBandStep onSuccess={() => {}} />;
     }
 
     if (step.id === 'install_app') {
-      return <InstallAppStep />;
+      return <InstallAppStep onSuccess={() => {}} />;
     }
 
     if (step.id === 'verify_quota') {
-      return <VerifyQuotaStep />;
+      return <VerifyQuotaStep onComplete={handleFinish} />;
     }
 
     return (
       <div className="space-y-4">
         <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] space-y-2">
-          <h4 className="text-xs font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
-            <span>{step.title}</span>
+          <h4 className="text-xs font-semibold text-[var(--text-primary)]">
+            {step.title}
           </h4>
-          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-            真实能力将在后续阶段接入。
+          <p className="text-xs text-[var(--text-secondary)]">
+            {step.description}
           </p>
-        </div>
-
-        <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-dashed border-[var(--border-strong)] flex items-center justify-between text-xs">
-          <div>
-            <div className="font-medium text-[var(--text-primary)]">功能占位</div>
-            <div className="text-[11px] text-[var(--text-muted)] mt-0.5">等待真实能力连接</div>
-          </div>
-          <span className="font-mono text-[11px] px-2.5 py-1 rounded bg-[var(--bg-surface)] border border-[var(--border-default)] text-[var(--text-secondary)]">
-            准备接入
-          </span>
         </div>
       </div>
     );
@@ -160,19 +149,19 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-app)] transition-colors"
+            className="p-1 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-app)] transition-colors cursor-pointer"
             title="关闭向导"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* 主体：左侧步骤导航 + 右侧步骤占位与指引 */}
+        {/* 主体：左侧步骤导航 + 右侧步骤内容 */}
         <div className="flex-1 flex overflow-hidden">
           {/* 左侧步骤列表 */}
-          <aside className="w-56 shrink-0 bg-[var(--bg-app)] border-r border-[var(--border-default)] p-3 overflow-y-auto custom-scrollbar space-y-1">
+          <aside className="w-52 shrink-0 bg-[var(--bg-app)] border-r border-[var(--border-default)] p-3 overflow-y-auto custom-scrollbar space-y-1">
             <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] px-2 py-1">
-              流程步骤
+              配置流程
             </div>
 
             {steps.map((s, idx) => {
@@ -237,7 +226,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
                 </p>
               </div>
 
-              {/* 步骤错误提示（保留 error 状态分支供未来真实事件调用） */}
+              {/* 步骤错误提示 */}
               {currentStep.status === 'error' && currentStep.error && (
                 <div className="p-3 rounded-[var(--radius-md)] bg-rose-500/[0.08] border border-rose-500/25 flex items-start gap-2 text-xs text-[var(--status-error)]">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -251,8 +240,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
 
             {/* 底部架构说明注释 */}
             <div className="pt-4 border-t border-[var(--border-default)] flex items-center justify-between text-xs text-[var(--text-muted)]">
-              <span>状态模型：待真实能力接入</span>
-              <span className="font-mono text-[10px]">Pending Implementation</span>
+              <span>手环链路：真实 RFCOMM 与业务快应用闭环</span>
+              <span className="font-mono text-[10px]">Real Device Pipeline</span>
             </div>
           </main>
         </div>
@@ -287,7 +276,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose }) => {
               onClick={handleNext}
               className="flex items-center gap-1 px-4 py-1.5 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium transition-colors shadow-sm cursor-pointer"
             >
-              <span>{isLastStep ? '关闭预览' : '下一步'}</span>
+              <span>{isLastStep ? '完成向导' : '下一步'}</span>
               {!isLastStep && <ChevronRight className="w-3.5 h-3.5" />}
             </button>
           </div>

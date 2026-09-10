@@ -7,6 +7,7 @@ export interface InstallAppStepProps {
     status?: string;
     error?: SetupError;
   };
+  onSuccess?: () => void;
 }
 
 interface BundledInfo {
@@ -21,13 +22,13 @@ interface BundledInfo {
 type StepState = 'idle' | 'installing' | 'done' | 'failed';
 
 /**
- * 向导第 6 步：一键安装内置的 Pulse 手环端快应用。
+ * 向导第 3 步：一键安装内置的 Pulse 手环端快应用。
  *
  * 内置包随桌面端发布，用户不需要选择文件。点击后一次完成
  * prepare -> 全部分块 -> commit，结束条件只有 pulse-core 依据真实设备结果
  * 返回的 coreStatus === 'completed'，否则一律按未完成处理。
  */
-export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
+export const InstallAppStep: React.FC<InstallAppStepProps> = ({ onSuccess }) => {
   const [bundled, setBundled] = useState<BundledInfo | null>(null);
   const [state, setState] = useState<StepState>('idle');
   const [percentage, setPercentage] = useState<number>(0);
@@ -72,6 +73,7 @@ export const InstallAppStep: React.FC<InstallAppStepProps> = () => {
           ok: true,
           text: `设备已确认安装完成（${res.packageId ?? '未知包'} / versionCode ${res.versionCode ?? '?'}）`,
         });
+        onSuccess?.();
       } else {
         setState('failed');
         setMessage({

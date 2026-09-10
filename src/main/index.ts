@@ -16,6 +16,7 @@ import { createMiniBarWindow, disposeMiniBar, toggleMiniBar, isMiniBarVisible } 
 import { isVersionNewer } from './services/version-check';
 import { AppInstallService, registerAppInstallIpc } from './services/app-install-service';
 import { CoreAppInstallBridge } from './services/core-app-install-bridge';
+import { deviceConfigService } from './services/device-config-service';
 
 // Ensure single instance
 const gotLock = app.requestSingleInstanceLock();
@@ -221,8 +222,19 @@ app.whenReady().then(async () => {
   createWindow();
   createMiniBarWindow(sessionManager, statusServer);
   registerClaudeHookInstall();
-  registerBandKeyExtract();
+  registerBandKeyExtract(ipcMain);
   registerAppInstallIpc(appInstallService, ipcMain, () => win);
+
+  // 设备配置与已配对手环管理 IPC
+  ipcMain.handle('pulse:device-config:status', () => {
+    return deviceConfigService.getDeviceConfigStatus();
+  });
+  ipcMain.handle('pulse:device-config:paired-devices', () => {
+    return deviceConfigService.getPairedBandDevices();
+  });
+  ipcMain.handle('pulse:device-config:save', async (_e, payload) => {
+    return deviceConfigService.saveDeviceConfig(payload);
+  });
 
   // Start background monitoring services
   codexTailer.start();

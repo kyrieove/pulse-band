@@ -9,6 +9,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Layers } from 'lucide-react';
 import { fmtTime } from './ui';
+import { AgentLogo } from './AgentLogo';
 
 interface QuotaView {
   pct5h: number | null;
@@ -102,7 +103,7 @@ export const QuotaCards: React.FC = () => {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: agent.color, boxShadow: `0 0 8px ${agent.glow}` }} />
+                  <AgentLogo agent={agent.key} size={16} color={agent.color} />
                   <span className="text-xs font-semibold text-zinc-100">{agent.label}</span>
                 </div>
                 {authoritative ? (

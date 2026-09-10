@@ -136,6 +136,33 @@ export interface PulseBridge {
   onMiniBarVisibilityChange: (cb: (visible: boolean) => void) => () => void;
   /** Electron ≥32 拖拽文件取本地路径（webUtils 只在 preload 可用） */
   getPathForFile: (file: File) => string;
+  /** 设备配置状态与手环绑定相关 API */
+  getDeviceConfigStatus: () => Promise<{
+    exists: boolean;
+    valid: boolean;
+    deviceName?: string;
+    maskedAddr?: string;
+    codename?: string;
+    error?: string;
+  }>;
+  getPairedBandDevices: () => Promise<
+    Array<{
+      id: string;
+      name: string;
+      maskedMac: string;
+      isXiaomiBand: boolean;
+    }>
+  >;
+  saveDeviceConfig: (payload: {
+    logPath?: string;
+    selectedDeviceId?: string;
+    useExisting?: boolean;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    deviceName?: string;
+    maskedAddr?: string;
+  }>;
   /** 快应用原生安装协议契约（阶段契约：仅暴露类型边界，未绑定真实 IPC） */
   appInstall?: AppInstallBridge;
 }

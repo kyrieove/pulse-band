@@ -60,13 +60,14 @@ export type SetupStatus =
   | 'error';
 
 export type SetupStepId =
-  | 'prepare'
   | 'import_log'
+  | 'connect_band'
+  | 'install_app'
+  | 'verify_quota'
+  | 'prepare'
   | 'save_credentials'
   | 'windows_pairing'
-  | 'rfcomm_auth'
-  | 'install_app'
-  | 'verify_quota';
+  | 'rfcomm_auth';
 
 export type SetupStepStatus =
   | 'pending'

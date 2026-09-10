@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Activity, Clock, Wrench } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Wrench } from 'lucide-react';
+import { AgentLogo } from './AgentLogo';
 
 export type AgentStatusType = 'idle' | 'running' | 'warning' | 'critical';
 
@@ -151,8 +152,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
       {/* 头部：Agent 名称、状态指示与展开触发按钮 */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
-            <Activity className="w-4 h-4" />
+          <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] flex items-center justify-center shrink-0">
+            <AgentLogo agent={data.id} size={20} />
           </div>
           <div className="min-w-0">
             <h4 className="text-sm font-semibold text-[var(--text-primary)] truncate">

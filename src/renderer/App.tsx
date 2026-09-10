@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Watch } from 'lucide-react';
 import { TopBar } from './components/layout/TopBar';
 import { Sidebar, type PulsePage } from './components/layout/Sidebar';
 import { ContentArea } from './components/layout/ContentArea';
@@ -36,9 +37,17 @@ export const App: React.FC = () => {
   });
   const [showAgents, setShowAgents] = useState<boolean>(true);
   const [showSetup, setShowSetup] = useState<boolean>(false);
+  const [configStatus, setConfigStatus] = useState<{ exists: boolean; valid: boolean } | null>(null);
   const [state, setState] = useState<PulseOronboxState | null>(null);
   // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
   const band = useBandConnection();
+
+  useEffect(() => {
+    if (screen === 'minibar') return;
+    window.pulse?.getDeviceConfigStatus?.().then((st) => {
+      if (st) setConfigStatus(st);
+    });
+  }, [screen, showSetup]);
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
     setTheme(newTheme);
@@ -139,6 +148,30 @@ export const App: React.FC = () => {
         <ContentArea>
           {page === 'overview' && (
             <div className="space-y-5">
+              {configStatus !== null && !configStatus.exists && (
+                <div className="p-4 rounded-[var(--radius-lg)] bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-[var(--radius-md)] bg-amber-500/20 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+                      <Watch className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-semibold text-[var(--text-primary)]">
+                        尚未配置小米手环
+                      </h4>
+                      <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                        绑定手环并导入日志后，即可在手环屏幕实时查看 AI 编程助手状态与配额。
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSetup(true)}
+                    className="px-3.5 py-1.5 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium cursor-pointer transition-colors shadow-sm shrink-0"
+                  >
+                    配置手环
+                  </button>
+                </div>
+              )}
               <BandConnectionCard
                 connectionState={state?.connection.state}
                 rawError={state?.connection.error}

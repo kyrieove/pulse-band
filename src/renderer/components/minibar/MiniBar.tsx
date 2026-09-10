@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, X, Activity } from 'lucide-react';
 import type { MinibarState, AgentKind, AgentSession } from '../../../common/types';
 import { toRemainingPercent } from '../pulse/agent-quota-utils';
+import { AgentLogo } from '../pulse/AgentLogo';
 
 export interface MiniBarProps {
   theme?: 'light' | 'dark';
@@ -101,7 +102,8 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
         <div className="flex items-center gap-2 min-w-0 shrink-0">
           {activeSession ? (
             <div className="flex items-center gap-1.5 min-w-0">
-              <span className="w-2 h-2 rounded-full bg-[var(--status-success)] shadow-[0_0_10px_var(--status-success)] animate-pulse shrink-0" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-success)] shadow-[0_0_10px_var(--status-success)] animate-pulse shrink-0" />
+              <AgentLogo agent={activeSession.agent} size={14} />
               <span className="text-[11px] font-semibold text-[var(--text-primary)] uppercase tracking-tight truncate max-w-[60px]">
                 {activeSession.agent}
               </span>
@@ -129,16 +131,10 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
               return (
                 <div
                   key={cfg.key}
-                  className="apple-glass-badge rounded-full px-2.5 py-0.5 flex items-center gap-1.5 text-[10px] font-mono leading-none transition-all"
+                  className="apple-glass-badge rounded-full px-2 py-0.5 flex items-center gap-1.5 text-[10px] font-mono leading-none transition-all"
                   title={tooltip}
                 >
-                  <span
-                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                    style={{
-                      backgroundColor: cfg.color,
-                      boxShadow: `0 0 6px ${cfg.color}aa`,
-                    }}
-                  />
+                  <AgentLogo agent={cfg.key} size={13} color={cfg.color} />
                   <span className="text-[var(--text-secondary)] font-medium">{cfg.shortLabel}</span>
                   {/* 5h / 7d 两个周期在收起态也同时可见，且带周期标签避免数字含义不明 */}
                   <span className="text-[var(--text-muted)]">5h</span>
@@ -196,6 +192,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
           {activeSession ? (
             <div className="flex items-center gap-2 min-w-0">
               <span className="w-2 h-2 rounded-full bg-[var(--status-success)] shadow-[0_0_10px_var(--status-success)] animate-pulse shrink-0" />
+              <AgentLogo agent={activeSession.agent} size={15} />
               <span className="text-xs font-semibold text-[var(--text-primary)] tracking-wide">
                 {activeSession.agent.toUpperCase()}
               </span>
@@ -255,13 +252,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'light', showAgents = 
               >
                 <div className="flex items-center justify-between text-xs mb-1.5">
                   <div className="flex items-center gap-1.5">
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{
-                        backgroundColor: cfg.color,
-                        boxShadow: `0 0 8px ${cfg.color}bb`,
-                      }}
-                    />
+                    <AgentLogo agent={cfg.key} size={14} color={cfg.color} />
                     <span className="font-semibold text-[var(--text-primary)] text-[11px]">{cfg.label}</span>
                     {!q?.authoritative && (
                       <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-mono border border-amber-500/30">

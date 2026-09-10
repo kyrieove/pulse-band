@@ -1,5 +1,6 @@
 export { SetupWizard, type SetupWizardProps } from './SetupWizard';
 export { LogImportStep, type LogImportStepProps } from './LogImportStep';
+export { ConnectBandStep, type ConnectBandStepProps } from './ConnectBandStep';
 export { CredentialSaveStep, type CredentialSaveStepProps } from './CredentialSaveStep';
 export { WindowsPairingStep, type WindowsPairingStepProps } from './WindowsPairingStep';
 export { RfcommAuthStep, type RfcommAuthStepProps } from './RfcommAuthStep';

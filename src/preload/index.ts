@@ -74,6 +74,10 @@ contextBridge.exposeInMainWorld('pulse', {
   installBundledRpk: () => ipcRenderer.invoke('oronbox:install-bundled-rpk'),
   // 拖入 Mi Fitness / 小米健康研究的日志，解析出 authkey（只显示，不代替 OronBox 配对）
   extractBandKey: (filePath: string) => ipcRenderer.invoke('band:extract-key', { path: filePath }),
+  // 设备配置与已配对手环管理
+  getDeviceConfigStatus: () => ipcRenderer.invoke('pulse:device-config:status'),
+  getPairedBandDevices: () => ipcRenderer.invoke('pulse:device-config:paired-devices'),
+  saveDeviceConfig: (payload: any) => ipcRenderer.invoke('pulse:device-config:save', payload),
   // Claude Code hook 一键安装（写 ~/.claude/settings.json）
   getHookStatus: () => ipcRenderer.invoke('hook:status'),
   installHook: () => ipcRenderer.invoke('hook:install'),
