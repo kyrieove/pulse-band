@@ -1674,8 +1674,13 @@ fn test_install_session_can_send_packet() {
     let err_unauthed = session.send_install_packet(&frame).unwrap_err();
     assert!(err_unauthed.contains("device_unavailable"));
 
-    // 2. 绑定已认证会话后，发送安装帧入队成功
+    // 2. 绑定已认证会话 + Mock 实时链路后，发送确实写入实时链路（不是只入队）
     session.connect("AA:BB:CC:11:22:33").unwrap();
+    let wire = MockInstallWireSender::new();
+    wire.set_authenticated(true);
+    let wire_handle = wire.clone();
+    session.bind_wire(Box::new(wire));
+    session.refresh_authentication();
     assert!(session.is_connected());
     assert!(session.is_authenticated());
 
@@ -1683,17 +1688,21 @@ fn test_install_session_can_send_packet() {
     let l2_pkt = L2Packet::pb_write(req_pb);
     let install_frame = Frame {
         frame_type: 0x03,
-        seq: 1,
+        seq: 0xEE,
         payload: l2_pkt.to_bytes(),
     };
-    session.send_install_packet(&install_frame).expect("发送安装包应当成功");
+    let sent = session
+        .send_install_packet(&install_frame)
+        .expect("发送安装包应当成功");
+    // 实时链路确认真实发送，且 seq 来自链路而不是 protocol 自增的伪 seq
+    assert_eq!(wire_handle.sent_count(), 1);
+    assert_eq!(sent.seq, 0);
+    assert_ne!(sent.seq, 0xEE);
+    assert_eq!(wire_handle.sent_records()[0].plaintext_l2, l2_pkt.to_bytes());
     assert_eq!(session.outgoing_install_frames.len(), 1);
-    let queued = session.outgoing_install_frames.front().unwrap();
-    assert_eq!(queued.frame_type, 0x03);
-    assert_eq!(queued.seq, 1);
-    assert_eq!(queued.payload, l2_pkt.to_bytes());
+    assert_eq!(session.outgoing_install_frames.front().unwrap().seq, 0);
 
-    // 3. 验证 MockDeviceSession 发送功能
+    // 3. 验证 MockDeviceSession 仍保留离线记录路径
     let mut mock_session = MockDeviceSession::new();
     mock_session.connect("11:22:33:44:55:66").unwrap();
     mock_session.send_install_packet(&install_frame).unwrap();
@@ -2057,6 +2066,9 @@ fn test_encrypted_payload_path() {
 
     // 4. 会话级密钥配置与加解密集成测试
     let mut session = XiaomiInstallDeviceSession::new();
+    let wire = MockInstallWireSender::new();
+    wire.set_authenticated(true);
+    session.bind_wire(Box::new(wire));
     session.set_crypto_keys(enc_key, dec_key);
     session.connect("AA:BB:CC:11:22:33").unwrap();
 
@@ -2070,39 +2082,71 @@ fn test_encrypted_payload_path() {
 fn test_runtime_bridge_send_path() {
     use app_install::xiaomi::*;
 
-    let mut bridge = XiaomiInstallRuntimeBridge::new();
-    let mut ctx = DownlinkCtx::new(
-        0,
-        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00],
-        7,
-    );
+    let wire = MockInstallWireSender::new();
+    wire.set_authenticated(true);
+    let wire_handle = wire.clone();
+    let mut bridge = XiaomiInstallRuntimeBridge::with_wire(Box::new(wire));
 
     // 验证初始状态与无冗余连接
-    assert_eq!(bridge.state, RuntimeBridgeState::Disconnected);
+    assert_eq!(bridge.state, RuntimeBridgeState::Authenticated);
     assert_eq!(bridge.has_duplicate_connection(), false);
-    assert_eq!(bridge.install_session.underlying_handle, None);
 
     // 构造下行明文 L2 报文 (安装请求)
     let req_pb = encode_install_request("com.test.runtime", 1, 4096).unwrap();
     let plaintext_l2 = L2Packet::pb_write(req_pb).to_bytes();
 
-    // 通过 DownlinkCtx 发送
-    let frame = bridge.send_install_packet(&mut ctx, &plaintext_l2).expect("send_install_packet 应当成功");
+    // 通过实时链路发送（真实发送动作，seq 由链路递增）
+    let frame = bridge
+        .send_install_packet(&plaintext_l2)
+        .expect("send_install_packet 应当成功");
 
-    // 验证状态机流转与 Frame 结构
     assert_eq!(bridge.state, RuntimeBridgeState::Sending);
     assert_eq!(frame.frame_type, 0x03);
-    assert_eq!(frame.seq, 7);
-    assert_eq!(ctx.seq_out, 8); // seq_out 自增
-    assert_eq!(&frame.payload[0..2], &BIZ_PREFIX);
+    assert_eq!(frame.seq, 0);
+    assert_eq!(wire_handle.sent_count(), 1);
+    assert_eq!(wire_handle.sent_records()[0].plaintext_l2, plaintext_l2);
 
-    // 验证解密后明文与原 L2 完全一致
-    let decrypted = biz_stream(&ctx.enc_key, &frame.payload[2..]);
-    assert_eq!(decrypted, plaintext_l2);
+    // 第二帧 seq 必须真实递增
+    let frame2 = bridge.send_install_packet(&plaintext_l2).unwrap();
+    assert_eq!(frame2.seq, 1);
+    assert_eq!(wire_handle.sent_count(), 2);
 
     // 确认：没有创建第二个 socket
     assert_eq!(bridge.has_duplicate_connection(), false);
-    assert_eq!(bridge.install_session.outgoing_install_frames.len(), 1);
+    assert_eq!(bridge.install_session.outgoing_install_frames.len(), 2);
+}
+
+#[test]
+fn test_real_install_packet_uses_live_transport_interface() {
+    use app_install::xiaomi::*;
+
+    // 该测试验证：安装包不是只进入 outgoing 队列，而是通过实时链路接口真实发送。
+    let wire = MockInstallWireSender::new();
+    wire.set_authenticated(true);
+    let wire_handle = wire.clone();
+    let mut transport = XiaomiInstallTransport::with_wire(Box::new(wire));
+
+    let req_pb = encode_install_request("com.test.realwire", 7, 8192).unwrap();
+    let plaintext_l2 = L2Packet::pb_write(req_pb).to_bytes();
+
+    let sent = transport
+        .bridge
+        .send_install_packet(&plaintext_l2)
+        .expect("安装帧必须通过实时链路接口发送");
+
+    assert_eq!(sent.seq, 0);
+    assert_eq!(wire_handle.sent_count(), 1, "必须发生真实发送动作，而不是只入队");
+    assert_eq!(wire_handle.sent_records()[0].seq, 0);
+    assert_eq!(wire_handle.sent_records()[0].plaintext_l2, plaintext_l2);
+    assert_eq!(
+        transport.bridge.install_session.outgoing_install_frames.len(),
+        1
+    );
+
+    // 第二次发送 seq 递增，证明使用的是实时链路序号而不是本地伪序号
+    let sent2 = transport.bridge.send_install_packet(&plaintext_l2).unwrap();
+    assert_eq!(sent2.seq, 1);
+    assert_eq!(wire_handle.sent_count(), 2);
 }
 
 #[test]
@@ -2260,9 +2304,8 @@ fn test_runtime_bridge_wait_result_timeout_never_completes() {
     bridge.install_session.connect("AA:BB:CC:11:22:33").unwrap();
 
     // 会话已就绪，但设备**没有**上报任何结果（队列为空 → wait_install_result 超时分支）
-    let mut protocol = XiaomiAppInstallProtocol::new();
     let session_id = "xiaomi_inst_com.test.timeout_1".to_string();
-    protocol.active_session = Some(InstallSession {
+    bridge.protocol.active_session = Some(InstallSession {
         session_id: session_id.clone(),
         status: "transferring".to_string(),
         file_size: 4096,
@@ -2271,7 +2314,7 @@ fn test_runtime_bridge_wait_result_timeout_never_completes() {
     });
 
     let res = bridge
-        .execute_wait_result(&mut protocol, &session_id)
+        .execute_wait_result(&session_id)
         .expect("设备未上报时应返回 waiting_device_result，而不是报错");
 
     // 关键防伪断言：设备没回话，绝不能进入 completed
@@ -2309,6 +2352,7 @@ fn test_xiaomi_install_result_wrong_package_rejected() {
         file_size: 4096,
         hash: "test_hash".to_string(),
     });
+    bridge.protocol = protocol;
 
     // 设备上报“成功”，但目标包名是**另一个包**：
     // 证据纪律要求“不能只收到 id=2 就成功”，必须核验响应目标。
@@ -2324,10 +2368,185 @@ fn test_xiaomi_install_result_wrong_package_rejected() {
     };
     bridge.process_incoming_frame(frame);
 
-    let res = bridge.execute_wait_result(&mut protocol, &session_id);
+    let res = bridge.execute_wait_result(&session_id);
     assert!(res.is_err(), "目标包名不匹配必须报错，不能判成功");
     assert_eq!(bridge.state, RuntimeBridgeState::Failed);
     assert_ne!(bridge.state, RuntimeBridgeState::Completed);
+}
+
+#[test]
+fn test_transport_commit_requires_installed_list_confirmation() {
+    use app_install::xiaomi::*;
+    use app_install::InstallSession;
+
+    let _serial = lock_global_queue();
+    clear_global_install_events();
+
+    let wire = MockInstallWireSender::new();
+    wire.set_authenticated(true);
+    let wire_handle = wire.clone();
+    let mut transport = XiaomiInstallTransport::with_wire(Box::new(wire));
+
+    let session_id = "xiaomi_inst_com.test.confirm_1".to_string();
+    transport.bridge.protocol.active_session = Some(InstallSession {
+        session_id: session_id.clone(),
+        status: "transferring".to_string(),
+        file_size: 4096,
+        chunk_size: 512,
+        total_chunks: 8,
+    });
+    transport.bridge.protocol.metadata = Some(InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 4096,
+        hash: "test_hash".to_string(),
+    });
+
+    // 1. 设备上报 id=2 且 result_code=0（成功），目标包名一致
+    let app_res = AppInstallerResult::new(
+        InstallResultCode::Success,
+        Some("com.codeisland.band".to_string()),
+    );
+    let wp = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(app_res));
+    transport.bridge.process_incoming_frame(Frame {
+        frame_type: 0x03,
+        seq: 50,
+        payload: L2Packet::pb_write(wp.encode()).to_bytes(),
+    });
+
+    // 2. 已安装列表里**没有**目标包 → 必须判失败，不能只凭 id=2 成功
+    let list = encode_installed_list_response(&[InstalledApp::new("com.other.app", 1)]);
+    transport.bridge.process_incoming_frame(Frame {
+        frame_type: 0x03,
+        seq: 51,
+        payload: L2Packet::pb_write(list).to_bytes(),
+    });
+
+    let res = transport.bridge.transport_commit(&session_id);
+    assert!(res.is_err(), "已安装列表未命中时不得判成功");
+    assert_eq!(transport.bridge.state, RuntimeBridgeState::Failed);
+    assert_ne!(transport.bridge.state, RuntimeBridgeState::Completed);
+
+    // 已安装列表查询确实发到了真实链路（不是只入队）
+    assert!(
+        wire_handle.sent_count() >= 1,
+        "commit 必须真的发出 id=0 已安装列表查询"
+    );
+}
+
+#[test]
+fn test_transport_commit_completes_only_when_installed_list_matches() {
+    use app_install::xiaomi::*;
+    use app_install::InstallSession;
+
+    let _serial = lock_global_queue();
+    clear_global_install_events();
+
+    let wire = MockInstallWireSender::new();
+    wire.set_authenticated(true);
+    let mut transport = XiaomiInstallTransport::with_wire(Box::new(wire));
+
+    let session_id = "xiaomi_inst_com.test.confirm_2".to_string();
+    transport.bridge.protocol.active_session = Some(InstallSession {
+        session_id: session_id.clone(),
+        status: "transferring".to_string(),
+        file_size: 4096,
+        chunk_size: 512,
+        total_chunks: 8,
+    });
+    transport.bridge.protocol.metadata = Some(InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 4096,
+        hash: "test_hash".to_string(),
+    });
+
+    // id=2 成功
+    let app_res = AppInstallerResult::new(
+        InstallResultCode::Success,
+        Some("com.codeisland.band".to_string()),
+    );
+    let wp = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(app_res));
+    transport.bridge.process_incoming_frame(Frame {
+        frame_type: 0x03,
+        seq: 60,
+        payload: L2Packet::pb_write(wp.encode()).to_bytes(),
+    });
+
+    // 已安装列表命中 package_name + version_code
+    let mut installed = InstalledApp::new("com.codeisland.band", 26);
+    installed.app_name = Some("Pulse".to_string());
+    installed.fingerprint = vec![0xBB; 20];
+    let list = encode_installed_list_response(&[installed]);
+    transport.bridge.process_incoming_frame(Frame {
+        frame_type: 0x03,
+        seq: 61,
+        payload: L2Packet::pb_write(list).to_bytes(),
+    });
+
+    let res = transport
+        .bridge
+        .transport_commit(&session_id)
+        .expect("id=2 成功且已安装列表命中时应判成功");
+    assert_eq!(res.status, "completed");
+    assert_eq!(transport.bridge.state, RuntimeBridgeState::Completed);
+}
+
+#[test]
+fn test_wait_result_skips_unrelated_frames_before_install_result() {
+    use app_install::xiaomi::*;
+    use app_install::InstallSession;
+
+    let _serial = lock_global_queue();
+    clear_global_install_events();
+
+    let wire = MockInstallWireSender::new();
+    wire.set_authenticated(true);
+    let mut transport = XiaomiInstallTransport::with_wire(Box::new(wire));
+
+    let session_id = "xiaomi_inst_com.test.skip_1".to_string();
+    transport.bridge.protocol.active_session = Some(InstallSession {
+        session_id: session_id.clone(),
+        status: "transferring".to_string(),
+        file_size: 4096,
+        chunk_size: 512,
+        total_chunks: 8,
+    });
+    transport.bridge.protocol.metadata = Some(InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 4096,
+        hash: "test_hash".to_string(),
+    });
+
+    // 队首先放一个 Mass 通道帧（分片传输期间累积、无人消费），再放真正的 id=2 结果。
+    // 修复前 wait_install_result 会拿队首严格解码并直接报错。
+    transport.bridge.process_incoming_frame(Frame {
+        frame_type: 0x03,
+        seq: 40,
+        payload: L2Packet::mass_write(vec![0xAA; 8]).to_bytes(),
+    });
+    let app_res = AppInstallerResult::new(
+        InstallResultCode::Success,
+        Some("com.codeisland.band".to_string()),
+    );
+    let wp = WearPacket::new_thirdparty_app(2, ThirdpartyApp::from_install_result(app_res));
+    transport.bridge.process_incoming_frame(Frame {
+        frame_type: 0x03,
+        seq: 41,
+        payload: L2Packet::pb_write(wp.encode()).to_bytes(),
+    });
+
+    let res = transport
+        .bridge
+        .protocol
+        .wait_install_result(&mut transport.bridge.install_session, &session_id)
+        .expect("跳过 Mass 帧后应能读到真正的 id=2 结果");
+    assert_eq!(res.status, "success");
+    assert_eq!(transport.bridge.protocol.state, XiaomiInstallState::Success);
 }
 
 #[test]

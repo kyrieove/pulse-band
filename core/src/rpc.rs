@@ -85,6 +85,60 @@ pub fn error_resp(id: &serde_json::Value, code: &str, message: &str) -> serde_js
 }
 
 /// 返回 (响应行, 是否要退出进程)
+/// 生产（--live）安装走 Core.install 绑定的真实 Core.bt；
+/// --fake / 离线测试走 GLOBAL_INSTALL_TRANSPORT（Mock），保持原有 RPC 契约。
+fn install_prepare(
+    core: &Core,
+    metadata: crate::app_install::InstallMetadata,
+) -> crate::app_install::Result<crate::app_install::InstallSession> {
+    use crate::app_install::AppInstallTransport;
+    match core.mode {
+        crate::CoreMode::Live => core.install.lock().unwrap().prepare(metadata),
+        crate::CoreMode::Fake => crate::app_install::GLOBAL_INSTALL_TRANSPORT
+            .lock()
+            .unwrap()
+            .prepare(metadata),
+    }
+}
+
+fn install_send_chunk(
+    core: &Core,
+    chunk: crate::app_install::InstallChunk,
+) -> crate::app_install::Result<crate::app_install::ChunkAck> {
+    use crate::app_install::AppInstallTransport;
+    match core.mode {
+        crate::CoreMode::Live => core.install.lock().unwrap().send_chunk(chunk),
+        crate::CoreMode::Fake => crate::app_install::GLOBAL_INSTALL_TRANSPORT
+            .lock()
+            .unwrap()
+            .send_chunk(chunk),
+    }
+}
+
+fn install_commit(
+    core: &Core,
+    session_id: String,
+) -> crate::app_install::Result<crate::app_install::InstallResult> {
+    use crate::app_install::AppInstallTransport;
+    match core.mode {
+        crate::CoreMode::Live => core.install.lock().unwrap().commit(session_id),
+        crate::CoreMode::Fake => crate::app_install::GLOBAL_INSTALL_TRANSPORT
+            .lock()
+            .unwrap()
+            .commit(session_id),
+    }
+}
+
+fn install_cancel(core: &Core, session_id: String) -> crate::app_install::Result<()> {
+    use crate::app_install::AppInstallTransport;
+    match core.mode {
+        crate::CoreMode::Live => core.install.lock().unwrap().cancel(session_id),
+        crate::CoreMode::Fake => crate::app_install::GLOBAL_INSTALL_TRANSPORT
+            .lock()
+            .unwrap()
+            .cancel(session_id),
+    }
+}
 fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
     let req: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
@@ -183,9 +237,7 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 serde_json::from_value(params.clone());
             match metadata_res {
                 Ok(meta) => {
-                    use crate::app_install::AppInstallTransport;
-                    let mut transport = crate::app_install::GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
-                    match transport.prepare(meta) {
+                    match install_prepare(core, meta) {
                         Ok(session) => (
                             serde_json::json!({
                                 "id": id,
@@ -218,9 +270,7 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 serde_json::from_value(params.clone());
             match chunk_res {
                 Ok(chunk) => {
-                    use crate::app_install::AppInstallTransport;
-                    let mut transport = crate::app_install::GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
-                    match transport.send_chunk(chunk) {
+                    match install_send_chunk(core, chunk) {
                         Ok(ack) => (
                             serde_json::json!({
                                 "id": id,
@@ -259,9 +309,7 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                     false,
                 )
             } else {
-                use crate::app_install::AppInstallTransport;
-                let mut transport = crate::app_install::GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
-                match transport.commit(session_id) {
+                match install_commit(core, session_id) {
                     Ok(res) => (
                         serde_json::json!({
                             "id": id,
@@ -286,9 +334,7 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 .or_else(|| params["session_id"].as_str())
                 .unwrap_or("")
                 .to_string();
-            use crate::app_install::AppInstallTransport;
-            let mut transport = crate::app_install::GLOBAL_INSTALL_TRANSPORT.lock().unwrap();
-            let _ = transport.cancel(session_id);
+            let _ = install_cancel(core, session_id);
             (
                 serde_json::json!({
                     "id": id,
@@ -302,24 +348,27 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
             )
         }
         "device.app.install.mode" => {
-            if let Some(mode_str) = params["mode"].as_str() {
-                let mode = match mode_str {
-                    "device" => crate::app_install::TransportMode::Device,
-                    _ => crate::app_install::TransportMode::Mock,
-                };
-                crate::app_install::set_global_transport_mode(mode);
-            }
-            let current = crate::app_install::get_global_transport_mode();
+            let mode_str = if core.mode == crate::CoreMode::Live {
+                // 生产路径固定使用 Core.install 绑定的真实 Core.bt，绝不回退 Mock。
+                "device"
+            } else {
+                if let Some(requested) = params["mode"].as_str() {
+                    let mode = match requested {
+                        "device" => crate::app_install::TransportMode::Device,
+                        _ => crate::app_install::TransportMode::Mock,
+                    };
+                    crate::app_install::set_global_transport_mode(mode);
+                }
+                match crate::app_install::get_global_transport_mode() {
+                    crate::app_install::TransportMode::Mock => "mock",
+                    crate::app_install::TransportMode::Device => "device",
+                }
+            };
             (
                 serde_json::json!({
                     "id": id,
                     "ok": true,
-                    "result": {
-                        "mode": match current {
-                            crate::app_install::TransportMode::Mock => "mock",
-                            crate::app_install::TransportMode::Device => "device",
-                        }
-                    }
+                    "result": { "mode": mode_str }
                 })
                 .to_string(),
                 false,
@@ -351,6 +400,7 @@ mod tests {
     use std::time::Instant;
 
     fn create_test_core(mode: crate::CoreMode) -> Arc<Core> {
+        let bt = Arc::new(Mutex::new(None));
         Arc::new(Core {
             mode,
             token: "test_token".to_string(),
@@ -358,7 +408,8 @@ mod tests {
             started: Instant::now(),
             clients: Mutex::new(Vec::new()),
             device: Mutex::new(crate::fake::FakeDevice::new()),
-            bt: Mutex::new(None),
+            bt: Arc::clone(&bt),
+            install: crate::new_install_transport(&bt),
             shutdown_requested: std::sync::atomic::AtomicBool::new(false),
             desired_connected: std::sync::atomic::AtomicBool::new(false),
             live_state: Mutex::new(crate::live::LiveStatus::Disconnected),

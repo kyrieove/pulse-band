@@ -23,6 +23,10 @@ use super::l2::L2Packet;
 use super::thirdparty_app::InstallResultCode;
 use super::XiaomiInstallState;
 use crate::frame::Frame;
+use std::time::{Duration, Instant};
+
+/// 等待设备上报的单次超时预算（毫秒）。
+const DEVICE_REPLY_TIMEOUT_MS: u64 = 5000;
 
 /// 小米快应用原生安装业务协议状态机实现
 #[derive(Debug, Clone)]
@@ -129,12 +133,23 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
         // 2. 发送帧
         device_transport.send_frame(&frame)?;
 
-        // 3. 等待设备响应 AppInstallerResponse
-        let resp_frame = device_transport
-            .receive_frame(5000)?
-            .ok_or_else(|| "等待设备 AppInstallerResponse 超时 (timeout)".to_string())?;
-
-        let resp = decode_install_response(&resp_frame.payload)?;
+        // 3. 等待设备响应 AppInstallerResponse。
+        //
+        // 安装队列里可能混有 Mass 通道 ACK 等非准备响应帧，因此按截止时间循环，
+        // 跳过无法解码为准备响应的帧，直到拿到真正的 id=1 或超时。
+        let deadline = Instant::now() + Duration::from_millis(DEVICE_REPLY_TIMEOUT_MS);
+        let resp = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err("等待设备 AppInstallerResponse 超时 (timeout)".to_string());
+            }
+            let Some(frame) = device_transport.receive_frame(remaining.as_millis() as u64)? else {
+                return Err("等待设备 AppInstallerResponse 超时 (timeout)".to_string());
+            };
+            if let Ok(resp) = decode_install_response(&frame.payload) {
+                break resp;
+            }
+        };
         if !resp.is_ready() {
             self.state = XiaomiInstallState::Failure;
             return Err(format!("设备安装准备未就绪 (prepare_status={})", resp.prepare_status));
@@ -237,14 +252,28 @@ impl AppInstallProtocol for XiaomiAppInstallProtocol {
         }
 
         // 监听设备响应: 期望 WearPacket(type=20, id=2) AppInstaller.Result
-        let resp_frame = match device_transport.receive_frame(5000)? {
-            Some(f) => f,
-            None => {
+        // 监听设备响应: 期望 WearPacket(type=20, id=2) AppInstaller.Result。
+        //
+        // 队列里会混有 Mass 通道 ACK / 其它已过滤安装帧（分片传输期间无人消费），
+        // 因此按截止时间循环跳过无法解码为安装结果的帧，直到拿到真正的 id=2 或超时。
+        let deadline = Instant::now() + Duration::from_millis(DEVICE_REPLY_TIMEOUT_MS);
+        let resp_frame = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.state = XiaomiInstallState::WaitingDeviceResult;
+                return Ok(InstallResult {
+                    status: XiaomiInstallState::WaitingDeviceResult.as_str().to_string(),
+                });
+            }
+            let Some(frame) = device_transport.receive_frame(remaining.as_millis() as u64)? else {
                 // 超时无设备上报：保持在 waiting_device_result 状态
                 self.state = XiaomiInstallState::WaitingDeviceResult;
                 return Ok(InstallResult {
                     status: XiaomiInstallState::WaitingDeviceResult.as_str().to_string(),
                 });
+            };
+            if decode_install_result(&frame.payload).is_ok() {
+                break frame;
             }
         };
 

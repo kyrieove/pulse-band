@@ -49,7 +49,8 @@ pub struct Core {
     pub started: Instant,
     pub clients: Mutex<Vec<ClientHandle>>,
     pub device: Mutex<FakeDevice>,
-    pub bt: Mutex<Option<live::DownlinkCtx>>,
+    pub bt: Arc<Mutex<Option<live::DownlinkCtx>>>,
+    pub install: Mutex<crate::install::xiaomi::XiaomiInstallTransport>,
     pub shutdown_requested: std::sync::atomic::AtomicBool,
     pub desired_connected: std::sync::atomic::AtomicBool,
     pub live_state: Mutex<live::LiveStatus>,
@@ -83,6 +84,15 @@ impl Core {
             .open(self.run_dir.join("core.log"))
             .and_then(|mut f| writeln!(f, "[pulse-core {ts}] {msg}"));
     }
+}
+
+/// 构造生产安装传输：绑定 Core.bt 的共享句柄（唯一已认证连接，绝不新建第二套）。
+pub fn new_install_transport(
+    bt: &Arc<Mutex<Option<live::DownlinkCtx>>>,
+) -> Mutex<crate::install::xiaomi::XiaomiInstallTransport> {
+    Mutex::new(crate::install::xiaomi::XiaomiInstallTransport::with_wire(
+        Box::new(live::CoreBtInstallWire { bt: Arc::clone(bt) }),
+    ))
 }
 
 fn run_dir() -> Result<PathBuf, String> {
@@ -176,6 +186,7 @@ fn main() {
             }
         };
         let port = listener.local_addr().expect("local addr").port();
+        let bt = Arc::new(Mutex::new(None));
         let core = Arc::new(Core {
             mode: CoreMode::Live,
             token: random_token(),
@@ -183,7 +194,8 @@ fn main() {
             started: Instant::now(),
             clients: Mutex::new(Vec::new()),
             device: Mutex::new(FakeDevice::new()),
-            bt: Mutex::new(None),
+            bt: Arc::clone(&bt),
+            install: new_install_transport(&bt),
             shutdown_requested: std::sync::atomic::AtomicBool::new(false),
             desired_connected: std::sync::atomic::AtomicBool::new(false),
             live_state: Mutex::new(live::LiveStatus::Disconnected),
@@ -242,6 +254,7 @@ fn main() {
         }
     };
     let port = listener.local_addr().expect("local addr").port();
+    let bt = Arc::new(Mutex::new(None));
     let core = Arc::new(Core {
         mode: CoreMode::Fake,
         token: random_token(),
@@ -249,15 +262,16 @@ fn main() {
         started: Instant::now(),
         clients: Mutex::new(Vec::new()),
         device: Mutex::new(FakeDevice::new()),
-        bt: Mutex::new(None),
-        shutdown_requested: std::sync::atomic::AtomicBool::new(false),
-        desired_connected: std::sync::atomic::AtomicBool::new(false),
-        live_state: Mutex::new(live::LiveStatus::Disconnected),
-    });
+            bt: Arc::clone(&bt),
+            install: new_install_transport(&bt),
+            shutdown_requested: std::sync::atomic::AtomicBool::new(false),
+            desired_connected: std::sync::atomic::AtomicBool::new(false),
+            live_state: Mutex::new(live::LiveStatus::Disconnected),
+        });
 
-    let endpoint = serde_json::json!({
-        "port": port,
-        "token": core.token,
+        let endpoint = serde_json::json!({
+            "port": port,
+            "token": core.token,
         "pid": std::process::id(),
         "protocolVersion": PROTOCOL_VERSION,
     });

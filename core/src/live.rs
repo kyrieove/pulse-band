@@ -218,6 +218,61 @@ impl Drop for DownlinkCtx {
     }
 }
 
+/// 生产安装实时链路适配器。
+///
+/// 直接持有 Core.bt 的共享句柄，在唯一的已认证 DownlinkCtx 上完成：
+/// 明文 L2 -> business_frame_payload(AES-128-CTR) -> Frame(0x03, seq=ctx.seq_out)
+/// -> frame::encode -> send_all(ctx.sock)。
+///
+/// 本适配器不复制、不缓存 sock/enc_key/seq_out，也不创建第二套连接。
+pub struct CoreBtInstallWire {
+    pub bt: std::sync::Arc<std::sync::Mutex<Option<DownlinkCtx>>>,
+}
+
+impl std::fmt::Debug for CoreBtInstallWire {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let available = self
+            .bt
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false);
+        f.debug_struct("CoreBtInstallWire")
+            .field("available", &available)
+            .finish()
+    }
+}
+
+impl crate::install::xiaomi::device_session::InstallWireSender for CoreBtInstallWire {
+    fn send_install_payload(&self, plaintext_l2: &[u8]) -> std::result::Result<u8, String> {
+        let mut guard = self
+            .bt
+            .lock()
+            .map_err(|_| "device_unavailable: Core.bt 锁不可用".to_string())?;
+        let ctx = guard.as_mut().ok_or_else(|| {
+            "device_unavailable: Core.bt 无已认证连接 (not_connected)".to_string()
+        })?;
+        // 直接读取唯一来源 DownlinkCtx 的字段，绝不复制字段到别处。
+        let payload = business_frame_payload(&ctx.enc_key, plaintext_l2);
+        let seq = ctx.seq_out;
+        let frame = Frame {
+            frame_type: 0x03,
+            seq,
+            payload,
+        };
+        let raw = encode(&frame);
+        send_all(ctx.sock, &raw)?;
+        ctx.seq_out = ctx.seq_out.wrapping_add(1);
+        Ok(seq)
+    }
+
+    fn is_available(&self) -> bool {
+        self.bt
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
+    }
+}
+
 fn read_device_auth_mac() -> Result<([u8; 16], u64), String> {
     let base = std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA 不存在")?;
     let path = std::path::Path::new(&base).join("PulseDev/run/device.json");
@@ -611,19 +666,27 @@ fn run_pump_loop(core: &Core, sock: usize, dec_key: &[u8; 16], rx: &mut Vec<u8>)
                     }
                     // 业务/握手数据帧：先回传输层 ACK（seq 回显），再处理。
                     let _ = ack_frame(sock, frame.seq);
-                    // 阶段 21：向快应用安装 Runtime Bridge 事件队列派发入站业务帧。
-                    // 门禁：仅当安装管线被上层显式激活时才派发。默认关闭，原因是该全局队列
-                    // 当前没有生产者对应的消费者（RuntimeBridge 无生产实例），无条件派发会让
-                    // 队列在 --live 长期运行中无界增长，并制造“安装链路已接通”的假象。
-                    if crate::install::xiaomi::runtime_bridge::is_install_pipeline_active() {
-                        crate::install::xiaomi::runtime_bridge::dispatch_install_frame_event(
-                            crate::install::xiaomi::runtime_bridge::InstallFrameEvent::Incoming(frame.clone()),
-                        );
-                    }
+                    // 安装管线激活时，下方分支只派发过滤后的安装帧；日常业务不受影响。
                     if !frame.payload.starts_with(&BIZ_PREFIX) {
                         continue;
                     }
                     if let Some(plain) = decrypted_business_payload(dec_key, &frame.payload) {
+                        // 统一接收路径：只把确属安装业务的帧派发给安装队列，且派发**已解密**的
+                        // L2 明文（与 Task 3 约定一致：recv -> decode -> decrypt -> router）。
+                        // id=6/7/8/9 等日常业务继续走下方原逻辑，绝不被安装流程吞掉。
+                        if crate::install::xiaomi::runtime_bridge::is_install_pipeline_active()
+                            && crate::install::xiaomi::device_session::filter_install_response(&plain)
+                        {
+                            crate::install::xiaomi::runtime_bridge::dispatch_install_frame_event(
+                                crate::install::xiaomi::runtime_bridge::InstallFrameEvent::Incoming(
+                                    Frame {
+                                        frame_type: frame.frame_type,
+                                        seq: frame.seq,
+                                        payload: plain.clone(),
+                                    },
+                                ),
+                            );
+                        }
                         if let Ok(Some(up)) = parse_uplink(&plain) {
                             {
                                 let mut bt = core.bt.lock().unwrap();
@@ -821,6 +884,10 @@ pub fn run_live(core: &Core) -> Result<(), String> {
 
             let pump_err = run_pump_loop(core, sock, &dec_key, &mut rx);
             core.log(&format!("live: 业务数据泵退出 (原因: {pump_err})"));
+
+            // 安装运行时收尾：关闭派发门禁并清空残留入站事件。
+            // 生产安装传输（Core.install）持有的 Core.bt 共享句柄会自动看到连接已释放。
+            crate::install::xiaomi::runtime_bridge::on_live_pump_exit();
 
             // 释放 DownlinkCtx（Drop 特征自动执行 closesocket 与 WSACleanup）
             let _ = core.bt.lock().unwrap().take();
@@ -1086,6 +1153,7 @@ mod tests {
         use std::sync::{Arc, Mutex};
         use std::time::Instant;
 
+        let bt = Arc::new(Mutex::new(None));
         let core = Arc::new(Core {
             mode: crate::CoreMode::Live,
             token: "test-token".to_string(),
@@ -1093,7 +1161,8 @@ mod tests {
             started: Instant::now(),
             clients: Mutex::new(Vec::new()),
             device: Mutex::new(crate::fake::FakeDevice::new()),
-            bt: Mutex::new(None),
+            bt: Arc::clone(&bt),
+            install: crate::new_install_transport(&bt),
             shutdown_requested: std::sync::atomic::AtomicBool::new(false),
             desired_connected: std::sync::atomic::AtomicBool::new(false),
             live_state: Mutex::new(LiveStatus::Disconnected),
@@ -1161,6 +1230,7 @@ mod tests {
         use std::sync::{Arc, Mutex};
         use std::time::Instant;
 
+        let bt = Arc::new(Mutex::new(None));
         let core = Arc::new(Core {
             mode: crate::CoreMode::Live,
             token: "test-token".to_string(),
@@ -1168,7 +1238,8 @@ mod tests {
             started: Instant::now(),
             clients: Mutex::new(Vec::new()),
             device: Mutex::new(crate::fake::FakeDevice::new()),
-            bt: Mutex::new(None),
+            bt: Arc::clone(&bt),
+            install: crate::new_install_transport(&bt),
             shutdown_requested: std::sync::atomic::AtomicBool::new(false),
             desired_connected: std::sync::atomic::AtomicBool::new(false),
             live_state: Mutex::new(LiveStatus::Disconnected),

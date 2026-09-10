@@ -7,6 +7,9 @@
 //! - `mass`: Mass 传输协议报文与 CRC32 计算模型
 //! - `wear_packet`: WearPacket 顶层封装与分发
 //! - `codec`: 统一协议编解码入口
+//! - `device_session`: 设备会话与实时链路发送接口 (InstallWireSender)
+//! - `installed_list`: 已安装列表 (type=20 id=0) 查询与解析，用于安装后核验
+//! - `runtime_bridge`: 安装运行时桥接与生产传输 (XiaomiInstallTransport)
 
 pub mod wire;
 pub mod l2;
@@ -16,6 +19,7 @@ pub mod wear_packet;
 pub mod codec;
 pub mod protocol;
 pub mod device_session;
+pub mod installed_list;
 pub mod runtime_bridge;
 
 pub use l2::*;
@@ -25,6 +29,7 @@ pub use wear_packet::*;
 pub use codec::*;
 pub use protocol::*;
 pub use device_session::*;
+pub use installed_list::*;
 pub use runtime_bridge::*;
 
 use serde::{Deserialize, Serialize};

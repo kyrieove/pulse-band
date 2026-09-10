@@ -1,31 +1,38 @@
 //! 小米手环快应用安装运行时桥接层 (Xiaomi Install Runtime Bridge)
 //!
 //! 职责：
-//! 1. 连接 XiaomiAppInstallProtocol 与 Core.bt (DownlinkCtx)
+//! 1. 连接 XiaomiAppInstallProtocol 与真实 live.rs 数据泵
 //! 2. 严禁创建第二个 socket / 第二套连接
-//! 3. 严禁持有 socket 字段（严格复用已有已认证 DownlinkCtx）
-//! 4. 状态机闭环：RuntimeBridgeState (Disconnected, Authenticated, Preparing, Sending, Transferring, WaitingAck, WaitingResult, Completed, Failed, Cancelled)
-//! 5. 严格防伪规则：仅在接收到真实 WearPacket(type=20, id=2) 且 result_code == 0 时才进入 Completed；禁止假成功
-//! 6. 设备能力检测：XiaomiInstallCapability (authenticated, supports_install_channel, max_chunk_size)
-//! 7. 数据流收发桥接：使用已有 DownlinkCtx 发送，使用已有 live.rs 接收
+//! 3. 通过 XiaomiInstallDeviceSession -> InstallWireSender 复用唯一已认证链路
+//! 4. 安装结果只能由真实 WearPacket(type=20, id=2, result_code=0) 驱动
+//! 5. 安装成功后必须再查询 type=20 id=0 已安装列表，核验 package_name 与 version
 //!
-//! # 当前真实状态（阶段 21 审计结论，禁止夸大）
+//! 统一接收路径（本模块与 device_session/live.rs 共同保证）：
+//! rfcomm recv -> frame decode -> business decrypt -> InstallFrameRouter
+//!   -> install_response_queue -> wait_install_result
 //!
-//! [not implemented] 本模块**尚未接入生产链路**：
-//! - `XiaomiInstallRuntimeBridge` 目前只被 `core/tests/app_install_test.rs` 实例化；
-//!   `main.rs` / `rpc.rs` / `live.rs` 中没有任何生产代码创建它，因此
-//!   “RPK → Core RPC → Protocol → RuntimeBridge → RFCOMM” 这条链路**在运行时不存在**；
-//! - 本文件内的 `DownlinkCtx` 是 `live::DownlinkCtx` 的**同名副本**，二者不是同一个类型，
-//!   不能直接互相传入；它不持有任何真实 socket，也不会写入 RFCOMM；
-//! - `send_install_packet()` 只把帧压入 `outgoing_install_frames` 队列，**不发送**；
-//! - 接收侧依赖 `live.rs` 的 `dispatch_install_frame_event()`，该派发默认关闭
-//!   （见 `is_install_pipeline_active()`），需要上层在真正开始安装时显式打开。
+//! 本文件不定义任何 DownlinkCtx 副本；真实下行唯一来源是 live::DownlinkCtx，
+//! 由 live.rs 的 CoreBtInstallWire 通过共享 Core.bt 句柄完成写入。
+//!
+//! # 接线状态（2026-09-10）
+//!
+//! [implemented · 离线验证] 生产接线已建立：
+//! - `main.rs` 在启动时构造 `Core.install`（`XiaomiInstallTransport`），
+//!   其 `CoreBtInstallWire` 持有与 `Core.bt` **同一个** `Arc`，不复制 sock/enc_key/seq_out；
+//! - `rpc.rs` 的 `--live` 分支走 `core.install`，`--fake` 分支走 `GLOBAL_INSTALL_TRANSPORT`(Mock)，
+//!   生产路径不存在 Mock 传输；
+//! - `live.rs` 在解密业务帧后，仅当安装进行中（门禁开启）才把**明文 L2** 派发给本模块；
+//! - 安装结束后由 `on_live_pump_exit()` 关闭门禁并清空残留事件。
+//!
+//! [missing · 未做真机验证] 以上链路只经过离线测试与 Mock 链路验证，
+//! 尚未在真实小米手环 10 上跑通一次完整安装。真机验收前不得声称安装能力已完成。
 
 #![allow(dead_code)]
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::frame::Frame;
@@ -33,21 +40,14 @@ use super::super::model::{
     ChunkAck, InstallChunk, InstallMetadata, InstallResult, InstallSession, Result,
 };
 use super::super::protocol::AppInstallProtocol;
-use super::super::transport::BandDeviceTransport;
+use super::super::transport::{AppInstallTransport, BandDeviceTransport};
 use super::codec::{decode_install_response, decode_install_result};
-use super::device_session::{
-    business_frame_payload, XiaomiInstallDeviceSession,
-};
+use super::device_session::{InstallWireSender, XiaomiInstallDeviceSession};
+use super::installed_list;
 use super::protocol::XiaomiAppInstallProtocol;
 use super::thirdparty_app::{AppInstallerResult, InstallResultCode};
 
 /// 运行时桥接状态机状态枚举
-///
-/// 纪律要求：
-/// - 严格按真实通信阶段流转
-/// - 只有在接收到真实 WearPacket(type=20, id=2) 且 result_code == 0 时才允许进入 Completed
-/// - result_code != 0 必须进入 Failed
-/// - 严禁产生任何模拟或超时伪完成状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeBridgeState {
@@ -87,40 +87,45 @@ pub enum InstallFrameEvent {
     Incoming(Frame),
 }
 
-/// 全局安装帧事件队列（供 live.rs 数据泵向 RuntimeBridge 分发入站业务帧）
+/// 安装入站帧统一队列（由 live.rs 数据泵在安装管线激活时派发）。
 static GLOBAL_INSTALL_EVENT_QUEUE: Mutex<VecDeque<InstallFrameEvent>> = Mutex::new(VecDeque::new());
 
-/// 安装运行时管线激活开关（默认关闭）
-///
-/// 为什么需要这个开关：
-/// `run_pump_loop` 每收到一个 type=0x03 业务帧都会 clone 一份投递到上方的全局队列；
-/// 该队列只有一个消费者（RuntimeBridge），而 RuntimeBridge 当前没有生产实例。
-/// 如果不加门禁，`--live` 长期运行时这个队列会**无界增长**（普通业务消息也被复制一遍），
-/// 同时制造“安装链路已接通”的假象。
-///
-/// 纪律：
-/// - 默认 `false`：生产环境不派发，日常 interconnect 数据泵零额外开销；
-/// - 只有上层真正开始一次安装会话时才显式 `set_install_pipeline_active(true)`，结束即关闭。
+/// 统一入站队列上限。安装期间由安装 RPC 线程周期性消费；限长是防御性兜底，
+/// 防止调用方异常退出（prepare 成功但既不 commit 也不 cancel）时无界增长。
+const MAX_INSTALL_EVENT_QUEUE: usize = 512;
+
+/// 安装运行时管线激活开关（默认关闭，避免日常 --live 无界派发）。
 static INSTALL_PIPELINE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// 打开/关闭安装运行时管线的事件派发
 pub fn set_install_pipeline_active(active: bool) {
     INSTALL_PIPELINE_ACTIVE.store(active, Ordering::SeqCst);
 }
 
-/// 查询安装运行时管线是否激活（live.rs 数据泵据此决定是否派发入站帧）
 pub fn is_install_pipeline_active() -> bool {
     INSTALL_PIPELINE_ACTIVE.load(Ordering::SeqCst)
 }
 
-/// 向全局安装帧事件队列派发事件（由 live.rs 调用）
+/// 向全局安装帧事件队列派发事件（由 live.rs 调用）。
 pub fn dispatch_install_frame_event(event: InstallFrameEvent) {
     if let Ok(mut q) = GLOBAL_INSTALL_EVENT_QUEUE.lock() {
         q.push_back(event);
+        while q.len() > MAX_INSTALL_EVENT_QUEUE {
+            q.pop_front();
+        }
     }
 }
 
-/// 从全局安装帧事件队列拉取事件
+/// 数据泵退出后的安装运行时收尾（由 live.rs 调用）。
+///
+/// 关闭派发门禁并清空残留入站事件，防止下次连接时读到上一次的旧帧。
+/// 生产安装传输（`Core.install`）持有的 `Core.bt` 共享句柄会自动看到连接已释放，
+/// 无需在此重新注册或回退到 Mock。
+pub fn on_live_pump_exit() {
+    set_install_pipeline_active(false);
+    clear_global_install_events();
+}
+
+/// 从全局安装帧事件队列拉取事件。
 pub fn poll_global_install_event() -> Option<InstallFrameEvent> {
     if let Ok(mut q) = GLOBAL_INSTALL_EVENT_QUEUE.lock() {
         q.pop_front()
@@ -129,7 +134,7 @@ pub fn poll_global_install_event() -> Option<InstallFrameEvent> {
     }
 }
 
-/// 清理全局安装帧事件队列
+/// 清理全局安装帧事件队列。
 pub fn clear_global_install_events() {
     if let Ok(mut q) = GLOBAL_INSTALL_EVENT_QUEUE.lock() {
         q.clear();
@@ -144,55 +149,26 @@ pub struct XiaomiInstallCapability {
     pub max_chunk_size: u32,
 }
 
-/// 下行数据传输上下文（DownlinkCtx）
-///
-/// [not wired] 这是 `live::DownlinkCtx` 的**同名副本**，不是同一个类型。
-/// `live.rs` 的真实结构体额外持有 `basic: Option<BasicInfo>`，且其 `Drop` 会真正
-/// `closesocket`；本副本不持有任何真实 socket，只用于离线编码测试
-/// （`sock` 字段在测试中恒为 0）。两者之间目前没有转换或桥接代码。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DownlinkCtx {
-    pub sock: usize,
-    pub enc_key: [u8; 16],
-    pub seq_out: u8,
-}
-
-impl DownlinkCtx {
-    pub fn new(sock: usize, enc_key: [u8; 16], seq_out: u8) -> Self {
-        Self {
-            sock,
-            enc_key,
-            seq_out,
-        }
-    }
-}
-
-/// 小米快应用安装运行时桥接器
+/// 小米快应用安装运行时桥接器。
 ///
 /// 架构定位：
-/// Renderer -> Main Service -> Core RPC
-///   ↓
 /// XiaomiAppInstallProtocol
 ///   ↓
-/// XiaomiInstallRuntimeBridge (本结构体，严禁持有 socket 字段)
+/// XiaomiInstallRuntimeBridge
 ///   ↓
-/// DownlinkCtx (复用已有连接句柄)
+/// XiaomiInstallDeviceSession -> InstallWireSender
 ///   ↓
-/// Frame encode -> AES CTR -> RFCOMM
-///   ↓
-/// Band
+/// Core.bt (live::DownlinkCtx) -> Frame encode -> AES-CTR -> RFCOMM -> Band
 #[derive(Debug, Default)]
 pub struct XiaomiInstallRuntimeBridge {
     pub state: RuntimeBridgeState,
     pub install_session: XiaomiInstallDeviceSession,
+    pub protocol: XiaomiAppInstallProtocol,
 }
 
 impl XiaomiInstallRuntimeBridge {
     pub fn new() -> Self {
-        Self {
-            state: RuntimeBridgeState::Disconnected,
-            install_session: XiaomiInstallDeviceSession::new(),
-        }
+        Self::default()
     }
 
     pub fn with_session(session: XiaomiInstallDeviceSession) -> Self {
@@ -204,16 +180,22 @@ impl XiaomiInstallRuntimeBridge {
         Self {
             state,
             install_session: session,
+            protocol: XiaomiAppInstallProtocol::new(),
         }
     }
 
-    /// 检测会话是否就绪且已认证
-    pub fn is_ready(&self) -> bool {
-        self.state != RuntimeBridgeState::Disconnected
-            && (self.state == RuntimeBridgeState::Authenticated || self.install_session.authenticated)
+    /// 绑定真实实时链路（生产：CoreBtInstallWire）。
+    pub fn with_wire(wire: Box<dyn InstallWireSender>) -> Self {
+        let session = XiaomiInstallDeviceSession::with_wire(wire);
+        Self::with_session(session)
     }
 
-    /// 查询设备安装能力：如果未完成认证或底层会话不存在，返回结构化错误 (device_unavailable)
+    pub fn is_ready(&self) -> bool {
+        self.state != RuntimeBridgeState::Disconnected
+            && (self.state == RuntimeBridgeState::Authenticated
+                || self.install_session.authenticated)
+    }
+
     pub fn detect_capability(&self) -> Result<XiaomiInstallCapability> {
         if self.is_ready() {
             Ok(XiaomiInstallCapability {
@@ -226,7 +208,6 @@ impl XiaomiInstallRuntimeBridge {
         }
     }
 
-    /// 查询指定认证状态下的设备安装能力
     pub fn check_device_capability(&self, authenticated: bool) -> Result<XiaomiInstallCapability> {
         if authenticated {
             Ok(XiaomiInstallCapability {
@@ -239,101 +220,51 @@ impl XiaomiInstallRuntimeBridge {
         }
     }
 
-    /// 构建安装业务下行帧（通过 DownlinkCtx 的 enc_key 加密，自增 seq_out）
-    pub fn build_install_frame(
-        ctx: &mut DownlinkCtx,
-        plaintext_l2: &[u8],
-    ) -> Frame {
-        let payload = business_frame_payload(&ctx.enc_key, plaintext_l2);
+    /// 真实发送安装明文 L2：走已绑定实时链路（business_frame_payload + seq_out + send_all）。
+    ///
+    /// 返回值是真正写入链路的 Frame（seq 来自共享 DownlinkCtx.seq_out）。
+    pub fn send_install_packet(&mut self, plaintext_l2: &[u8]) -> Result<Frame> {
+        self.state = RuntimeBridgeState::Sending;
         let frame = Frame {
             frame_type: 0x03,
-            seq: ctx.seq_out,
-            payload,
+            seq: 0,
+            payload: plaintext_l2.to_vec(),
         };
-        ctx.seq_out = ctx.seq_out.wrapping_add(1);
-        frame
+        self.install_session.send_install_packet(&frame)
     }
 
-    /// 通过已有 DownlinkCtx 编码加密并发送安装数据帧（严格复用，零新 socket）
-    ///
-    /// [placeholder] 当前只完成“编码 + 入队”，**没有任何 socket 写入**。
-    /// 真正发到 RFCOMM 需要在下一阶段把 `live::DownlinkCtx`（含真实 sock/seq_out）
-    /// 接入这里，调用 `live` 侧既有的 `send_all(sock, &encode(&frame))` 通路。
-    pub fn send_install_packet(
-        &mut self,
-        ctx: &mut DownlinkCtx,
-        plaintext_l2: &[u8],
-    ) -> Result<Frame> {
-        let frame = Self::build_install_frame(ctx, plaintext_l2);
-        self.state = RuntimeBridgeState::Sending;
-        self.install_session.outgoing_install_frames.push_back(frame.clone());
-        Ok(frame)
-    }
-
-    /// 处理入站帧：由 InstallFrameRouter 执行协议过滤与队列路由
+    /// 处理入站帧：由 InstallFrameRouter 执行协议过滤与队列路由。
     pub fn process_incoming_frame(&mut self, frame: Frame) -> bool {
         self.install_session.dispatch_incoming_frame(frame)
     }
 
-    /// 从全局事件队列同步所有入站帧，并尝试获取下一个待处理的安装响应帧
+    /// 从统一入站队列同步并返回下一个待处理安装帧（payload 已解密为 L2 明文）。
     pub fn receive_frame(&mut self) -> Result<Option<Frame>> {
-        // 1. 同步全局入站队列所有事件
-        while let Some(event) = poll_global_install_event() {
-            match event {
-                InstallFrameEvent::Incoming(frame) => {
-                    self.process_incoming_frame(frame);
-                }
-            }
-        }
-        // 2. 从会话的过滤安装响应队列提取
-        Ok(self.install_session.incoming_install_queue.pop_front())
+        self.install_session.receive_install_packet(0)
     }
 
-    /// 轮询并解析设备安装结果上报报文（底层 AppInstallerResult）
+    /// 轮询并解析设备安装结果上报报文（底层 AppInstallerResult）。
     pub fn poll_app_installer_result(&mut self) -> Result<Option<AppInstallerResult>> {
-        // 先从全局事件拉取
-        while let Some(event) = poll_global_install_event() {
-            match event {
-                InstallFrameEvent::Incoming(frame) => {
-                    self.process_incoming_frame(frame);
+        loop {
+            let Some(frame) = self.install_session.receive_install_packet(0)? else {
+                return Ok(None);
+            };
+            if let Ok(res) = decode_install_result(&frame.payload) {
+                if res.code == InstallResultCode::Success {
+                    self.state = RuntimeBridgeState::Completed;
+                } else {
+                    self.state = RuntimeBridgeState::Failed;
                 }
+                return Ok(Some(res));
             }
-        }
-
-        let mut idx_to_remove = None;
-        let mut resolved_result = None;
-
-        for (i, frame) in self.install_session.incoming_install_queue.iter().enumerate() {
-            let plain = self.install_session.router.resolve_payload(frame);
-            if let Ok(res) = decode_install_result(&plain) {
-                idx_to_remove = Some(i);
-                resolved_result = Some(res);
-                break;
-            } else if let Ok(_resp) = decode_install_response(&plain) {
+            if decode_install_response(&frame.payload).is_ok() {
                 self.state = RuntimeBridgeState::Transferring;
             }
+            // id=0 已安装列表等其它帧：继续消费，等待真正的 id=2。
         }
-
-        if let Some(i) = idx_to_remove {
-            self.install_session.incoming_install_queue.remove(i);
-        }
-
-        if let Some(res) = resolved_result {
-            if res.code == InstallResultCode::Success {
-                self.state = RuntimeBridgeState::Completed;
-            } else {
-                self.state = RuntimeBridgeState::Failed;
-            }
-            return Ok(Some(res));
-        }
-
-        Ok(None)
     }
 
-    /// 轮询并解析设备安装结果报文（高层 InstallResult 契约）：
-    /// 仅在收到 WearPacket(type=20, id=2) 且 result_code == 0 时才进入 Completed 状态；
-    /// 若 result_code != 0 则进入 Failed 状态；
-    /// 严禁假完成。
+    /// 轮询并解析设备安装结果（高层 InstallResult 契约）。
     pub fn poll_install_result(&mut self) -> Result<Option<InstallResult>> {
         let app_res = self.poll_app_installer_result()?;
         if let Some(res) = app_res {
@@ -351,14 +282,16 @@ impl XiaomiInstallRuntimeBridge {
         }
     }
 
-    /// 执行完整的 prepare_install 协议并驱动桥接状态机
+    /// 执行完整的 prepare_install 协议并驱动桥接状态机。
     pub fn execute_prepare(
         &mut self,
-        protocol: &mut XiaomiAppInstallProtocol,
         metadata: &InstallMetadata,
     ) -> Result<InstallSession> {
+        self.install_session.refresh_authentication();
         self.state = RuntimeBridgeState::Preparing;
-        let res = protocol.prepare_install(&mut self.install_session, metadata);
+        let res = self
+            .protocol
+            .prepare_install(&mut self.install_session, metadata);
         if res.is_ok() {
             self.state = RuntimeBridgeState::Transferring;
         } else {
@@ -367,14 +300,12 @@ impl XiaomiInstallRuntimeBridge {
         res
     }
 
-    /// 执行 send_package_chunk 协议并驱动桥接状态机
-    pub fn execute_send_chunk(
-        &mut self,
-        protocol: &mut XiaomiAppInstallProtocol,
-        chunk: &InstallChunk,
-    ) -> Result<ChunkAck> {
+    /// 执行 send_package_chunk 协议并驱动桥接状态机。
+    pub fn execute_send_chunk(&mut self, chunk: &InstallChunk) -> Result<ChunkAck> {
         self.state = RuntimeBridgeState::Sending;
-        let res = protocol.send_package_chunk(&mut self.install_session, chunk);
+        let res = self
+            .protocol
+            .send_package_chunk(&mut self.install_session, chunk);
         if res.is_ok() {
             self.state = RuntimeBridgeState::Transferring;
         } else {
@@ -383,34 +314,128 @@ impl XiaomiInstallRuntimeBridge {
         res
     }
 
-    /// 等待设备安装结果并闭环状态机
+    /// 等待设备安装结果并闭环状态机。
     ///
-    /// 防伪规则（阶段 21 审计修复）：
-    /// `protocol.wait_install_result()` 在**设备未上报**时会返回 `Ok(status = "waiting_device_result")`。
-    /// 修复前这里对任何 `Ok(_)` 都置 `Completed`，等于把“设备没回话”当成“安装成功”。
-    /// 现在桥接状态只跟随协议状态机的真实落点：
-    /// - `Success`  → `Completed`（仅由真实 WearPacket(type=20, id=2, result_code=0) 驱动）
-    /// - `Failure`  → `Failed`
-    /// - 其余（含超时未上报）→ `WaitingResult`，绝不进入 `Completed`
-    pub fn execute_wait_result(
-        &mut self,
-        protocol: &mut XiaomiAppInstallProtocol,
-        session_id: &str,
-    ) -> Result<InstallResult> {
+    /// 防伪规则：只有协议状态机进入 Success 才置 Completed；
+    /// 设备未上报（waiting_device_result）保持 WaitingResult，绝不假成功。
+    pub fn execute_wait_result(&mut self, session_id: &str) -> Result<InstallResult> {
         self.state = RuntimeBridgeState::WaitingResult;
-        let res = protocol.wait_install_result(&mut self.install_session, session_id);
-        self.state = match protocol.state {
+        let res = self
+            .protocol
+            .wait_install_result(&mut self.install_session, session_id);
+        self.state = match self.protocol.state {
             super::XiaomiInstallState::Success => RuntimeBridgeState::Completed,
             super::XiaomiInstallState::Failure => RuntimeBridgeState::Failed,
             _ => RuntimeBridgeState::WaitingResult,
         };
         res
     }
+
+    /// 生产传输 prepare：真实刷新认证并驱动协议。
+    pub fn transport_prepare(&mut self, metadata: &InstallMetadata) -> Result<InstallSession> {
+        self.install_session.refresh_authentication();
+        // 清空上一次安装遗留的帧，避免旧 Mass ACK 污染本次等待。
+        self.install_session.discard_stale_frames();
+        let res = self.execute_prepare(metadata);
+        if res.is_err() && !self.install_session.authenticated {
+            self.state = RuntimeBridgeState::Disconnected;
+        }
+        res
+    }
+
+    pub fn transport_send_chunk(&mut self, chunk: &InstallChunk) -> Result<ChunkAck> {
+        self.execute_send_chunk(chunk)
+    }
+
+    /// 生产传输 commit：等待 id=2 结果，成功后再查询 id=0 已安装列表核验。
+    pub fn transport_commit(&mut self, session_id: &str) -> Result<InstallResult> {
+        self.state = RuntimeBridgeState::WaitingResult;
+        let wait = self
+            .protocol
+            .wait_install_result(&mut self.install_session, session_id);
+        match wait {
+            Ok(res) if res.status == "success" => match self.verify_installed_list() {
+                Ok(()) => {
+                    self.state = RuntimeBridgeState::Completed;
+                    Ok(InstallResult {
+                        status: "completed".to_string(),
+                    })
+                }
+                Err(e) => {
+                    self.state = RuntimeBridgeState::Failed;
+                    Err(e)
+                }
+            },
+            Ok(_) => {
+                self.state = RuntimeBridgeState::WaitingResult;
+                Ok(InstallResult {
+                    status: "unknown".to_string(),
+                })
+            }
+            Err(e) => {
+                self.state = RuntimeBridgeState::Failed;
+                Err(e)
+            }
+        }
+    }
+
+    /// 设备上报成功后的二次核验：查询 type=20 id=0 已安装列表，
+    /// 必须同时满足 package_name 与 version_code 命中，才返回 Ok。
+    pub fn verify_installed_list(&mut self) -> Result<()> {
+        let metadata = self
+            .protocol
+            .metadata
+            .clone()
+            .ok_or_else(|| "缺少安装元数据，无法核验已安装列表".to_string())?;
+
+        let query_l2 = installed_list::build_installed_list_query_l2();
+        let query_frame = Frame {
+            frame_type: 0x03,
+            seq: 0,
+            payload: query_l2,
+        };
+        self.install_session.send_install_packet(&query_frame)?;
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err("查询已安装列表超时 (timeout)".to_string());
+            }
+            let remaining = deadline.saturating_duration_since(now).as_millis() as u64;
+            let Some(frame) = self
+                .install_session
+                .receive_install_packet(remaining.min(500))?
+            else {
+                continue;
+            };
+            if let Ok(apps) = installed_list::decode_installed_list(&frame.payload) {
+                let found = installed_list::installed_list_contains(
+                    &apps,
+                    &metadata.package_id,
+                    Some(metadata.version_code),
+                );
+                if found {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "已安装列表未包含目标快应用: package={}, version_code={}",
+                    metadata.package_id, metadata.version_code
+                ));
+            }
+        }
+    }
+
+    pub fn transport_cancel(&mut self, session_id: &str) -> Result<()> {
+        let res = self
+            .protocol
+            .cancel_install(&mut self.install_session, session_id);
+        self.state = RuntimeBridgeState::Cancelled;
+        res
+    }
 }
 
 impl BandDeviceTransport for XiaomiInstallRuntimeBridge {
-    /// [placeholder] 不建立任何连接，只把会话标记为已认证。
-    /// 真实连接由 `live::run_live` 的 `connect_and_authenticate()` 独占负责。
     fn connect(&mut self, target_addr: &str) -> Result<()> {
         self.install_session.connect(target_addr)?;
         self.state = RuntimeBridgeState::Authenticated;
@@ -436,7 +461,7 @@ impl BandDeviceTransport for XiaomiInstallRuntimeBridge {
     }
 
     fn send_install_packet(&mut self, frame: &Frame) -> Result<()> {
-        self.install_session.send_install_packet(frame)
+        self.install_session.send_install_packet(frame).map(|_| ())
     }
 
     fn receive_install_packet(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
@@ -449,5 +474,62 @@ impl BandDeviceTransport for XiaomiInstallRuntimeBridge {
 
     fn has_duplicate_connection(&self) -> bool {
         false
+    }
+}
+
+/// 生产用小艾安装传输实现：把 AppInstallTransport 的 prepare/send_chunk/commit/cancel
+/// 映射到 XiaomiAppInstallProtocol + 已绑定真实 Core.bt 的设备会话。
+///
+/// 该类是 Core.install 的实例类型（--live 生产路径），绝不使用 MockAppInstallTransport。
+#[derive(Debug, Default)]
+pub struct XiaomiInstallTransport {
+    pub bridge: XiaomiInstallRuntimeBridge,
+}
+
+impl XiaomiInstallTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_wire(wire: Box<dyn InstallWireSender>) -> Self {
+        Self {
+            bridge: XiaomiInstallRuntimeBridge::with_wire(wire),
+        }
+    }
+}
+
+impl AppInstallTransport for XiaomiInstallTransport {
+    /// 开始安装才打开 live.rs 的安装帧派发门禁，并在失败/结束时关闭。
+    ///
+    /// 门禁只在安装进行期间打开，这样空闲连接不会把每个业务帧复制进全局队列。
+    fn prepare(&mut self, metadata: InstallMetadata) -> Result<InstallSession> {
+        set_install_pipeline_active(true);
+        let res = self.bridge.transport_prepare(&metadata);
+        if res.is_err() {
+            set_install_pipeline_active(false);
+        }
+        res
+    }
+
+    fn send_chunk(&mut self, chunk: InstallChunk) -> Result<ChunkAck> {
+        set_install_pipeline_active(true);
+        let res = self.bridge.transport_send_chunk(&chunk);
+        if res.is_err() {
+            set_install_pipeline_active(false);
+        }
+        res
+    }
+
+    fn commit(&mut self, session_id: String) -> Result<InstallResult> {
+        set_install_pipeline_active(true);
+        let res = self.bridge.transport_commit(&session_id);
+        set_install_pipeline_active(false);
+        res
+    }
+
+    fn cancel(&mut self, session_id: String) -> Result<()> {
+        let res = self.bridge.transport_cancel(&session_id);
+        set_install_pipeline_active(false);
+        res
     }
 }

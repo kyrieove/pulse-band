@@ -156,3 +156,52 @@ Device                      [missing]      未连接真实小米手环 10，无�
 - `npm test`：88 passed，0 failed（exit 0）
 - `npm run build`：通过（exit 0）
 - `git diff --check`：无空白错误
+
+---
+
+## 8. 后续更新：生产接线已建立（2026-09-10 第 2 轮）
+
+本节记录在上文审计之后完成的接线工作，**上文第 1 节"运行时不存在"的结论已被本节取代**。
+
+已建立的真实路径：
+
+```text
+Renderer / Main
+  ↓  device.app.install.* RPC
+Core RPC (rpc.rs)
+  ↓  --live 走 Core.install；--fake 走 GLOBAL_INSTALL_TRANSPORT(Mock)
+XiaomiInstallTransport
+  ↓
+XiaomiInstallRuntimeBridge
+  ↓
+XiaomiInstallDeviceSession
+  ↓  InstallWireSender
+CoreBtInstallWire (live.rs)
+  ↓  读取同一个 Arc<Mutex<Option<DownlinkCtx>>>（不复制 sock/enc_key/seq_out）
+business_frame_payload + frame::encode + send_all
+  ↓
+RFCOMM
+```
+
+接收侧：
+
+```text
+rfcomm recv -> frame decode -> business decrypt (live.rs)
+  -> [门禁开启时] dispatch 明文 L2 -> InstallFrameRouter -> install_response_queue
+  -> wait_install_result
+```
+
+关键变化：
+- `Core.bt` 改为 `Arc<Mutex<Option<DownlinkCtx>>>`，安装层持有同一句柄，仍是唯一连接。
+- `XiaomiInstallDeviceSession::send_install_packet` 不再是入队占位：明文 L2 经
+  `business_frame_payload` 加密、`seq_out` 真实递增后 `send_all` 写入 socket。
+- 安装帧派发门禁只在安装进行中开启（`XiaomiInstallTransport` 的 4 个方法管理），
+  空闲连接不复制业务帧；全局队列与普通消息队列都有上限。
+- 安装成功后追加 `type=20 id=0` 已安装列表核验（package_name + version_code），
+  只有同时命中才判成功。
+
+仍未完成：
+- **未做真机安装验证**，整条链路只经离线测试与 Mock 链路验证。
+- 已安装列表请求体按真机抓包 Pkt #176 构造为空 ThirdpartyApp，响应解析字段已实证；
+  但"查询请求需要携带哪些字段设备才会应答"未在真机上确认。
+- `core/src/session.rs:179` 仍以 `"OronBox"` 作 companion 名（冻结文件，未改）。

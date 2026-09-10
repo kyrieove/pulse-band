@@ -3,16 +3,20 @@
 //! 职责：
 //! 1. 获取并复用已认证设备通信能力，严禁创建第二套蓝牙连接
 //! 2. 区分安装业务报文与日常 interconnect 业务报文，实现严格通信隔离
-//! 3. send_install_packet() 发送安装帧
-//! 4. receive_install_packet() 接收已过滤的安装响应
+//! 3. send_install_packet() 通过已绑定的实时链路 trait 真实发送安装帧
+//! 4. receive_install_packet() 从 live.rs 派发的统一入站队列接收已过滤安装响应
 //! 5. filter_install_response() 检测报文是否归属安装协议
 //!
-//! 防爆约束：
-//! - 严禁修改 live.rs, session.rs, rfcomm.rs
-//! - 严禁调用 rfcomm::socket 或发起第二路 RFCOMM / BLE 连接
+//! 纪律：
+//! - 严禁新建 RFCOMM/BLE 连接；真实 socket 只在 live.rs 的 Core.bt 中
+//! - send_install_packet() 不得只入队；必须经过 business_frame_payload + frame::encode
+//!   并交给绑定到 Core.bt 的实时链路发送
 //! - 严禁返回 completed 或 installed 假成功状态
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::Aes128;
 use ctr::Ctr128BE;
@@ -21,12 +25,19 @@ use crate::frame::Frame;
 use super::super::model::Result;
 use super::super::transport::BandDeviceTransport;
 use super::l2::{L2Channel, L2Packet};
+use super::runtime_bridge::{poll_global_install_event, InstallFrameEvent};
 use super::wear_packet::{WearPacket, WearPacketType};
 
 type BizCtr = Ctr128BE<Aes128>;
 
 /// 业务帧前缀标志（0x01, 0x02）
 pub const BIZ_PREFIX: [u8; 2] = [0x01, 0x02];
+
+/// 普通（非安装）消息隔离队列的保留上限。
+///
+/// 安装管线激活期间，live.rs 会把每个业务帧都路由到设备会话；日常消息（id=6/7/9 等）
+/// 没有安装侧的消费者，只保留最近若干条用于诊断，避免长时间传输时无界增长。
+pub const MAX_NORMAL_MESSAGE_QUEUE: usize = 64;
 
 /// 对业务载荷做 AES-128-CTR (IV=key) 流加解密
 pub fn biz_stream(key: &[u8; 16], data: &[u8]) -> Vec<u8> {
@@ -55,18 +66,11 @@ pub fn business_frame_payload(key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
 /// 检测指定载荷是否归属于快应用安装业务（过滤与分流规则）
 ///
 /// 判定规则：
-/// - 若为 L2Packet:
-///   - channel == Mass (2) -> 属于快应用安装大文件传输 (true)
-///   - channel == Pb (1):
-///     - 载荷解析为 WearPacket:
-///       - type == 20 (ThirdpartyApp) 且 id == 1 (AppInstallerResponse) -> true
-///       - type == 20 (ThirdpartyApp) 且 id == 2 (AppInstallerResult) -> true
-///       - type == 22 (Mass) -> true
-///       - 其余 (例如 id == 9 SEND_WEAR_MESSAGE, id == 6 REQUEST_PHONE_APP_STATUS) -> false (日常业务隔离)
-/// - 若直接为 WearPacket Protobuf:
-///   - type == 20 且 (id == 1 || id == 2) -> true
-///   - type == 22 -> true
-///   - 其余 -> false
+/// - L2 Mass 通道 (2) -> true
+/// - L2 Pb 通道 (1) 且 WearPacket:
+///   - type=20 且 id 属于 {0 已安装列表, 1 安装准备响应, 2 安装结果} -> true
+///   - type=22 (Mass) -> true
+/// - 其余（id=6/7/8/9 等日常业务）-> false，保证不被安装流程吞掉
 pub fn filter_install_response(payload: &[u8]) -> bool {
     let raw = if payload.len() >= 2 && payload[0..2] == [0x01, 0x02] {
         &payload[2..]
@@ -78,7 +82,6 @@ pub fn filter_install_response(payload: &[u8]) -> bool {
         return false;
     }
 
-    // 1. 尝试作为 L2Packet 解析
     if let Ok(l2) = L2Packet::from_bytes(raw) {
         if l2.channel == L2Channel::Mass {
             return true;
@@ -90,7 +93,6 @@ pub fn filter_install_response(payload: &[u8]) -> bool {
         }
     }
 
-    // 2. 尝试直接作为 WearPacket Protobuf 解析
     if let Ok(wp) = WearPacket::decode(raw) {
         return is_wear_packet_install(&wp);
     }
@@ -101,26 +103,13 @@ pub fn filter_install_response(payload: &[u8]) -> bool {
 #[allow(dead_code)]
 fn is_wear_packet_install(wp: &WearPacket) -> bool {
     match wp.pkt_type {
-        WearPacketType::ThirdpartyApp => {
-            // id=1: AppInstallerResponse (准备响应)
-            // id=2: AppInstallerResult (安装结果上报)
-            // id=9 (FETCH), id=6 (APP_STATUS), id=8 (PHONE_MSG) 绝不能判定为安装消息
-            wp.id == 1 || wp.id == 2
-        }
-        WearPacketType::Mass => {
-            // Mass 通道控制报文/ACK
-            true
-        }
+        WearPacketType::ThirdpartyApp => wp.id == 0 || wp.id == 1 || wp.id == 2,
+        WearPacketType::Mass => true,
         _ => false,
     }
 }
 
 /// 快应用安装帧路由分发层 (Install Frame Router)
-///
-/// 职责：
-/// 1. 业务帧加解密通道支持 (Encrypted Payload Path: AES-128-CTR)
-/// 2. 安装帧编码 (Install Frame Encode: L2/WearPacket -> Wire Frame)
-/// 3. 安装报文路由与普通报文隔离 (Install Frame Routing & Normal Frame Isolation)
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct InstallFrameRouter {
@@ -141,7 +130,7 @@ impl InstallFrameRouter {
         }
     }
 
-    /// 编码安装下行数据帧（支持明文与 AES-128-CTR 加密两种路径）
+    /// 编码安装下行帧（支持明文与 AES-128-CTR 加密两种路径）
     pub fn encode_install_frame(&self, plaintext_l2: &[u8], seq: u8) -> Frame {
         let payload = if let Some(key) = &self.enc_key {
             business_frame_payload(key, plaintext_l2)
@@ -155,7 +144,7 @@ impl InstallFrameRouter {
         }
     }
 
-    /// 解析上行帧明文：若为加密业务帧 (01 02 || ciphertext) 且配置了 dec_key 则执行解密；否则提取有效载荷
+    /// 解析上行帧明文：若为加密业务帧 (01 02 || ciphertext) 且配置了 dec_key 则解密；否则原样返回
     pub fn resolve_payload(&self, frame: &Frame) -> Vec<u8> {
         if frame.payload.len() >= 2 && frame.payload[0..2] == BIZ_PREFIX {
             if let Some(key) = &self.dec_key {
@@ -168,13 +157,11 @@ impl InstallFrameRouter {
         frame.payload.clone()
     }
 
-    /// 判定给定帧是否归属于安装业务协议
     pub fn is_install_frame(&self, frame: &Frame) -> bool {
         let plain = self.resolve_payload(frame);
         filter_install_response(&plain)
     }
 
-    /// 将收到的帧路由至安装队列或普通业务队列
     pub fn route_frame(
         &self,
         frame: Frame,
@@ -191,16 +178,86 @@ impl InstallFrameRouter {
     }
 }
 
-/// 小米快应用安装设备会话适配器
+/// 实时安装链路发送接口。
+///
+/// 生产实现位于 live.rs（CoreBtInstallWire），直接持有 Core.bt 的共享句柄，
+/// 在唯一的已认证 DownlinkCtx 上完成业务帧加密、序号递增与 socket 写入。
+/// 离线测试可注入 MockInstallWireSender，验证发送动作确实发生（而非只入队）。
+pub trait InstallWireSender: std::fmt::Debug + Send + Sync {
+    /// 将明文 L2 安装载荷封装为业务帧并写入真实已认证链路。
+    /// 返回本次实际使用的下行 seq；实现方必须递增共享 DownlinkCtx.seq_out。
+    fn send_install_payload(&self, plaintext_l2: &[u8]) -> Result<u8>;
+
+    /// 实时链路当前是否可用（Core.bt 已存在且已认证）。
+    fn is_available(&self) -> bool;
+}
+
+/// 单条 Mock 发送记录。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MockSentInstall {
+    pub seq: u8,
+    pub plaintext_l2: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+struct MockInstallWireInner {
+    sent: Mutex<Vec<MockSentInstall>>,
+    next_seq: AtomicU8,
+    authenticated: AtomicBool,
+}
+
+/// 离线测试用实时链路 Mock：记录每次真实发送动作与序号，不做任何 socket 写入。
+#[derive(Debug, Default, Clone)]
+pub struct MockInstallWireSender {
+    inner: Arc<MockInstallWireInner>,
+}
+
+impl MockInstallWireSender {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_authenticated(&self, authenticated: bool) {
+        self.inner
+            .authenticated
+            .store(authenticated, Ordering::SeqCst);
+    }
+
+    pub fn sent_count(&self) -> usize {
+        self.inner.sent.lock().unwrap().len()
+    }
+
+    pub fn sent_records(&self) -> Vec<MockSentInstall> {
+        self.inner.sent.lock().unwrap().clone()
+    }
+}
+
+impl InstallWireSender for MockInstallWireSender {
+    fn send_install_payload(&self, plaintext_l2: &[u8]) -> Result<u8> {
+        if !self.inner.authenticated.load(Ordering::SeqCst) {
+            return Err("device_unavailable: Mock 实时链路未认证".to_string());
+        }
+        let seq = self.inner.next_seq.fetch_add(1, Ordering::SeqCst);
+        self.inner.sent.lock().unwrap().push(MockSentInstall {
+            seq,
+            plaintext_l2: plaintext_l2.to_vec(),
+        });
+        Ok(seq)
+    }
+
+    fn is_available(&self) -> bool {
+        self.inner.authenticated.load(Ordering::SeqCst)
+    }
+}
+
+/// 小米快应用安装设备会话适配器。
 ///
 /// 架构定位：
-/// XiaomiBand10Transport
-///   ↓
 /// XiaomiAppInstallProtocol
 ///   ↓
 /// XiaomiInstallDeviceSession (实现 BandDeviceTransport)
-///   ↓ (复用已有已认证底层句柄，绝无第二套连接)
-/// Core.bt (live::DownlinkCtx / RFCOMM)
+///   ↓ InstallWireSender
+/// Core.bt (live::DownlinkCtx / RFCOMM，唯一已认证连接)
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct XiaomiInstallDeviceSession {
@@ -213,6 +270,7 @@ pub struct XiaomiInstallDeviceSession {
     pub outgoing_install_frames: VecDeque<Frame>,
     pub incoming_install_queue: VecDeque<Frame>,
     pub normal_message_queue: VecDeque<Frame>,
+    pub wire: Option<Box<dyn InstallWireSender>>,
 }
 
 #[allow(dead_code)]
@@ -228,22 +286,51 @@ impl XiaomiInstallDeviceSession {
             outgoing_install_frames: VecDeque::new(),
             incoming_install_queue: VecDeque::new(),
             normal_message_queue: VecDeque::new(),
+            wire: None,
         }
     }
 
-    /// 从已认证连接句柄复用创建会话（绝不创建第二套连接）
-    pub fn from_authenticated_session(handle: usize, target_addr: &str) -> Self {
-        Self {
-            authenticated: true,
-            target_addr: Some(target_addr.to_string()),
-            shared_connection: true,
-            duplicate_connection_created: false,
-            underlying_handle: Some(handle),
-            router: InstallFrameRouter::new(),
-            outgoing_install_frames: VecDeque::new(),
-            incoming_install_queue: VecDeque::new(),
-            normal_message_queue: VecDeque::new(),
+    /// 绑定实时链路发送句柄（生产：CoreBtInstallWire；测试：MockInstallWireSender）。
+    pub fn bind_wire(&mut self, wire: Box<dyn InstallWireSender>) {
+        self.authenticated = wire.is_available();
+        self.wire = Some(wire);
+    }
+
+    pub fn with_wire(wire: Box<dyn InstallWireSender>) -> Self {
+        let mut session = Self::new();
+        session.bind_wire(wire);
+        session
+    }
+
+    /// 从真实链路刷新认证状态。生产路径必须在开始安装前调用。
+    pub fn refresh_authentication(&mut self) {
+        if let Some(wire) = &self.wire {
+            self.authenticated = wire.is_available();
         }
+    }
+
+    pub fn wire_available(&self) -> bool {
+        self.wire.as_ref().map(|w| w.is_available()).unwrap_or(false)
+    }
+
+    /// 链路是否可用：绑定了实时链路时以 Core.bt 的真实状态为准，否则回落到离线标记。
+    ///
+    /// 生产路径下断开连接后 `Core.bt` 变空，这里会立刻变为 false，
+    /// 不会因为缓存的 `authenticated` 布尔值而谎报已认证。
+    pub fn is_linked(&self) -> bool {
+        match &self.wire {
+            Some(wire) => wire.is_available(),
+            None => self.authenticated,
+        }
+    }
+
+    /// 从已认证连接句柄复用创建会话（绝不创建第二套连接）。
+    pub fn from_authenticated_session(handle: usize, target_addr: &str) -> Self {
+        let mut session = Self::new();
+        session.authenticated = true;
+        session.target_addr = Some(target_addr.to_string());
+        session.underlying_handle = Some(handle);
+        session
     }
 
     pub fn set_crypto_keys(&mut self, enc_key: [u8; 16], dec_key: [u8; 16]) {
@@ -254,7 +341,7 @@ impl XiaomiInstallDeviceSession {
         self.router.encode_install_frame(plaintext_l2, seq)
     }
 
-    /// 显式绑定已认证会话
+    /// 显式绑定已认证会话（不创建连接，仅标记）。
     pub fn bind_authenticated(&mut self, target_addr: &str) -> Result<()> {
         self.authenticated = true;
         self.target_addr = Some(target_addr.to_string());
@@ -263,33 +350,104 @@ impl XiaomiInstallDeviceSession {
         Ok(())
     }
 
-    /// 发送安装数据帧（带认证前置检查）
+    /// 真实发送安装帧：明文 L2 -> 业务帧加密 + 真实 seq -> 写入已认证链路。
     ///
-    /// [placeholder] 只入队，不写 socket。真实下行需要复用 `live::DownlinkCtx::sock`
-    /// 并走 `live` 侧既有的 `send_all(sock, &encode(&frame))`，当前尚未接入。
-    pub fn send_install_packet(&mut self, frame: &Frame) -> Result<()> {
-        if !self.authenticated {
-            return Err("device_unavailable: 设备会话未就绪或未认证 (not_implemented)".to_string());
-        }
-        self.outgoing_install_frames.push_back(frame.clone());
-        Ok(())
+    /// 返回真正写入链路的 Frame（seq 来自 DownlinkCtx.seq_out）。
+    pub fn send_install_packet(&mut self, frame: &Frame) -> Result<Frame> {
+        self.transmit_frame(frame)
     }
 
-    /// 接收已过滤的安装响应帧（带超时机制与会话状态检查）
-    pub fn receive_install_packet(&mut self, _timeout_ms: u64) -> Result<Option<Frame>> {
-        if !self.authenticated {
+    fn transmit_frame(&mut self, frame: &Frame) -> Result<Frame> {
+        if !self.is_linked() {
             return Err("device_unavailable: 设备会话未就绪或未认证 (not_implemented)".to_string());
         }
-        Ok(self.incoming_install_queue.pop_front())
+        let wire = self.wire.as_ref().ok_or_else(|| {
+            "device_unavailable: 安装链路未绑定真实 Core.bt (not_implemented)".to_string()
+        })?;
+        let seq = wire.send_install_payload(&frame.payload)?;
+        let sent = Frame {
+            frame_type: 0x03,
+            seq,
+            payload: frame.payload.clone(),
+        };
+        self.outgoing_install_frames.push_back(sent.clone());
+        Ok(sent)
     }
 
-    /// 分发传入帧：若归属安装业务则推入安装响应队列；若为日常业务则推入普通消息队列，保证日常业务完全不被拦截
+    /// 开始一次新安装前清空上一次遗留的入站/出站帧。
+    ///
+    /// 此时尚未发出任何安装请求，队列里不可能存在"本次"的响应，
+    /// 因此丢弃残留帧是安全的，并能避免上一次安装的 Mass ACK 污染本次等待。
+    pub fn discard_stale_frames(&mut self) {
+        self.drain_live_ingress();
+        self.incoming_install_queue.clear();
+        self.outgoing_install_frames.clear();
+    }
+
+    /// 从 live.rs 统一入站队列同步事件，并按 InstallFrameRouter 分流。
+    pub fn drain_live_ingress(&mut self) {
+        while let Some(event) = poll_global_install_event() {
+            match event {
+                InstallFrameEvent::Incoming(frame) => {
+                    self.dispatch_incoming_frame(frame);
+                }
+            }
+        }
+    }
+
+    /// 接收安装响应：只从统一入站队列/本地 install_response_queue 读取。
+    ///
+    /// - 无实时链路（离线测试）时不阻塞并立即返回；
+    /// - 有实时链路时最多等待 timeout_ms，期间持续把 live.rs 派发的事件路由进队列。
+    /// - 返回的 Frame.payload 已解密为 L2 明文，保证协议层只看到一种口径。
+    pub fn receive_install_packet(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
+        self.recv_install_frame(timeout_ms)
+    }
+
+    fn recv_install_frame(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
+        if !self.is_linked() {
+            return Err("device_unavailable: 设备会话未就绪或未认证 (not_implemented)".to_string());
+        }
+        self.drain_live_ingress();
+        if let Some(frame) = self.incoming_install_queue.pop_front() {
+            return Ok(Some(self.resolve_for_protocol(frame)));
+        }
+        if self.wire.is_none() {
+            return Ok(None);
+        }
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+            self.drain_live_ingress();
+            if let Some(frame) = self.incoming_install_queue.pop_front() {
+                return Ok(Some(self.resolve_for_protocol(frame)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn resolve_for_protocol(&self, frame: Frame) -> Frame {
+        let payload = self.router.resolve_payload(&frame);
+        Frame {
+            frame_type: frame.frame_type,
+            seq: frame.seq,
+            payload,
+        }
+    }
+
+    /// 分发传入帧：安装业务进安装响应队列，日常业务进普通消息队列（不被安装流程吞掉）。
+    ///
+    /// 普通消息队列只用于隔离诊断，没有业务消费者；限长避免长时间连接时无界增长。
     pub fn dispatch_incoming_frame(&mut self, frame: Frame) -> bool {
-        self.router.route_frame(
+        let routed = self.router.route_frame(
             frame,
             &mut self.incoming_install_queue,
             &mut self.normal_message_queue,
-        )
+        );
+        while self.normal_message_queue.len() > MAX_NORMAL_MESSAGE_QUEUE {
+            self.normal_message_queue.pop_front();
+        }
+        routed
     }
 
     pub fn is_shared_connection(&self) -> bool {
@@ -313,27 +471,27 @@ impl BandDeviceTransport for XiaomiInstallDeviceSession {
     }
 
     fn is_connected(&self) -> bool {
-        self.authenticated
+        self.is_linked()
     }
 
     fn send_frame(&mut self, frame: &Frame) -> Result<()> {
-        self.send_install_packet(frame)
+        self.transmit_frame(frame).map(|_| ())
     }
 
     fn receive_frame(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
-        self.receive_install_packet(timeout_ms)
+        self.recv_install_frame(timeout_ms)
     }
 
     fn send_install_packet(&mut self, frame: &Frame) -> Result<()> {
-        self.send_install_packet(frame)
+        self.transmit_frame(frame).map(|_| ())
     }
 
     fn receive_install_packet(&mut self, timeout_ms: u64) -> Result<Option<Frame>> {
-        self.receive_install_packet(timeout_ms)
+        self.recv_install_frame(timeout_ms)
     }
 
     fn is_authenticated(&self) -> bool {
-        self.authenticated
+        self.is_linked()
     }
 
     fn has_duplicate_connection(&self) -> bool {
@@ -341,7 +499,7 @@ impl BandDeviceTransport for XiaomiInstallDeviceSession {
     }
 }
 
-/// 用于离线单元测试与协议隔离验证的 Mock 会话
+/// 用于离线单元测试与协议隔离验证的 Mock 会话（只入队/只记录，不触及任何真实链路）。
 #[allow(dead_code)]
 #[derive(Debug, Default, Clone)]
 pub struct MockDeviceSession {
