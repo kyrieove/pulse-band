@@ -374,6 +374,52 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 false,
             )
         }
+        "device.watchface.list" => {
+            match core.mode {
+                crate::CoreMode::Live => {
+                    match core.install.lock().unwrap().fetch_installed_watchfaces() {
+                        Ok(items) => (
+                            serde_json::json!({
+                                "id": id,
+                                "ok": true,
+                                "result": {
+                                    "watchfaces": items
+                                }
+                            })
+                            .to_string(),
+                            false,
+                        ),
+                        Err(e) => (
+                            error_resp(&id, "watchface_list_failed", &e).to_string(),
+                            false,
+                        ),
+                    }
+                }
+                crate::CoreMode::Fake => (
+                    serde_json::json!({
+                        "id": id,
+                        "ok": true,
+                        "result": {
+                            "watchfaces": [
+                                {
+                                    "id": "wf_mock_default",
+                                    "name": "Default Watchface",
+                                    "is_current": true,
+                                    "can_remove": false,
+                                    "version_code": 1,
+                                    "can_edit": false,
+                                    "background_color": "",
+                                    "background_image": "",
+                                    "style": ""
+                                }
+                            ]
+                        }
+                    })
+                    .to_string(),
+                    false,
+                ),
+            }
+        }
         other => (
             error_resp(&id, "method_not_found", &format!("未知方法 {other}")).to_string(),
             false,

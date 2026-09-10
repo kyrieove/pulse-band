@@ -112,6 +112,7 @@ pub fn filter_install_response(payload: &[u8]) -> bool {
 fn is_wear_packet_install(wp: &WearPacket) -> bool {
     match wp.pkt_type {
         WearPacketType::ThirdpartyApp => wp.id == 0 || wp.id == 1 || wp.id == 2,
+        WearPacketType::WatchFace => wp.id == 0 || wp.id == 1 || wp.id == 4 || wp.id == 5,
         WearPacketType::Mass => true,
         _ => false,
     }

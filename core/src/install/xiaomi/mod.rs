@@ -20,6 +20,7 @@ pub mod codec;
 pub mod protocol;
 pub mod device_session;
 pub mod installed_list;
+pub mod watch_face;
 pub mod runtime_bridge;
 
 pub use l2::*;
@@ -30,6 +31,7 @@ pub use codec::*;
 pub use protocol::*;
 pub use device_session::*;
 pub use installed_list::*;
+pub use watch_face::*;
 pub use runtime_bridge::*;
 
 use serde::{Deserialize, Serialize};

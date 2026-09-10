@@ -6,6 +6,7 @@
 use super::super::model::Result;
 use super::mass::Mass;
 use super::thirdparty_app::ThirdpartyApp;
+use super::watch_face::WatchFace;
 use super::wire::*;
 
 /// WearPacket 顶层类型
@@ -98,6 +99,7 @@ impl WearPacketType {
 /// WearPacket 载荷变体
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WearPacketPayload {
+    WatchFace(WatchFace),         // tag 6
     ThirdpartyApp(ThirdpartyApp), // tag 22
     Mass(Mass),                   // tag 24
     Raw(u32, Vec<u8>),
@@ -108,6 +110,7 @@ pub enum WearPacketPayload {
 /// 结构：
 /// - tag 1: required Type type
 /// - tag 2: required uint32 id
+/// - tag 6: WatchFace watch_face
 /// - tag 22: ThirdpartyApp thirdparty_app
 /// - tag 24: Mass mass
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +126,14 @@ impl WearPacket {
             pkt_type,
             id,
             payload: None,
+        }
+    }
+
+    pub fn new_watch_face(id: u32, wf: WatchFace) -> Self {
+        Self {
+            pkt_type: WearPacketType::WatchFace,
+            id,
+            payload: Some(WearPacketPayload::WatchFace(wf)),
         }
     }
 
@@ -149,6 +160,9 @@ impl WearPacket {
 
         if let Some(payload) = &self.payload {
             match payload {
+                WearPacketPayload::WatchFace(wf) => {
+                    write_bytes_field(&mut buf, 6, &wf.encode());
+                }
                 WearPacketPayload::ThirdpartyApp(app) => {
                     write_bytes_field(&mut buf, 22, &app.encode());
                 }
@@ -179,6 +193,12 @@ impl WearPacket {
                 2 => {
                     if let WireValue::Varint(v) = f.value {
                         id = Some(v as u32);
+                    }
+                }
+                6 => {
+                    if let WireValue::LengthDelimited(b) = f.value {
+                        let wf = WatchFace::decode(b)?;
+                        payload = Some(WearPacketPayload::WatchFace(wf));
                     }
                 }
                 22 => {

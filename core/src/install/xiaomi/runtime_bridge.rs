@@ -465,6 +465,44 @@ impl XiaomiInstallRuntimeBridge {
         }
     }
 
+    /// 查询已安装表盘列表 (GET_INSTALLED_LIST, type=4, id=0)
+    pub fn fetch_installed_watchfaces(&mut self) -> Result<Vec<super::watch_face::WatchFaceItem>> {
+        self.install_session.refresh_authentication();
+        if !self.install_session.is_linked() {
+            return Err("device_unavailable: 设备未连接或链路未认证".to_string());
+        }
+
+        let query_payload = super::watch_face::build_watchface_list_query();
+        let query_frame = Frame {
+            frame_type: 0x03,
+            seq: 0,
+            payload: query_payload,
+        };
+        self.install_session.send_install_packet(&query_frame)?;
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err("查询已安装表盘列表超时 (timeout)".to_string());
+            }
+            let remaining = deadline.saturating_duration_since(now).as_millis() as u64;
+            let Some(frame) = self
+                .install_session
+                .receive_install_packet(remaining.min(500))?
+            else {
+                continue;
+            };
+            if let Ok(items) = super::watch_face::decode_watchface_list_response(&frame.payload) {
+                install_log(&format!(
+                    "watchface: 已安装表盘列表返回 {} 项",
+                    items.len()
+                ));
+                return Ok(items);
+            }
+        }
+    }
+
     pub fn transport_cancel(&mut self, session_id: &str) -> Result<()> {
         let res = self
             .protocol
@@ -542,6 +580,18 @@ impl XiaomiInstallTransport {
         Self {
             bridge: XiaomiInstallRuntimeBridge::with_wire(wire),
         }
+    }
+
+    pub fn fetch_installed_watchfaces(&mut self) -> Result<Vec<super::watch_face::WatchFaceItem>> {
+        set_install_pipeline_active(true);
+        install_log("watchface: 开始查询已安装表盘列表 (GET_INSTALLED_LIST type=4 id=0)");
+        let res = self.bridge.fetch_installed_watchfaces();
+        match &res {
+            Ok(items) => install_log(&format!("watchface: 表盘列表查询成功，共 {} 项", items.len())),
+            Err(e) => install_log(&format!("watchface: 表盘列表查询失败: {e}")),
+        }
+        set_install_pipeline_active(false);
+        res
     }
 }
 
