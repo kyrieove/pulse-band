@@ -9,10 +9,10 @@ mod app_install;
 
 use app_install::{
     compute_payload_sha256, AppInstallProtocol, AppInstallTransport, BandDeviceTransport,
-    InstallChunk, InstallMetadata, InstallProtocolRecorder, InstallTransportDispatcher,
-    MockAppInstallProtocol, MockAppInstallTransport, MockBandDeviceTransport,
-    MockDeviceReplayTransport, PacketDirection, ProtocolInspector, ProtocolReportGenerator,
-    TransportMode, XiaomiBand10Transport,
+    CaptureLoader, InstallChunk, InstallMetadata, InstallProtocolRecorder,
+    InstallTransportDispatcher, MockAppInstallProtocol, MockAppInstallTransport,
+    MockBandDeviceTransport, MockDeviceReplayTransport, PacketDirection, ProtocolAnalysisPipeline,
+    ProtocolInspector, ProtocolReportGenerator, TransportMode, XiaomiBand10Transport,
 };
 use frame::Frame;
 
@@ -824,4 +824,142 @@ fn test_25_replay_transport_expected_frames_assertion_failure() {
         let err = transport.verify_expected_frames().unwrap_err();
         assert!(err.contains("payload hash 不匹配"));
     }
+}
+
+#[test]
+fn test_26_old_api_and_submodule_paths_fully_compatible() {
+    // 验证既有老 API 访问无破坏
+    let mut old_transport = MockAppInstallTransport::new();
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.compat".to_string(),
+        version_name: "1.0.0".to_string(),
+        version_code: 1,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+    let sess = old_transport.prepare(meta).expect("老 API prepare 成功");
+    assert_eq!(sess.status, "preparing");
+
+    // 验证全新子模块精细化路径完全可用
+    use app_install::install::model as sub_model;
+    use app_install::install::transport as sub_transport;
+    use app_install::install::protocol as sub_protocol;
+    use app_install::install::recorder as sub_recorder;
+    use app_install::install::replay as sub_replay;
+    use app_install::install::inspector as sub_inspector;
+    use app_install::install::report as sub_report;
+    use app_install::install::pipeline as sub_pipeline;
+
+    let sub_meta = sub_model::InstallMetadata {
+        package_id: "com.codeisland.sub".to_string(),
+        version_name: "2.0.0".to_string(),
+        version_code: 2,
+        file_size: 2048,
+        hash: "hash_sub".to_string(),
+    };
+    let mut sub_t = sub_transport::MockAppInstallTransport::new();
+    let sub_sess = sub_transport::AppInstallTransport::prepare(&mut sub_t, sub_meta).unwrap();
+    assert_eq!(sub_sess.status, "preparing");
+
+    let mut _proto = sub_protocol::MockAppInstallProtocol::new();
+    let mut _rec = sub_recorder::InstallProtocolRecorder::new();
+    let mut _rep = sub_replay::MockDeviceReplayTransport::new();
+    let _insp = sub_inspector::ProtocolInspector;
+    let _rep_gen = sub_report::ProtocolReportGenerator;
+    let _pipe = sub_pipeline::ProtocolAnalysisPipeline;
+    let _loader = sub_pipeline::CaptureLoader;
+}
+
+#[test]
+fn test_27_capture_loader_reads_json_and_directory() {
+    let template_json = include_str!("../../docs/protocol/captures/sample-rpk-exchange-template.json");
+
+    // 1. 测试从 JSON 文本加载
+    let recorder = CaptureLoader::load_from_json(template_json).expect("从 JSON 加载成功");
+    assert_eq!(recorder.packets.len(), 4);
+    assert_eq!(recorder.packets[0].direction, PacketDirection::HostToBand);
+    assert_eq!(recorder.packets[1].direction, PacketDirection::BandToHost);
+
+    // 2. 测试从单个文件加载
+    let captures_dir = if std::path::Path::new("../docs/protocol/captures").exists() {
+        "../docs/protocol/captures"
+    } else {
+        "docs/protocol/captures"
+    };
+    let file_path = format!("{captures_dir}/sample-rpk-exchange-template.json");
+    let file_recorder = CaptureLoader::load_from_file(&file_path).expect("从文件加载成功");
+    assert_eq!(file_recorder.packets.len(), 4);
+
+    // 3. 测试目录扫描加载（验证自动跳过 manifest 与非 json 文件）
+    let dir_samples = CaptureLoader::load_from_dir(captures_dir).expect("从目录扫描成功");
+    assert!(!dir_samples.is_empty());
+    assert_eq!(dir_samples[0].0, "sample-rpk-exchange-template.json");
+    assert_eq!(dir_samples[0].1.packets.len(), 4);
+}
+
+#[test]
+fn test_28_protocol_analysis_pipeline_end_to_end_and_consistent() {
+    let template_json = include_str!("../../docs/protocol/captures/sample-rpk-exchange-template.json");
+
+    // 1. 从 Capture JSON 启动分析管线
+    let report_from_json = ProtocolAnalysisPipeline::run_from_capture_json(template_json)
+        .expect("Pipeline run_from_capture_json 成功");
+
+    // 2. 从 Recorder 启动分析管线
+    let recorder = CaptureLoader::load_from_json(template_json).unwrap();
+    let report_from_recorder = ProtocolAnalysisPipeline::run_from_recorder(&recorder)
+        .expect("Pipeline run_from_recorder 成功");
+
+    // 两者输出必须 100% 一致对账
+    assert_eq!(report_from_json, report_from_recorder);
+
+    // 验证报告关键章节与统计
+    assert!(report_from_json.contains("# 协议取证与流量分析报告"));
+    assert!(report_from_json.contains("- **总捕获帧数**: 4"));
+    assert!(report_from_json.contains("- **Host -> Band (下发)**: 2 帧"));
+    assert!(report_from_json.contains("- **Band -> Host (上报)**: 2 帧"));
+
+    // 3. 验证目录批量批处理管线
+    let captures_dir = if std::path::Path::new("../docs/protocol/captures").exists() {
+        "../docs/protocol/captures"
+    } else {
+        "docs/protocol/captures"
+    };
+    let batch_reports = ProtocolAnalysisPipeline::run_from_captures_dir(captures_dir)
+        .expect("Pipeline run_from_captures_dir 成功");
+    assert!(!batch_reports.is_empty());
+    assert_eq!(batch_reports[0].0, "sample-rpk-exchange-template.json");
+    assert_eq!(batch_reports[0].1, report_from_json);
+}
+
+#[test]
+fn test_29_replay_transport_drives_pipeline_asserted_workflow() {
+    let captures_dir = if std::path::Path::new("../docs/protocol/captures").exists() {
+        "../docs/protocol/captures"
+    } else {
+        "docs/protocol/captures"
+    };
+    let file_path = format!("{captures_dir}/sample-rpk-exchange-template.json");
+    let recorder = CaptureLoader::load_from_file(&file_path).expect("加载模板文件");
+
+    let mut replay = MockDeviceReplayTransport::new();
+    replay.connect("AA:BB:CC:DD:EE:FF").unwrap();
+
+    // 载入回放流
+    replay.load_from_recorder(&recorder);
+    assert_eq!(replay.rx_replay_queue.len(), 2);
+
+    // 模拟逐帧接收并验证内容
+    let frame1 = replay.receive_frame(100).unwrap().expect("应当接收第一帧");
+    assert_eq!(frame1.frame_type, 0x01); // ACK
+    assert_eq!(frame1.seq, 1);
+    assert_eq!(frame1.payload, vec![0x00]);
+
+    let frame2 = replay.receive_frame(100).unwrap().expect("应当接收第二帧");
+    assert_eq!(frame2.frame_type, 0x01);
+    assert_eq!(frame2.seq, 2);
+
+    // 队列耗尽安全返回 None
+    let frame3 = replay.receive_frame(100).unwrap();
+    assert!(frame3.is_none());
 }

@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod app_install;
+pub use app_install::install;
 pub mod crc;
 #[rustfmt::skip]
 mod fake;
