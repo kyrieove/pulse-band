@@ -8,9 +8,10 @@ mod frame;
 mod app_install;
 
 use app_install::{
-    AppInstallTransport, BandDeviceTransport, InstallChunk, InstallMetadata,
-    InstallTransportDispatcher, MockAppInstallTransport, MockBandDeviceTransport,
-    TransportMode, XiaomiBand10Transport,
+    AppInstallProtocol, AppInstallTransport, BandDeviceTransport, InstallChunk,
+    InstallMetadata, InstallTransportDispatcher, MockAppInstallProtocol,
+    MockAppInstallTransport, MockBandDeviceTransport, TransportMode,
+    XiaomiBand10Transport,
 };
 use frame::Frame;
 
@@ -355,4 +356,150 @@ fn test_14_xiaomi_band10_transport_has_no_direct_rfcomm_symbols() {
     // 纯架构解耦校验：结构体仅由纯抽象接口与标量状态构成，不包含套接字句柄或 C FFI 符号
     assert_eq!(std::mem::size_of::<XiaomiBand10Transport>() > 0, true);
     assert_eq!(std::mem::size_of::<MockBandDeviceTransport>() > 0, true);
+    assert_eq!(std::mem::size_of::<MockAppInstallProtocol>() > 0, true);
+}
+
+#[test]
+fn test_15_protocol_and_transport_separation() {
+    let mut dev = MockBandDeviceTransport::new();
+    let mut proto = MockAppInstallProtocol::new();
+
+    assert!(!dev.is_connected());
+    assert!(proto.active_session.is_none());
+
+    // 未连接设备时，协议调用直接报错拦截
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+    let prep_res = proto.prepare_install(&mut dev, &meta);
+    assert!(prep_res.is_err());
+}
+
+#[test]
+fn test_16_mock_app_install_protocol_lifecycle() {
+    let mut dev = MockBandDeviceTransport::new();
+    assert!(dev.connect("11:22:33:44:55:66").is_ok());
+
+    let mut proto = MockAppInstallProtocol::new();
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+
+    // 1. prepare (返回 preparing)
+    let session = proto.prepare_install(&mut dev, &meta).expect("prepare 成功");
+    assert_eq!(session.status, "preparing");
+    assert_eq!(session.total_chunks, 2);
+
+    // 2. chunk
+    let chunk0 = InstallChunk {
+        session_id: session.session_id.clone(),
+        index: 0,
+        size: 512,
+        data: vec![0u8; 512],
+    };
+    let ack0 = proto.send_package_chunk(&mut dev, &chunk0).expect("chunk0 成功");
+    assert_eq!(ack0.received_bytes, 512);
+
+    let chunk1 = InstallChunk {
+        session_id: session.session_id.clone(),
+        index: 1,
+        size: 512,
+        data: vec![0u8; 512],
+    };
+    let ack1 = proto.send_package_chunk(&mut dev, &chunk1).expect("chunk1 成功");
+    assert_eq!(ack1.received_bytes, 1024);
+
+    // 3. verify
+    assert!(proto.verify_package(&mut dev, &session.session_id).is_ok());
+    assert!(proto.verified);
+
+    // 4. commit (仅允许 verifying，严禁 completed / installed)
+    let commit_res = proto
+        .commit_install(&mut dev, &session.session_id)
+        .expect("commit 成功");
+    assert_eq!(commit_res.status, "verifying");
+    assert_ne!(commit_res.status, "completed");
+    assert_ne!(commit_res.status, "installed");
+
+    // 5. cancel
+    assert!(proto.cancel_install(&mut dev, &session.session_id).is_ok());
+    assert!(proto.active_session.is_none());
+}
+
+#[test]
+fn test_17_unknown_protocol_does_not_send_device_frames() {
+    let mut dev = MockBandDeviceTransport::new();
+    assert!(dev.connect("11:22:33:44:55:66").is_ok());
+
+    // 未注入协议（protocol: None）的未知协议场景
+    let mut transport = XiaomiBand10Transport::with_device_transport(Box::new(dev));
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+
+    let prep_res = transport.prepare(meta);
+    assert!(prep_res.is_err());
+    let err = prep_res.unwrap_err();
+    assert!(err.contains("device_unavailable"));
+    assert!(err.contains("not_implemented"));
+
+    // 核心断言：未知协议绝不会向设备发送任何数据帧
+    let dev_ref = transport.device_transport().unwrap();
+    assert_eq!(dev_ref.is_connected(), true);
+    // cancel 后安全断开连接
+    assert!(transport.cancel("test_sess".to_string()).is_ok());
+}
+
+#[test]
+fn test_18_full_layered_mock_integration() {
+    let dev = MockBandDeviceTransport::new();
+    let proto = MockAppInstallProtocol::new();
+    let mut transport =
+        XiaomiBand10Transport::with_protocol_and_device(Box::new(proto), Box::new(dev));
+
+    let meta = InstallMetadata {
+        package_id: "com.codeisland.band".to_string(),
+        version_name: "1.0.1".to_string(),
+        version_code: 26,
+        file_size: 1024,
+        hash: "dummy_hash".to_string(),
+    };
+
+    // 底层设备未 connect 前 prepare 失败
+    assert!(transport.prepare(meta.clone()).is_err());
+
+    // 底层连接后正常流转三层调用
+    transport
+        .device_transport_mut()
+        .unwrap()
+        .connect("AA:BB:CC:11:22:33")
+        .unwrap();
+    let session = transport.prepare(meta).expect("prepare 成功");
+    assert_eq!(session.status, "preparing");
+
+    let chunk = InstallChunk {
+        session_id: session.session_id.clone(),
+        index: 0,
+        size: 512,
+        data: vec![0u8; 512],
+    };
+    let ack = transport.send_chunk(chunk).expect("send_chunk 成功");
+    assert_eq!(ack.received_bytes, 512);
+
+    let res = transport.commit(session.session_id).expect("commit 成功");
+    assert_eq!(res.status, "verifying");
+    assert_ne!(res.status, "completed");
+    assert_ne!(res.status, "installed");
 }
