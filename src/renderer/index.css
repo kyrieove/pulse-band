@@ -7,22 +7,28 @@
    ========================================================================== */
 :root {
   /* 基础画布与表面色 (Light Theme 默认) */
-  --bg-app: #f8fafc;
+  --bg-canvas: #e9ece9;           /* 窗口底 */
+  --bg-app: var(--bg-canvas);     /* 历史别名，指向 --bg-canvas */
   --bg-surface: #ffffff;
   --bg-elevated: #ffffff;
+  --bg-subtle: #f5f8f6;           /* 卡中卡 */
 
   /* 文字系统 (WCAG 2.1 AA+ 实测达标) */
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #64748b;
+  --text-primary: #26312c;
+  --text-secondary: #5a6862;
+  --text-muted: #93a099;
 
   /* 边框与轮廓 */
-  --border-default: rgba(15, 23, 42, 0.08);
-  --border-strong: rgba(15, 23, 42, 0.16);
+  --border-default: rgba(38, 49, 44, 0.055);
+  --border-strong: rgba(38, 49, 44, 0.10);
 
   /* 品牌重点色 */
-  --accent-primary: #0284c7;
+  --accent-primary: #4f7d63;
+  --accent-soft: #7aa590;
+  --accent-wash: #e4eee8;
   --accent-hover: #0369a1;
+  --anchor-wash: #dfeae3;         /* 锚点卡底 */
+  --anchor-text: #2f5344;         /* 锚点卡文字 */
 
   /* 状态与额度色谱 */
   --status-success: #16a34a;
@@ -32,8 +38,14 @@
   --status-idle: #64748b;
 
   --quota-normal: #16a34a;
-  --quota-warning: #d97706;
-  --quota-critical: #dc2626;
+  --quota-warning: #b07d3c;
+  --quota-warning-wash: #f0e4d2;
+  --quota-warning-text: #9c6f30;
+  --quota-critical: #a8675f;
+  --quota-critical-wash: #f2e2e0;
+  --quota-critical-text: #8f4f47;
+  --data-secondary: #cbdbd2;      /* 7 天柱 */
+  --hatch: repeating-linear-gradient(45deg, #d3dcd7 0 3px, #eaefec 3px 6px);
 
   /* 几何与阴影令牌 */
   --radius-xs: 4px;
@@ -47,6 +59,14 @@
   --shadow-card: 0 1px 3px 0 rgba(15, 23, 42, 0.08), 0 1px 2px -1px rgba(15, 23, 42, 0.04);
   --shadow-elevated: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.03);
   --shadow-minibar: 0 8px 24px -4px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+
+  /* 字体（修复 body 引用了从未定义的 --pulse-font-sans，此前整个 app 落回默认字体） */
+  --pulse-font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* 品牌 logo 降饱和色（只用于 logo 图标） */
+  --claude: #c08a6c;
+  --codex: #6a9d8a;
+  --antigravity: #a48bc4;
 
   /* 历史兼容变量 (向后兼容原有组件) */
   --pulse-bg-base: var(--bg-app);
@@ -62,22 +82,28 @@
 
 .dark {
   /* 基础画布与表面色 (Dark Midnight) */
-  --bg-app: #0b0d13;
-  --bg-surface: #141824;
-  --bg-elevated: #1d2333;
+  --bg-canvas: #121614;
+  --bg-app: var(--bg-canvas);
+  --bg-surface: #1e2421;
+  --bg-elevated: #1e2421;
+  --bg-subtle: #222925;
 
-  /* 文字系统 (WCAG 2.1 AA+ 实测达标) */
-  --text-primary: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
+  /* 文字系统 */
+  --text-primary: #e6ece8;
+  --text-secondary: #a9b5ae;
+  --text-muted: #7a8781;
 
   /* 边框与轮廓 */
-  --border-default: rgba(248, 250, 252, 0.08);
-  --border-strong: rgba(248, 250, 252, 0.18);
+  --border-default: rgba(230, 236, 232, 0.055);
+  --border-strong: rgba(230, 236, 232, 0.12);
 
   /* 品牌重点色 */
-  --accent-primary: #38bdf8;
+  --accent-primary: #7aa590;
+  --accent-soft: #5d8a72;
+  --accent-wash: rgba(122, 165, 144, 0.14);
   --accent-hover: #0ea5e9;
+  --anchor-wash: #26352d;
+  --anchor-text: #a8cbb8;
 
   /* 状态与额度色谱 */
   --status-success: #22c55e;
@@ -87,8 +113,18 @@
   --status-idle: #94a3b8;
 
   --quota-normal: #22c55e;
-  --quota-warning: #f59e0b;
-  --quota-critical: #ef4444;
+  --quota-warning: #d9b579;
+  --quota-warning-wash: rgba(203, 162, 99, 0.16);
+  --quota-warning-text: #d9b579;
+  --quota-critical: #d19e96;
+  --quota-critical-wash: rgba(192, 136, 128, 0.16);
+  --quota-critical-text: #d19e96;
+  --data-secondary: #3a4a42;
+  --hatch: repeating-linear-gradient(45deg, rgba(230, 236, 232, 0.16) 0 3px, rgba(230, 236, 232, 0.045) 3px 6px);
+
+  --claude: #cf9b7d;
+  --codex: #7db09a;
+  --antigravity: #ad95cd;
 
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
   --shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border-default);
@@ -129,7 +165,7 @@ html, body, #root {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: var(--bg-app);
+  background-color: var(--bg-canvas);
   color: var(--text-primary);
 }
 
