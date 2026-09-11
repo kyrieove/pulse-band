@@ -37,3 +37,10 @@ tools/compare_type02.py
 tools/export_test_vector.py
 tools/inspect_208_216.py
 tools/inspect_timeline.py
+
+# Agent 技能与各 runtime 的本地配置（npx skills add 写入的 symlink 目录）
+# 与上面 .zcode/ 同一类：工具产物，不入库
+.agents/
+.claude/
+.codex/
+skills-lock.json
