@@ -347,6 +347,12 @@ fn spp_guid() -> rfcomm::Guid {
 }
 
 fn connect_rfcomm(mac_u64: u64) -> Result<usize, String> {
+    // 手环不持久保存 BR/EDR 链路密钥，每次打开 SPP 都会主动向 PC 发起配对。
+    // 在整个 connect 期间接管这一个 MAC 的配对请求并自动同意，用户只需在手环上确认一次。
+    // 守卫是 RAII：下面任何一条 early return 都会立刻注销，不会常驻。
+    // 注册失败返回 None，行为退回原样（Windows 弹自己的配对框），不影响连接。
+    let _pairing_guard = crate::pairing::auto_accept_for(mac_u64);
+
     let sock =
         unsafe { rfcomm::socket(rfcomm::AF_BTH, rfcomm::SOCK_STREAM, rfcomm::BTHPROTO_RFCOMM) };
     if sock == rfcomm::INVALID_SOCKET {

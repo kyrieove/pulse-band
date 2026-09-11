@@ -24,6 +24,7 @@ mod fake;
 pub mod frame;
 pub mod live;
 #[rustfmt::skip]
+pub mod pairing;
 pub mod rfcomm;
 mod rpc;
 #[rustfmt::skip]
