@@ -46,6 +46,24 @@ const AGENT_CONFIGS: AgentConfig[] = [
   },
 ];
 
+/**
+ * 5 小时剩余额度：竖向圆环、横向圆环、详情卡三处的唯一取值口径。
+ * 这三处曾各写各的 `toRemainingPercent(x?.pct5h)`，一旦有人只改其中一处，
+ * 圆环和卡片就会对同一个 Agent 报出两个数（2026-09-11 排查过一次同样的现象）。
+ */
+const fiveHourRemaining = (q?: { pct5h?: number | null } | null): number | null =>
+  toRemainingPercent(q?.pct5h);
+
+/** 圆环几何：外径 46 DIP，半径 17，细轨道 3px */
+const RING_RADIUS = 17;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+/** 剩余百分比 → strokeDashoffset；无数据时整圈留空 */
+const ringDashOffset = (remaining: number | null): number =>
+  remaining == null
+    ? RING_CIRCUMFERENCE
+    : RING_CIRCUMFERENCE * (1 - Math.min(100, Math.max(0, remaining)) / 100);
+
 const DEFAULT_BG_OPACITY = 0.94;
 const OPACITY_STORAGE_KEY = 'pulse_minibar_bg_opacity';
 
@@ -536,7 +554,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
       <div className="py-1 space-y-2.5 flex-1 flex flex-col justify-center">
         {/* 5小时周期（短周期/主要周期） */}
         {(() => {
-          const remaining5h = toRemainingPercent(currentQuota?.pct5h);
+          const remaining5h = fiveHourRemaining(currentQuota);
           const { countdownText, absoluteTimeText } = parseResetTimeInfo(currentQuota?.resetText);
 
           return (
@@ -898,15 +916,12 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
         >
           {AGENT_CONFIGS.map((cfg) => {
             const q = quotas ? quotas[cfg.key] : null;
-            const remaining5h = toRemainingPercent(q?.pct5h);
+            const remaining5h = fiveHourRemaining(q);
             const isSelected = targetAgent === cfg.key;
             const isPinnedThis = pinnedAgent === cfg.key;
-            const radius = 17;
-            const circumference = 2 * Math.PI * radius;
-            const strokeOffset =
-              remaining5h != null
-                ? circumference * (1 - Math.min(100, Math.max(0, remaining5h)) / 100)
-                : circumference;
+            const radius = RING_RADIUS;
+            const circumference = RING_CIRCUMFERENCE;
+            const strokeOffset = ringDashOffset(remaining5h);
 
             return (
               <div
@@ -1066,17 +1081,12 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
           {/* 中间三个 Agent 视觉单元：按 cfg.centerY 绝对定位，圆环中心与详情卡尖角严格共线 */}
           {AGENT_CONFIGS.map((cfg) => {
               const q = quotas ? quotas[cfg.key] : null;
-              const remaining5h = toRemainingPercent(q?.pct5h);
+              const remaining5h = fiveHourRemaining(q);
               const isSelected = targetAgent === cfg.key;
               const isPinnedThis = pinnedAgent === cfg.key;
-
-              // 精致圆环几何：外径 46 DIP，半径 19.5，细轨道 2.8px
-              const radius = 17;
-              const circumference = 2 * Math.PI * radius;
-              const strokeOffset =
-                remaining5h != null
-                  ? circumference * (1 - Math.min(100, Math.max(0, remaining5h)) / 100)
-                  : circumference;
+              const radius = RING_RADIUS;
+              const circumference = RING_CIRCUMFERENCE;
+              const strokeOffset = ringDashOffset(remaining5h);
 
               return (
                 <div
