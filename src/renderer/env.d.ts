@@ -69,6 +69,12 @@ export interface CodeislandBridge {
   onMinibarState: (cb: (state: MinibarState) => void) => () => void;
   getMinibarState: () => Promise<MinibarState>;
   toggleMinibarExpanded: () => void;
+  setMinibarExpanded?: (expanded: boolean) => void;
+  setMinibarDisplayMode?: (mode: 'full' | 'edge-tab') => void;
+  notifyDragStart?: () => void;
+  notifyDragEnd?: () => void;
+  notifyMenuOpen?: () => void;
+  onWindowBlur?: (cb: () => void) => () => void;
   closeMinibar: () => void;
 }
 

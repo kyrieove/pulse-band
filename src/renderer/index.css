@@ -114,7 +114,8 @@
 }
 
 .drag-region {
-  -webkit-app-region: drag;
+  /* 已改为渲染进程手动拖拽：去掉原生 -webkit-app-region: drag，
+     否则该区域会吞掉右键与所有指针事件（导致整条侧栏无法右键呼出菜单）。 */
   user-select: none;
 }
 
@@ -238,5 +239,57 @@ html.screen-minibar #root {
 
 .dark .apple-glass-badge:hover {
   background: rgba(255, 255, 255, 0.14);
+}
+
+/* ==========================================================================
+   新版 MiniBar 竖向悬浮侧栏与向左展开详情卡专用样式（限定在悬浮窗作用域）
+   ========================================================================== */
+.minibar-sidebar-container {
+  background-color: transparent !important;
+  font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif !important;
+}
+
+.minibar-card-shadow {
+  background-color: #080808;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+/* 悬浮窗深色滑块精细轨 */
+.minibar-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+  border-radius: 9999px;
+  height: 4px;
+}
+.minibar-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  border: none;
+  transition: transform 100ms ease;
+}
+.minibar-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+/* 平滑淡入位移动画（支持减弱动态效果配置） */
+.minibar-card-anim {
+  transition: opacity 160ms cubic-bezier(0.16, 1, 0.3, 1), transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .minibar-card-anim {
+    transition: opacity 160ms ease-in-out !important;
+    transform: none !important;
+  }
 }
 

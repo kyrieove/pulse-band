@@ -21,6 +21,16 @@ contextBridge.exposeInMainWorld('codeisland', {
   },
   getMinibarState: () => ipcRenderer.invoke('minibar:get-state'),
   toggleMinibarExpanded: () => ipcRenderer.send('minibar:toggle-expanded'),
+  setMinibarExpanded: (expanded: boolean) => ipcRenderer.send('minibar:set-expanded', expanded),
+  setMinibarDisplayMode: (mode: 'full' | 'edge-tab') => ipcRenderer.send('minibar:set-display-mode', mode),
+  notifyDragStart: () => ipcRenderer.send('minibar:drag-start'),
+  notifyDragEnd: () => ipcRenderer.send('minibar:drag-end'),
+  notifyMenuOpen: () => ipcRenderer.send('minibar:menu-open'),
+  onWindowBlur: (callback: () => void) => {
+    const subscription = () => callback();
+    ipcRenderer.on('minibar:window-blur', subscription);
+    return () => ipcRenderer.removeListener('minibar:window-blur', subscription);
+  },
   closeMinibar: () => ipcRenderer.send('minibar:close'),
 });
 

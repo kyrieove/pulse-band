@@ -5,26 +5,58 @@ import type { SessionManager } from './services/session-manager';
 import type { StatusServer } from './services/status-server';
 import type { MinibarState } from '../common/types';
 import { resolveMiniBarVisibility } from './services/minibar-preference';
+import {
+  COLLAPSED_WIDTH,
+  COLLAPSED_HEIGHT,
+  EXPANDED_WIDTH,
+  EXPANDED_HEIGHT,
+  H_COLLAPSED_WIDTH,
+  H_COLLAPSED_HEIGHT,
+  EDGE_TAB_WIDTH,
+  EDGE_TAB_HEIGHT,
+  H_EDGE_TAB_WIDTH,
+  H_EDGE_TAB_HEIGHT,
+  calculateCollapsedBounds,
+  calculateWindowBoundsForState,
+  calculateEdgeTabBounds,
+  restoreAnchorFromEdgeTab,
+  clampBoundsToWorkArea,
+  resolveDockTarget,
+  isHorizontalDock,
+} from './services/minibar-geometry';
+import type { DockSide } from './services/minibar-geometry';
+
+export {
+  COLLAPSED_WIDTH,
+  COLLAPSED_HEIGHT,
+  EXPANDED_WIDTH,
+  EXPANDED_HEIGHT,
+  EDGE_TAB_WIDTH,
+  EDGE_TAB_HEIGHT,
+  calculateCollapsedBounds,
+  calculateWindowBoundsForState,
+  calculateEdgeTabBounds,
+  restoreAnchorFromEdgeTab,
+};
 
 let minibarWin: BrowserWindow | null = null;
 let isExpanded = false;
+let currentDockSide: DockSide = 'right';
+let currentDisplayMode: import('../common/types').MinibarDisplayMode = 'full';
+let isProgrammaticMove = false;
+let moveDebounceTimer: NodeJS.Timeout | null = null;
 let updateTimer: NodeJS.Timeout | null = null;
 let sessionManagerRef: SessionManager | null = null;
 let statusServerRef: StatusServer | null = null;
+// 手动拖拽跟随（替代原生 -webkit-app-region: drag）状态
+let dragFollowTimer: NodeJS.Timeout | null = null;
+let dragGrabOffset = { dx: 0, dy: 0 };
 
-// 收起态需要同时容纳 3 个 Agent 的 5h / 7d 两个周期（含周期标签），
-// 340px 会把第三枚徽标挤出窗口（实测溢出 133px），因此加宽到 480px。
-// 展开态与收起态同宽，避免切换时窗口宽度跳变。
-const COLLAPSED_WIDTH = 480;
-const COLLAPSED_HEIGHT = 44;
-const EXPANDED_WIDTH = 480;
-const EXPANDED_HEIGHT = 240;
-
-function getBoundsFile(): string {
+export function getBoundsFile(): string {
   return path.join(app.getPath('userData'), 'minibar-bounds.json');
 }
 
-function getPreferenceFile(): string {
+export function getPreferenceFile(): string {
   return path.join(app.getPath('userData'), 'minibar-preferences.json');
 }
 
@@ -44,7 +76,12 @@ function saveVisibility(visible: boolean): void {
   }
 }
 
-function loadSavedBounds(): { x?: number; y?: number } {
+function loadSavedBounds(): {
+  x?: number;
+  y?: number;
+  dockSide?: DockSide;
+  displayMode?: import('../common/types').MinibarDisplayMode;
+} {
   try {
     const p = getBoundsFile();
     if (fs.existsSync(p)) {
@@ -63,7 +100,18 @@ function saveBounds() {
   if (!minibarWin || minibarWin.isDestroyed()) return;
   try {
     const b = minibarWin.getBounds();
-    fs.writeFileSync(getBoundsFile(), JSON.stringify({ x: b.x, y: b.y }));
+    const anchor = currentDisplayMode === 'edge-tab'
+      ? restoreAnchorFromEdgeTab(b, currentDockSide)
+      : calculateCollapsedBounds(b, isExpanded, currentDockSide);
+    fs.writeFileSync(
+      getBoundsFile(),
+      JSON.stringify({
+        x: anchor.x,
+        y: anchor.y,
+        dockSide: currentDockSide,
+        displayMode: currentDisplayMode,
+      })
+    );
   } catch {
     // ignore
   }
@@ -71,35 +119,154 @@ function saveBounds() {
 
 /**
  * 把窗口位置夹回可见工作区。
- *
- * 场景：用户改过显示器布局（拔掉外接屏、改分辨率/缩放）后，上次保存的坐标
- * 可能落在所有显示器之外，窗口就会"消失"。只要仍与任一显示器工作区相交就保持原位，
- * 否则移回主显示器右上角默认位。
+ * 跨屏或拔屏时检测是否在任一显示器中；若脱落则夹回主显示器。
  */
-function clampToVisibleArea(x: number, y: number, w: number, h: number): { x: number; y: number } {
+export function clampToVisibleArea(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  expanded: boolean = false
+): { x: number; y: number } {
   try {
-    const intersects = screen.getAllDisplays().some((d) => {
-      const a = d.workArea;
-      return x + w > a.x && x < a.x + a.width && y + h > a.y && y < a.y + a.height;
-    });
-    if (intersects) return { x, y };
-    const primary = screen.getPrimaryDisplay().workArea;
-    return {
-      x: Math.round(primary.x + primary.width - w - 24),
-      y: Math.round(primary.y + 24),
-    };
+    const displays = screen.getAllDisplays();
+    const currentDisplay =
+      displays.find((d) => {
+        const a = d.workArea;
+        return x + w > a.x && x < a.x + a.width && y + h > a.y && y < a.y + a.height;
+      }) || screen.getPrimaryDisplay();
+
+    return clampBoundsToWorkArea(x, y, w, h, currentDisplay.workArea, expanded, currentDockSide);
   } catch {
     return { x, y };
   }
 }
 
-/** 显示前确保窗口在当前可见区域内（运行期显示器变化也需要纠正）。 */
+/**
+ * 拖拽结束判定：根据松手时鼠标最近的四条屏幕边缘吸附。
+ * 左右边缘使用竖向侧栏，上下边缘切换为横向胶囊条。
+ */
+function handleDragSettle(): void {
+  if (!minibarWin || minibarWin.isDestroyed()) return;
+  const cursor = screen.getCursorScreenPoint();
+  const targetDisplay = screen.getDisplayNearestPoint(cursor);
+  const workArea = targetDisplay.workArea;
+  const dock = resolveDockTarget(cursor, workArea);
+  const horizontal = isHorizontalDock(dock.dockSide);
+
+  currentDockSide = dock.dockSide;
+  isExpanded = false;
+  const targetW = horizontal ? H_COLLAPSED_WIDTH : COLLAPSED_WIDTH;
+  const targetH = horizontal ? H_COLLAPSED_HEIGHT : COLLAPSED_HEIGHT;
+
+  isProgrammaticMove = true;
+  try {
+    minibarWin.setBounds({
+      x: dock.x,
+      y: dock.y,
+      width: targetW,
+      height: targetH,
+    });
+    saveBounds();
+    pushState();
+  } finally {
+    setTimeout(() => {
+      isProgrammaticMove = false;
+    }, 60);
+  }
+}
+
+function startDragFollow(): void {
+  if (!minibarWin || minibarWin.isDestroyed()) return;
+  if (dragFollowTimer) clearInterval(dragFollowTimer);
+
+  const cursor = screen.getCursorScreenPoint();
+  const bounds = minibarWin.getBounds();
+  dragGrabOffset = {
+    dx: cursor.x - bounds.x,
+    dy: cursor.y - bounds.y,
+  };
+  isProgrammaticMove = true;
+
+  dragFollowTimer = setInterval(() => {
+    if (!minibarWin || minibarWin.isDestroyed()) return;
+    const point = screen.getCursorScreenPoint();
+    minibarWin.setPosition(
+      Math.round(point.x - dragGrabOffset.dx),
+      Math.round(point.y - dragGrabOffset.dy),
+    );
+  }, 16);
+}
+
+function stopDragFollowAndSettle(): void {
+  if (dragFollowTimer) {
+    clearInterval(dragFollowTimer);
+    dragFollowTimer = null;
+  }
+  if (!minibarWin || minibarWin.isDestroyed()) return;
+  isProgrammaticMove = false;
+  handleDragSettle();
+}
+
+/**
+ * 设置悬浮窗显示形态：完整侧栏模式 vs 边缘小型胶囊标签模式。
+ * 切换时保持纵向居中与所属屏幕边缘吸附，零跳动。
+ */
+export function setDisplayMode(mode: import('../common/types').MinibarDisplayMode): void {
+  if (!minibarWin || minibarWin.isDestroyed()) return;
+  if (currentDisplayMode === mode) return;
+
+  const currentBounds = minibarWin.getBounds();
+  if (mode === 'edge-tab') {
+    const anchor = calculateCollapsedBounds(currentBounds, isExpanded, currentDockSide);
+    isExpanded = false;
+    const tabBounds = calculateEdgeTabBounds(anchor, currentDockSide);
+    currentDisplayMode = 'edge-tab';
+    isProgrammaticMove = true;
+    minibarWin.setBounds(tabBounds);
+    setTimeout(() => {
+      isProgrammaticMove = false;
+    }, 60);
+    saveBounds();
+    pushState();
+  } else {
+    const anchor = restoreAnchorFromEdgeTab(currentBounds, currentDockSide);
+    const horizontal = isHorizontalDock(currentDockSide);
+    const fixed = clampToVisibleArea(
+      anchor.x,
+      anchor.y,
+      horizontal ? H_COLLAPSED_WIDTH : COLLAPSED_WIDTH,
+      horizontal ? H_COLLAPSED_HEIGHT : COLLAPSED_HEIGHT,
+      false,
+    );
+    currentDisplayMode = 'full';
+    isExpanded = false;
+    isProgrammaticMove = true;
+    minibarWin.setBounds({
+      x: fixed.x,
+      y: fixed.y,
+      width: horizontal ? H_COLLAPSED_WIDTH : COLLAPSED_WIDTH,
+      height: horizontal ? H_COLLAPSED_HEIGHT : COLLAPSED_HEIGHT,
+    });
+    setTimeout(() => {
+      isProgrammaticMove = false;
+    }, 60);
+    saveBounds();
+    pushState();
+  }
+}
+
+/** 显示前确保窗口在当前可见区域内（运行期拔插显示器也自适应）。 */
 function ensureOnScreen(): void {
   if (!minibarWin || minibarWin.isDestroyed()) return;
   const b = minibarWin.getBounds();
-  const fixed = clampToVisibleArea(b.x, b.y, b.width, b.height);
+  const fixed = clampToVisibleArea(b.x, b.y, b.width, b.height, isExpanded);
   if (fixed.x !== b.x || fixed.y !== b.y) {
+    isProgrammaticMove = true;
     minibarWin.setPosition(fixed.x, fixed.y);
+    setTimeout(() => {
+      isProgrammaticMove = false;
+    }, 60);
     saveBounds();
   }
 }
@@ -110,6 +277,8 @@ function pushState() {
     sessions: sessionManagerRef.getAllSessions(),
     quotas: statusServerRef.getQuotas(),
     isExpanded,
+    dockSide: currentDockSide,
+    displayMode: currentDisplayMode,
   };
   minibarWin.webContents.send('minibar-state', state);
 }
@@ -141,6 +310,28 @@ export function toggleMiniBar(): void {
   notifyVisibility();
 }
 
+/**
+ * 设置悬浮窗展开/收起状态。
+ * 支持右吸附向左展开与左吸附向右展开，屏幕吸附边缘绝对不动。
+ */
+export function setWindowExpanded(expand: boolean): void {
+  if (!minibarWin || minibarWin.isDestroyed()) return;
+  if (isExpanded === expand) return;
+  if (currentDisplayMode === 'edge-tab') return; // 边缘标签态下不直接展开卡片
+
+  const currentBounds = minibarWin.getBounds();
+  const anchor = calculateCollapsedBounds(currentBounds, isExpanded, currentDockSide);
+  isExpanded = expand;
+  const newBounds = calculateWindowBoundsForState(anchor, isExpanded, currentDockSide);
+
+  isProgrammaticMove = true;
+  minibarWin.setBounds(newBounds);
+  setTimeout(() => {
+    isProgrammaticMove = false;
+  }, 60);
+  pushState();
+}
+
 export function createMiniBarWindow(
   sessionManager: SessionManager,
   statusServer: StatusServer
@@ -160,31 +351,53 @@ export function createMiniBarWindow(
   const saved = loadSavedBounds();
   let defaultX = saved.x;
   let defaultY = saved.y;
+  if (saved.dockSide) {
+    currentDockSide = saved.dockSide;
+  }
+  if (saved.displayMode) {
+    currentDisplayMode = saved.displayMode;
+  }
+
+  const horizontal = isHorizontalDock(currentDockSide);
+  const initW =
+    currentDisplayMode === 'edge-tab'
+      ? (horizontal ? H_EDGE_TAB_WIDTH : EDGE_TAB_WIDTH)
+      : (horizontal ? H_COLLAPSED_WIDTH : COLLAPSED_WIDTH);
+  const initH =
+    currentDisplayMode === 'edge-tab'
+      ? (horizontal ? H_EDGE_TAB_HEIGHT : EDGE_TAB_HEIGHT)
+      : (horizontal ? H_COLLAPSED_HEIGHT : COLLAPSED_HEIGHT);
 
   if (defaultX === undefined || defaultY === undefined) {
     try {
       const primary = screen.getPrimaryDisplay();
-      defaultX = Math.round(primary.workArea.x + primary.workArea.width - COLLAPSED_WIDTH - 24);
-      defaultY = Math.round(primary.workArea.y + 24);
+      if (horizontal) {
+        defaultX = Math.round(primary.workArea.x + Math.max(24, (primary.workArea.width - initW) / 2));
+        defaultY = primary.workArea.y + Math.max(24, Math.round((primary.workArea.height - initH) * 0.25));
+      } else {
+        defaultX = Math.round(primary.workArea.x + primary.workArea.width - initW);
+        defaultY = Math.round(primary.workArea.y + Math.max(24, (primary.workArea.height - initH) / 2));
+      }
     } catch {
       defaultX = 100;
       defaultY = 100;
     }
   } else {
-    // 上次保存的位置可能已经不在任何显示器内（换了显示器/分辨率），夹回可见区域
-    const fixed = clampToVisibleArea(defaultX, defaultY, COLLAPSED_WIDTH, COLLAPSED_HEIGHT);
+    // 上次保存的位置若换了显示器，夹回可见工作区
+    const fixed = clampToVisibleArea(defaultX, defaultY, initW, initH, false);
     defaultX = fixed.x;
     defaultY = fixed.y;
   }
 
   minibarWin = new BrowserWindow({
-    width: COLLAPSED_WIDTH,
-    height: COLLAPSED_HEIGHT,
+    width: initW,
+    height: initH,
     x: defaultX,
     y: defaultY,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
+    hasShadow: false, // 彻底消除 Windows DWM 透明窗口外围矩形投影框
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
@@ -196,12 +409,32 @@ export function createMiniBarWindow(
     },
   });
 
-  minibarWin.on('moved', saveBounds);
+  // 跨屏拖拽与释放检测（加速至 90ms 防抖，松手即迅速吸附）
+  const onWindowDragMove = () => {
+    if (!minibarWin || minibarWin.isDestroyed() || isProgrammaticMove) return;
+
+    if (moveDebounceTimer) {
+      clearTimeout(moveDebounceTimer);
+    }
+    moveDebounceTimer = setTimeout(() => {
+      moveDebounceTimer = null;
+      handleDragSettle();
+    }, 90);
+  };
+
+  minibarWin.on('moved', onWindowDragMove);
+  minibarWin.on('move', onWindowDragMove);
 
   minibarWin.on('close', (e) => {
     e.preventDefault();
     minibarWin?.hide();
     notifyVisibility();
+  });
+
+  minibarWin.on('blur', () => {
+    if (minibarWin && !minibarWin.isDestroyed()) {
+      minibarWin.webContents.send('minibar:window-blur');
+    }
   });
 
   minibarWin.on('show', () => notifyVisibility());
@@ -234,18 +467,57 @@ export function createMiniBarWindow(
       sessions: sessionManager.getAllSessions(),
       quotas: statusServer.getQuotas(),
       isExpanded,
+      dockSide: currentDockSide,
+      displayMode: currentDisplayMode,
     };
+  });
+
+  ipcMain.removeAllListeners('minibar:set-display-mode');
+  ipcMain.on('minibar:set-display-mode', (_, mode: import('../common/types').MinibarDisplayMode) => {
+    setDisplayMode(mode);
+  });
+
+  ipcMain.removeAllListeners('minibar:set-expanded');
+  ipcMain.on('minibar:set-expanded', (_, expand: boolean) => {
+    setWindowExpanded(!!expand);
+  });
+
+  ipcMain.removeAllListeners('minibar:drag-start');
+  ipcMain.on('minibar:drag-start', () => {
+    if (!minibarWin || minibarWin.isDestroyed()) return;
+    if (isExpanded) {
+      isExpanded = false;
+      const currentBounds = minibarWin.getBounds();
+      const anchor = calculateCollapsedBounds(currentBounds, true, currentDockSide);
+      const horizontal = isHorizontalDock(currentDockSide);
+      isProgrammaticMove = true;
+      minibarWin.setBounds({
+        x: anchor.x,
+        y: anchor.y,
+        width: horizontal ? H_COLLAPSED_WIDTH : COLLAPSED_WIDTH,
+        height: horizontal ? H_COLLAPSED_HEIGHT : COLLAPSED_HEIGHT,
+      });
+      pushState();
+    }
+    // 手动拖拽：窗口跟随鼠标连续移动，松手由 drag-end 吸附
+    startDragFollow();
+  });
+
+  ipcMain.removeAllListeners('minibar:drag-end');
+  ipcMain.on('minibar:drag-end', () => {
+    stopDragFollowAndSettle();
   });
 
   ipcMain.removeAllListeners('minibar:toggle-expanded');
   ipcMain.on('minibar:toggle-expanded', () => {
+    setWindowExpanded(!isExpanded);
+  });
+
+  ipcMain.removeAllListeners('minibar:menu-open');
+  ipcMain.on('minibar:menu-open', () => {
     if (!minibarWin || minibarWin.isDestroyed()) return;
-    isExpanded = !isExpanded;
-    minibarWin.setSize(
-      isExpanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH,
-      isExpanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT
-    );
-    pushState();
+    // 仅在显式右键打开菜单时给予窗口前台焦点，确保点击外部产生原生 blur 自动关闭菜单
+    minibarWin.focus();
   });
 
   ipcMain.removeAllListeners('minibar:close');
@@ -288,6 +560,10 @@ export function disposeMiniBar(): void {
   if (updateTimer) {
     clearInterval(updateTimer);
     updateTimer = null;
+  }
+  if (dragFollowTimer) {
+    clearInterval(dragFollowTimer);
+    dragFollowTimer = null;
   }
   if (minibarWin && !minibarWin.isDestroyed()) {
     minibarWin.destroy();

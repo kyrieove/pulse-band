@@ -43,10 +43,15 @@ export interface ClaudeHookPayload {
   [key: string]: any;
 }
 
+export type MinibarDisplayMode = 'full' | 'edge-tab';
+
 export interface MinibarState {
   sessions: AgentSession[];
   quotas: import('../main/services/quota-collector').ClusterQuotas;
   isExpanded: boolean;
+  dockSide?: 'left' | 'right' | 'top' | 'bottom';
+  displayMode?: MinibarDisplayMode;
+  bgOpacity?: number;
 }
 
 // ============================================================================
