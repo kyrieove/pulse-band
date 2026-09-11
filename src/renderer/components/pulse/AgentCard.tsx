@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Clock, Wrench } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock } from 'lucide-react';
 import { AgentLogo } from './AgentLogo';
 
 export type AgentStatusType = 'idle' | 'running' | 'warning' | 'critical';
@@ -38,9 +38,7 @@ export interface AgentCardData {
   /** true = 本地估算而非服务端真值，界面需显式标注 */
   estimated?: boolean;
   currentToolName?: string | null;
-  elapsedSeconds?: number | null;
   extendedQuotas?: ExtendedQuotaItem[] | null;
-  lastUpdatedAt?: number | null;
   quotaStatus?: 'idle' | 'warning' | 'critical';
 }
 
@@ -49,12 +47,6 @@ export interface AgentCardProps {
 }
 
 export { toRemainingPercent, resolveQuotaStatus } from './agent-quota-utils';
-
-const fmtDuration = (sec: number): string => {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`;
-};
 
 const NO_DATA = '--';
 
@@ -127,7 +119,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
     : 'text-[var(--status-idle)] bg-black/[0.04] dark:bg-white/[0.06] border-transparent';
 
   const statusLabel = isRunning
-    ? '运行中'
+    ? data.currentToolName ? `运行 ${data.currentToolName}` : '运行中'
     : isCritical
     ? '额度濒危'
     : isWarning
@@ -144,8 +136,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
     data.sevenDay ?? { remaining: null, resetText: null, status: 'idle' };
 
   const hasExpandedData =
-    (data.extendedQuotas && data.extendedQuotas.length > 0) ||
-    data.lastUpdatedAt != null;
+    data.extendedQuotas != null && data.extendedQuotas.length > 0;
 
   return (
     <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-3 transition-all duration-200 select-none">
@@ -159,12 +150,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
             <h4 className="text-sm font-semibold text-[var(--text-primary)] truncate">
               {data.name}
             </h4>
-            {isRunning && data.currentToolName && (
-              <p className="text-[11px] text-[var(--text-muted)] truncate flex items-center gap-1 mt-0.5">
-                <Wrench className="w-3 h-3 shrink-0" />
-                <span>工具: {data.currentToolName}</span>
-              </p>
-            )}
           </div>
         </div>
 
@@ -211,16 +196,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
         <QuotaRow label="7 天剩余" window={sevenDay} />
       </div>
 
-      {/* 运行态补充信息（额度不藏在详情里，这里只放运行计时） */}
-      {isRunning && data.elapsedSeconds != null && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-[11px] text-[var(--text-muted)]">运行计时</span>
-          <span className="text-xs font-semibold text-[var(--accent-primary)] tabular-nums font-mono">
-            {fmtDuration(data.elapsedSeconds)}
-          </span>
-        </div>
-      )}
-
+      {/* 运行态补充信息：仅当存在额外数据时渲染预留结构 */}
       {data.estimated && (
         <p className="text-[10px] text-[var(--text-muted)]">额度为本地估算值，仅供参考</p>
       )}
@@ -238,12 +214,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-
-          {data.lastUpdatedAt != null && (
-            <div className="text-[10px] text-[var(--text-muted)]">
-              数据更新时间：{new Date(data.lastUpdatedAt).toLocaleTimeString()}
             </div>
           )}
         </div>

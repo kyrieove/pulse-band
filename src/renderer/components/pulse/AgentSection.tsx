@@ -130,9 +130,7 @@ export const AgentSection: React.FC = () => {
       sevenDay,
       estimated: q != null && q.authoritative === false,
       currentToolName: activeSession?.currentTool?.name ?? null,
-      elapsedSeconds: activeSession?.durationSeconds ?? null,
       extendedQuotas: extendedQuotas.length > 0 ? extendedQuotas : null,
-      lastUpdatedAt: session?.updatedAt ?? null,
       quotaStatus,
     };
   });
