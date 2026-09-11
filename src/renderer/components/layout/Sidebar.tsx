@@ -2,6 +2,7 @@ import React from 'react';
 import { LayoutDashboard, Watch, Settings2, PanelTop } from 'lucide-react';
 import { Toggle } from '../pulse/ui';
 import { useMiniBar } from '../../hooks/useMiniBar';
+import { APP_NAME, APP_VERSION } from '../../../common/app-info';
 
 export type PulsePage = 'overview' | 'band' | 'settings';
 
@@ -86,8 +87,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate }) => 
         </div>
 
         <div className="px-2 py-1.5 border-t border-[var(--border-default)] flex items-center justify-between text-[11px] text-[var(--text-muted)]">
-          <span>Pulse 2.0</span>
-          <span className="font-mono text-[10px]">v2.0-preview</span>
+          <span>{APP_NAME}</span>
+          <span className="font-mono text-[10px]">v{APP_VERSION}</span>
         </div>
       </div>
     </aside>

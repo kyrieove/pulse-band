@@ -1,5 +1,6 @@
 import React from 'react';
 import { Minus, Square, X, Activity } from 'lucide-react';
+import { APP_NAME } from '../../../common/app-info';
 
 export interface TopBarProps {
   subtitle?: string;
@@ -30,7 +31,7 @@ export const TopBar: React.FC<TopBarProps> = ({ subtitle }) => {
         </div>
         <div className="flex items-baseline gap-2">
           <span className="text-xs font-semibold tracking-tight text-[var(--text-primary)]">
-            Pulse 2.0
+            {APP_NAME}
           </span>
           {subtitle && (
             <span className="text-[11px] text-[var(--text-muted)] font-normal">
