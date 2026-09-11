@@ -135,6 +135,14 @@ export const AgentSection: React.FC = () => {
     };
   });
 
+  // 锚点卡：三张里 5 小时剩余最低者；三张都 >60% 时无锚点。最多一张。
+  const anchorId = (() => {
+    const with5h = agentList.filter((c) => c.fiveHour?.remaining != null);
+    if (with5h.length === 0) return null;
+    const lowest = with5h.reduce((a, b) => (a.fiveHour!.remaining! < b.fiveHour!.remaining! ? a : b));
+    return (lowest.fiveHour!.remaining ?? 0) > 60 ? null : lowest.id;
+  })();
+
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
@@ -147,9 +155,9 @@ export const AgentSection: React.FC = () => {
       </div>
 
       {agentList.length > 0 ? (
-        <div className="space-y-3">
+        <div className="grid grid-cols-3 gap-2.5">
           {agentList.map((agent) => (
-            <AgentCard key={agent.id} data={agent} />
+            <AgentCard key={agent.id} data={agent} anchor={agent.id === anchorId} />
           ))}
         </div>
       ) : (

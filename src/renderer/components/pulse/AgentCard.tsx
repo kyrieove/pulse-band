@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Clock } from 'lucide-react';
+import React from 'react';
+import { ArrowUpRight } from 'lucide-react';
 import { AgentLogo } from './AgentLogo';
+import { parseResetTimeInfo } from './agent-quota-utils';
 
 export type AgentStatusType = 'idle' | 'running' | 'warning' | 'critical';
 
@@ -13,7 +14,7 @@ export interface ExtendedQuotaItem {
  * 单个额度周期（5 小时 / 7 天）的展示数据。
  *
  * 纪律：`remaining` 为 null 表示**没有数据**，界面必须显示 `--`，
- * 不得补成 0% 或 100%。`resetText` 同理，缺失显示 `--`。
+ * 不得补成 0% 或 100%。
  */
 export interface QuotaWindow {
   remaining: number | null;
@@ -44,180 +45,106 @@ export interface AgentCardData {
 
 export interface AgentCardProps {
   data: AgentCardData;
+  /** 锚点卡：三张里 5 小时剩余最低的那张（全部 >60% 时为 null） */
+  anchor?: boolean;
 }
 
 export { toRemainingPercent, resolveQuotaStatus } from './agent-quota-utils';
 
 const NO_DATA = '--';
 
-/**
- * 单个额度周期行：标题 + 剩余百分比 + 该周期自己的重置时间 + 进度条。
- *
- * 两个周期都常驻显示，缺失数据不隐藏整行、也不伪造 0%/100%。
- */
-const QuotaRow: React.FC<{ label: string; window?: QuotaWindow | null }> = ({ label, window: w }) => {
-  const remaining = w?.remaining ?? null;
-  const hasData = remaining != null;
-
-  const tone = !hasData
-    ? 'text-[var(--text-muted)]'
-    : w?.status === 'critical'
-    ? 'text-[var(--quota-critical)]'
-    : w?.status === 'warning'
-    ? 'text-[var(--quota-warning)]'
-    : 'text-[var(--text-primary)]';
-
-  const barTone =
-    w?.status === 'critical'
-      ? 'bg-[var(--quota-critical)]'
-      : w?.status === 'warning'
-      ? 'bg-[var(--quota-warning)]'
-      : 'bg-[var(--accent-primary)]';
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[11px] text-[var(--text-muted)] shrink-0">{label}</span>
-        <span className="flex items-baseline gap-2.5 min-w-0">
-          <span className={`text-sm font-bold tabular-nums ${tone}`}>
-            {hasData ? `${remaining}%` : NO_DATA}
-          </span>
-          <span className="text-[11px] text-[var(--text-muted)] tabular-nums flex items-center gap-1 truncate">
-            <Clock className="w-3 h-3 shrink-0" />
-            <span className="truncate">
-              重置 {hasData ? w?.resetText ?? NO_DATA : NO_DATA}
-            </span>
-          </span>
-        </span>
-      </div>
-      <div className="h-1.5 rounded-full bg-[var(--bg-app)] border border-[var(--border-default)] overflow-hidden">
-        {hasData && (
-          <div
-            className={`h-full rounded-full transition-[width] duration-300 ${barTone}`}
-            style={{ width: `${remaining}%` }}
-          />
-        )}
-      </div>
-    </div>
-  );
+/** 主数字颜色按阈值：>40 主文字，20–40 警告，<20 濒危 */
+const percentColor = (remaining: number | null): string => {
+  if (remaining == null) return 'text-[var(--text-muted)]';
+  if (remaining > 40) return 'text-[var(--text-primary)]';
+  if (remaining >= 20) return 'text-[var(--quota-warning)]';
+  return 'text-[var(--quota-critical)]';
 };
 
-export const AgentCard: React.FC<AgentCardProps> = ({ data }) => {
-  const [expanded, setExpanded] = useState(false);
-
-  const isRunning = data.status === 'running';
-  const isCritical = data.status === 'critical';
-  const isWarning = data.status === 'warning';
-
-  // 状态色彩与指示
-  const statusColor = isRunning
-    ? 'text-[var(--status-working)] bg-[var(--status-working)]/10 border-[var(--status-working)]/30'
-    : isCritical
-    ? 'text-[var(--status-error)] bg-[var(--status-error)]/10 border-[var(--status-error)]/30'
-    : isWarning
-    ? 'text-[var(--status-warning)] bg-[var(--status-warning)]/10 border-[var(--status-warning)]/30'
-    : 'text-[var(--status-idle)] bg-black/[0.04] dark:bg-white/[0.06] border-transparent';
-
-  const statusLabel = isRunning
-    ? data.currentToolName ? `运行 ${data.currentToolName}` : '运行中'
-    : isCritical
-    ? '额度濒危'
-    : isWarning
-    ? '额度紧张'
-    : '待命就绪';
-
-  // 双周期额度：优先用新字段，同时兼容旧的单周期字段
+export const AgentCard: React.FC<AgentCardProps> = ({ data, anchor = false }) => {
   const fiveHour: QuotaWindow = data.fiveHour ?? {
     remaining: data.remainingPercent ?? data.primaryQuota ?? null,
     resetText: data.resetTime ?? null,
     status: data.quotaStatus ?? 'idle',
   };
-  const sevenDay: QuotaWindow =
-    data.sevenDay ?? { remaining: null, resetText: null, status: 'idle' };
+  const sevenDay: QuotaWindow = data.sevenDay ?? { remaining: null, resetText: null, status: 'idle' };
 
-  const hasExpandedData =
-    data.extendedQuotas != null && data.extendedQuotas.length > 0;
+  const remaining = fiveHour.remaining;
+  const countdownText = parseResetTimeInfo(fiveHour.resetText).countdownText;
+
+  const running = data.status === 'running';
+  const statusLabel = running
+    ? data.currentToolName
+      ? `运行 ${data.currentToolName}`
+      : '运行中'
+    : data.status === 'critical'
+    ? '额度濒危'
+    : data.status === 'warning'
+    ? '额度紧张'
+    : '待命';
+
+  const statusBadge = running
+    ? 'bg-[var(--status-working)] text-white'
+    : data.status === 'critical'
+    ? 'bg-[var(--quota-critical)] text-white'
+    : data.status === 'warning'
+    ? 'bg-[var(--quota-warning)] text-white'
+    : 'bg-[var(--bg-subtle)] text-[var(--text-muted)]';
+
+  const numberColor = anchor ? 'text-[var(--anchor-text)]' : percentColor(remaining);
+  const mutedText = anchor ? 'text-[var(--anchor-text)]/80' : 'text-[var(--text-muted)]';
 
   return (
-    <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] shadow-[var(--shadow-card)] space-y-3 transition-all duration-200 select-none">
-      {/* 头部：Agent 名称、状态指示与展开触发按钮 */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] flex items-center justify-center shrink-0">
-            <AgentLogo agent={data.id} size={20} />
-          </div>
-          <div className="min-w-0">
-            <h4 className="text-sm font-semibold text-[var(--text-primary)] truncate">
-              {data.name}
-            </h4>
-          </div>
-        </div>
+    <div
+      className={`relative p-3.5 rounded-[18px] border transition-colors duration-200 select-none ${
+        anchor ? 'bg-[var(--anchor-wash)] border-transparent' : 'bg-[var(--bg-surface)] border-[var(--border-default)]'
+      }`}
+    >
+      {/* 右上角：24px 圆形描边按钮 + 45° 外链箭头 */}
+      <button
+        type="button"
+        className={`absolute top-3.5 right-3.5 w-6 h-6 rounded-full border flex items-center justify-center transition-colors ${
+          anchor
+            ? 'border-white/50 text-[var(--anchor-text)]'
+            : 'border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+        }`}
+        title="打开外部"
+        aria-label="打开外部"
+      >
+        <ArrowUpRight className="w-3.5 h-3.5" />
+      </button>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {/* 状态徽章 */}
-          <span
-            className={`px-2 py-0.5 rounded-[var(--radius-full)] text-xs font-medium border flex items-center gap-1.5 ${statusColor}`}
-          >
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                isRunning
-                  ? 'bg-[var(--status-working)] animate-pulse shadow-[0_0_6px_var(--status-working)]'
-                  : isCritical
-                  ? 'bg-[var(--status-error)]'
-                  : isWarning
-                  ? 'bg-[var(--status-warning)]'
-                  : 'bg-[var(--status-idle)]'
-              }`}
-            />
-            <span>{statusLabel}</span>
-          </span>
-
-          {/* 展开切换按钮 */}
-          {hasExpandedData && (
-            <button
-              type="button"
-              onClick={() => setExpanded(!expanded)}
-              className="p-1 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-app)] transition-colors"
-              title={expanded ? '收起详细指标' : '展开详细指标'}
-            >
-              {expanded ? (
-                <ChevronDown className="w-4 h-4" />
-              ) : (
-                <ChevronRight className="w-4 h-4" />
-              )}
-            </button>
-          )}
-        </div>
+      {/* 顶部：logo + 名称 */}
+      <div className="flex items-center gap-2 pr-7">
+        <AgentLogo agent={data.id} size={18} />
+        <h4
+          className={`text-[13px] font-semibold truncate ${
+            anchor ? 'text-[var(--anchor-text)]' : 'text-[var(--text-primary)]'
+          }`}
+        >
+          {data.name}
+        </h4>
       </div>
 
-      {/* 双周期额度：5 小时与 7 天同时可见，无需展开 */}
-      <div className="space-y-3 pt-1">
-        <QuotaRow label="5 小时剩余" window={fiveHour} />
-        <QuotaRow label="7 天剩余" window={sevenDay} />
+      {/* 主数字 */}
+      <div className={`mt-2.5 flex items-baseline leading-none ${numberColor}`}>
+        <span className="text-[36px] font-bold tracking-[-0.035em] tabular-nums">
+          {remaining != null ? remaining : NO_DATA}
+        </span>
+        <span className="text-[19px] font-semibold ml-0.5">%</span>
       </div>
+      <div className={`mt-1 text-[10.5px] ${mutedText}`}>5 小时剩余</div>
 
-      {/* 运行态补充信息：仅当存在额外数据时渲染预留结构 */}
-      {data.estimated && (
-        <p className="text-[10px] text-[var(--text-muted)]">额度为本地估算值，仅供参考</p>
-      )}
-
-      {/* 展开区域：仅当存在数据时渲染预留结构 */}
-      {expanded && hasExpandedData && (
-        <div className="pt-3 mt-1 border-t border-[var(--border-default)] space-y-2.5">
-          {data.extendedQuotas && data.extendedQuotas.length > 0 && (
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              {data.extendedQuotas.map((item, idx) => (
-                <div key={idx} className="p-2 rounded-[var(--radius-md)] bg-[var(--bg-app)]">
-                  <div className="text-[10px] text-[var(--text-muted)]">{item.label}</div>
-                  <div className="text-xs font-semibold text-[var(--text-primary)] tabular-nums mt-0.5">
-                    {item.value}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* 徽章行：状态 + 倒计时 + 7 天 */}
+      <div className="mt-3 flex items-center gap-1.5 flex-wrap min-w-0">
+        <span className={`rounded-[6px] text-[10px] font-bold px-1.5 py-0.5 shrink-0 ${statusBadge}`}>
+          {statusLabel}
+        </span>
+        <span className={`text-[10px] truncate ${mutedText}`}>{countdownText}</span>
+        <span className={`text-[10px] font-medium tabular-nums ${mutedText}`}>
+          · 7 天 {sevenDay.remaining != null ? `${sevenDay.remaining}%` : NO_DATA}
+        </span>
+      </div>
     </div>
   );
 };
