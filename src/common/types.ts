@@ -122,21 +122,6 @@ export interface LogImportState {
 }
 
 // ============================================================================
-// 保存凭据步骤数据契约 (Credential Save Step Data Contract)
-// ============================================================================
-
-export type CredentialSaveStatus =
-  | 'idle'
-  | 'saving'
-  | 'saved'
-  | 'error';
-
-export interface CredentialSaveState {
-  status: CredentialSaveStatus;
-  error?: SetupError;
-}
-
-// ============================================================================
 // Windows 配对步骤数据契约 (Windows Pairing Step Data Contract)
 // ============================================================================
 

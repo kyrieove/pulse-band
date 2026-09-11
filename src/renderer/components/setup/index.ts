@@ -1,9 +1,6 @@
 export { SetupWizard, type SetupWizardProps } from './SetupWizard';
 export { LogImportStep, type LogImportStepProps } from './LogImportStep';
 export { ConnectBandStep, type ConnectBandStepProps } from './ConnectBandStep';
-export { CredentialSaveStep, type CredentialSaveStepProps } from './CredentialSaveStep';
-export { WindowsPairingStep, type WindowsPairingStepProps } from './WindowsPairingStep';
-export { RfcommAuthStep, type RfcommAuthStepProps } from './RfcommAuthStep';
 export { InstallAppStep, type InstallAppStepProps } from './InstallAppStep';
 export {
   VerifyQuotaStep,
@@ -20,12 +17,6 @@ export {
   type SetupAction,
   type LogImportStatus,
   type LogImportState,
-  type CredentialSaveStatus,
-  type CredentialSaveState,
-  type WindowsPairingStatus,
-  type WindowsPairingState,
-  type RfcommAuthStatus,
-  type RfcommAuthState,
   type InstallAppStatus,
   type InstallAppState,
   type VerifyQuotaStatus,

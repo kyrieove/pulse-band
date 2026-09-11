@@ -50,9 +50,16 @@ export function useQuotaState(): UseQuotaStateResult {
 
     const timer = setInterval(pull, POLL_INTERVAL_MS);
 
+    // 页面从隐藏回到可见时立即补拉一次，避免切回窗口要等满一个轮询周期
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void pull();
+    };
+    document.addEventListener('visibilitychange', onVis);
+
     return () => {
       alive = false;
       unsub?.();
+      document.removeEventListener('visibilitychange', onVis);
       clearInterval(timer);
     };
   }, []);
