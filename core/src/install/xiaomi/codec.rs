@@ -50,10 +50,22 @@ pub fn encode_install_result(code: InstallResultCode, package_name: &str) -> Vec
 ///
 /// 生成 WearPacket(type=MASS(22), id=PREPARE(0))，内嵌 PrepareRequest(dataType=64, MD5, dataLength)
 pub fn encode_mass_prepare_len(data_length: u32, md5: &[u8]) -> Result<Vec<u8>> {
+    encode_mass_prepare_len_with_type(MASS_DATA_TYPE_THIRDPARTY_APP, data_length, md5)
+}
+
+/// 编码 Mass 准备请求（显式指定 dataType）
+///
+/// 上游表盘安装使用 dataType=16 (MassDataType.watchface)；
+/// data_id 语义与 RPK 相同：MD5(完整文件)。
+pub fn encode_mass_prepare_len_with_type(
+    data_type: u32,
+    data_length: u32,
+    md5: &[u8],
+) -> Result<Vec<u8>> {
     if md5.len() != 16 {
         return Err(format!("MD5 长度必须为 16 字节: 实际 {} 字节", md5.len()));
     }
-    let req = PrepareRequest::new(MASS_DATA_TYPE_THIRDPARTY_APP, md5.to_vec(), data_length);
+    let req = PrepareRequest::new(data_type, md5.to_vec(), data_length);
     let mass = Mass::from_prepare_request(req);
     let packet = WearPacket::new_mass(0, mass);
     Ok(packet.encode())

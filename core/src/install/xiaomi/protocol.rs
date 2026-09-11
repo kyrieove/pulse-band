@@ -51,7 +51,7 @@ const MASS_TRANSFER_TIMEOUT_MS: u64 = 120_000;
 ///
 /// 与上游 `_handleAck` 的"从队首开始标记序号不晚于 ACK.seq 的待发送项"一致；
 /// ACK 对应的是 Frame 的 8 位 seq，不是 Mass 的 16 位 current_part。
-fn ack_cumulative(inflight: &mut VecDeque<u8>, ack_seq: u8) {
+pub(crate) fn ack_cumulative(inflight: &mut VecDeque<u8>, ack_seq: u8) {
     while let Some(&front) = inflight.front() {
         if ack_seq.wrapping_sub(front) < 128 {
             inflight.pop_front();

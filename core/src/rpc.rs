@@ -420,6 +420,148 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 ),
             }
         }
+        "device.watchface.set" => {
+            let wf_id = params["id"].as_str().unwrap_or("").to_string();
+            if wf_id.is_empty() {
+                (
+                    error_resp(&id, "invalid_params", "缺少表盘 id 参数").to_string(),
+                    false,
+                )
+            } else {
+                match core.mode {
+                    crate::CoreMode::Live => {
+                        match core.install.lock().unwrap().set_current_watchface(&wf_id) {
+                            Ok(item) => (
+                                serde_json::json!({
+                                    "id": id,
+                                    "ok": true,
+                                    "result": { "watchface": item }
+                                })
+                                .to_string(),
+                                false,
+                            ),
+                            Err(e) => (
+                                error_resp(&id, "watchface_set_failed", &e).to_string(),
+                                false,
+                            ),
+                        }
+                    }
+                    crate::CoreMode::Fake => (
+                        serde_json::json!({
+                            "id": id,
+                            "ok": true,
+                            "result": {
+                                "watchface": {
+                                    "id": wf_id,
+                                    "name": "Mock Watchface (fake mode)",
+                                    "is_current": true,
+                                    "can_remove": true,
+                                    "version_code": 1,
+                                    "can_edit": false,
+                                    "background_color": "",
+                                    "background_image": "",
+                                    "style": ""
+                                },
+                                "mock": true
+                            }
+                        })
+                        .to_string(),
+                        false,
+                    ),
+                }
+            }
+        }
+        "device.watchface.install" => {
+            let path = params["path"].as_str().unwrap_or("").to_string();
+            let md5_hex = params["md5"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_lowercase()
+                .to_string();
+            let explicit_id = params["id"]
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            if path.is_empty() {
+                (
+                    error_resp(&id, "invalid_params", "缺少表盘文件 path 参数").to_string(),
+                    false,
+                )
+            } else if md5_hex.len() != 32 || !md5_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                (
+                    error_resp(
+                        &id,
+                        "invalid_params",
+                        "缺少或非法 md5 参数（需 32 位 hex，data_id=MD5(完整文件)）",
+                    )
+                    .to_string(),
+                    false,
+                )
+            } else {
+                match core.mode {
+                    crate::CoreMode::Live => match std::fs::read(&path) {
+                        Ok(file_bytes) => {
+                            if file_bytes.is_empty() {
+                                (
+                                    error_resp(&id, "watchface_install_failed", "表盘文件为空")
+                                        .to_string(),
+                                    false,
+                                )
+                            } else {
+                                match core
+                                    .install
+                                    .lock()
+                                    .unwrap()
+                                    .install_watchface_file(&file_bytes, &md5_hex, explicit_id.as_deref())
+                                {
+                                    Ok(outcome) => (
+                                        serde_json::json!({
+                                            "id": id,
+                                            "ok": true,
+                                            "result": {
+                                                "watchface_id": outcome.watchface_id,
+                                                "result_code": outcome.result_code,
+                                                "result_code_meaning": if outcome.result_code == 2 { "INSTALL_SUCCESS" } else { "INSTALL_USED" }
+                                            }
+                                        })
+                                        .to_string(),
+                                        false,
+                                    ),
+                                    Err(e) => (
+                                        error_resp(&id, "watchface_install_failed", &e).to_string(),
+                                        false,
+                                    ),
+                                }
+                            }
+                        }
+                        Err(e) => (
+                            error_resp(
+                                &id,
+                                "watchface_install_failed",
+                                &format!("读取表盘文件失败: {e}"),
+                            )
+                            .to_string(),
+                            false,
+                        ),
+                    },
+                    crate::CoreMode::Fake => (
+                        serde_json::json!({
+                            "id": id,
+                            "ok": true,
+                            "result": {
+                                "watchface_id": explicit_id.unwrap_or_else(|| "mock_watchface".to_string()),
+                                "result_code": 2,
+                                "result_code_meaning": "INSTALL_SUCCESS",
+                                "mock": true
+                            }
+                        })
+                        .to_string(),
+                        false,
+                    ),
+                }
+            }
+        }
         other => (
             error_resp(&id, "method_not_found", &format!("未知方法 {other}")).to_string(),
             false,

@@ -480,7 +480,15 @@ impl XiaomiInstallRuntimeBridge {
         };
         self.install_session.send_install_packet(&query_frame)?;
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        self.wait_watchface_list(Duration::from_secs(10))
+    }
+
+    /// 等待并解码设备返回的表盘列表；非列表帧一律丢弃继续等。
+    fn wait_watchface_list(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Vec<super::watch_face::WatchFaceItem>> {
+        let deadline = Instant::now() + timeout;
         loop {
             let now = Instant::now();
             if now >= deadline {
@@ -501,6 +509,98 @@ impl XiaomiInstallRuntimeBridge {
                 return Ok(items);
             }
         }
+    }
+
+    /// 设置当前表盘 (SET_WATCH_FACE, type=4, id=1)。
+    ///
+    /// 上游 watchface_system.dart `setWatchface` 为 fire-and-forget：发送后不等待应答，
+    /// 也不存在已知的直接应答报文。因此成功判定只能来自设备侧证据：
+    /// 先查列表确认目标存在，发送后轮询 GET_INSTALLED_LIST，直到目标 is_current=true。
+    pub fn set_current_watchface(
+        &mut self,
+        watchface_id: &str,
+    ) -> Result<super::watch_face::WatchFaceItem> {
+        self.install_session.refresh_authentication();
+        if !self.install_session.is_linked() {
+            return Err("device_unavailable: 设备未连接或链路未认证".to_string());
+        }
+
+        let before = self.fetch_installed_watchfaces()?;
+        let Some(target) = before.iter().find(|i| i.id == watchface_id) else {
+            return Err(format!("表盘 {watchface_id} 不在已安装列表中，拒绝设置"));
+        };
+        if target.is_current {
+            install_log(&format!("watchface: {watchface_id} 已是当前表盘，无需设置"));
+            return Ok(target.clone());
+        }
+
+        let set_payload = super::watch_face::build_watchface_set_query(watchface_id);
+        let set_frame = Frame {
+            frame_type: 0x03,
+            seq: 0,
+            payload: set_payload,
+        };
+        self.install_session.send_install_packet(&set_frame)?;
+        install_log(&format!(
+            "watchface: SET_WATCH_FACE 已发送 id={watchface_id}，等待设备生效 (is_current 轮询)"
+        ));
+
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(format!(
+                    "SET_WATCH_FACE 已发送，但 {watchface_id} 的 is_current 在 20s 内未变为 true (timeout)"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(800));
+            // 设备不会自发推送列表，每轮必须主动重新发送 GET_INSTALLED_LIST
+            let poll_frame = Frame {
+                frame_type: 0x03,
+                seq: 0,
+                payload: super::watch_face::build_watchface_list_query(),
+            };
+            self.install_session.send_install_packet(&poll_frame)?;
+            match self.wait_watchface_list(Duration::from_secs(3)) {
+                Ok(items) => match items.iter().find(|i| i.id == watchface_id) {
+                    Some(item) if item.is_current => {
+                        install_log(&format!("watchface: 设备已确认 {watchface_id} 为当前表盘"));
+                        return Ok(item.clone());
+                    }
+                    Some(_) => {
+                        install_log("watchface: 列表已返回但目标尚未生效，继续轮询");
+                    }
+                    None => {
+                        return Err(format!("SET_WATCH_FACE 后列表中找不到 {watchface_id}"));
+                    }
+                },
+                Err(e) => {
+                    install_log(&format!("watchface: 轮询列表失败，继续重试: {e}"));
+                }
+            }
+        }
+    }
+
+    /// 表盘整包安装：PREPARE(4) → Mass(16) → REPORT_INSTALL_RESULT(5)。
+    /// 成功判定只依据设备上报结果码；本方法不含"设为当前表盘"。
+    pub fn install_watchface_file(
+        &mut self,
+        file_bytes: &[u8],
+        md5_hex: &str,
+        explicit_id: Option<&str>,
+    ) -> Result<super::watchface_install::WatchfaceInstallOutcome> {
+        self.install_session.refresh_authentication();
+        if !self.install_session.is_linked() {
+            return Err("device_unavailable: 设备未连接或链路未认证".to_string());
+        }
+        // 与 RPK 安装相同的前置清理：避免上次会话的残留帧/ACK 污染本次等待
+        self.install_session.discard_stale_frames();
+        super::watchface_install::install_watchface(
+            &mut self.install_session,
+            file_bytes,
+            md5_hex,
+            explicit_id,
+        )
     }
 
     pub fn transport_cancel(&mut self, session_id: &str) -> Result<()> {
@@ -589,6 +689,51 @@ impl XiaomiInstallTransport {
         match &res {
             Ok(items) => install_log(&format!("watchface: 表盘列表查询成功，共 {} 项", items.len())),
             Err(e) => install_log(&format!("watchface: 表盘列表查询失败: {e}")),
+        }
+        set_install_pipeline_active(false);
+        res
+    }
+
+    pub fn set_current_watchface(
+        &mut self,
+        watchface_id: &str,
+    ) -> Result<super::watch_face::WatchFaceItem> {
+        set_install_pipeline_active(true);
+        install_log(&format!(
+            "watchface: 开始设置当前表盘 (SET_WATCH_FACE type=4 id=1) target={watchface_id}"
+        ));
+        let res = self.bridge.set_current_watchface(watchface_id);
+        match &res {
+            Ok(item) => install_log(&format!(
+                "watchface: 设置成功，设备侧已确认 id={} is_current=true",
+                item.id
+            )),
+            Err(e) => install_log(&format!("watchface: 设置失败: {e}")),
+        }
+        set_install_pipeline_active(false);
+        res
+    }
+
+    pub fn install_watchface_file(
+        &mut self,
+        file_bytes: &[u8],
+        md5_hex: &str,
+        explicit_id: Option<&str>,
+    ) -> Result<super::watchface_install::WatchfaceInstallOutcome> {
+        set_install_pipeline_active(true);
+        install_log(&format!(
+            "watchface: 开始整包安装 (PREPARE type=4 id=4 → Mass dataType=16 → RESULT type=4 id=5) 文件 {} 字节",
+            file_bytes.len()
+        ));
+        let res = self
+            .bridge
+            .install_watchface_file(file_bytes, md5_hex, explicit_id);
+        match &res {
+            Ok(o) => install_log(&format!(
+                "watchface: 安装成功 id={} result_code={} (2=SUCCESS 3=USED)",
+                o.watchface_id, o.result_code
+            )),
+            Err(e) => install_log(&format!("watchface: 安装失败: {e}")),
         }
         set_install_pipeline_active(false);
         res

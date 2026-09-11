@@ -44,3 +44,7 @@ tools/inspect_timeline.py
 .claude/
 .codex/
 skills-lock.json
+
+# 表盘真机测试样本（版权内容，禁止入库）
+watch-face/
+watch-face-retry/
