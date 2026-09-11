@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MinibarState } from '../../common/types';
 
 /**
@@ -14,30 +14,35 @@ export interface UseQuotaStateResult {
   state: MinibarState | null;
   /** 真正拿到数据的时刻；从未成功取到过则为 null（绝不退化为挂载时刻） */
   updatedAt: Date | null;
+  /** 手动触发一次取数（“立即刷新”按钮用） */
+  refresh: () => Promise<void>;
 }
 
 export function useQuotaState(): UseQuotaStateResult {
   const [state, setState] = useState<MinibarState | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const ciRef = useRef<typeof window.codeisland>(window.codeisland);
+
+  const pull = useCallback(async () => {
+    // 页面不可见时跳过，避免后台空转
+    if (document.visibilityState === 'hidden') return;
+    const ci = ciRef.current;
+    if (!ci) return;
+    try {
+      const s = await ci.getMinibarState?.();
+      if (s) {
+        setState(s);
+        setUpdatedAt(new Date());
+      }
+    } catch {
+      // 拉取异常时保留上一份数据，不报错、不伪造
+    }
+  }, []);
 
   useEffect(() => {
-    const ci = window.codeisland;
+    const ci = ciRef.current;
     if (!ci) return;
     let alive = true;
-
-    const pull = async () => {
-      // 页面不可见时跳过这一轮，避免后台空转
-      if (document.visibilityState === 'hidden') return;
-      try {
-        const s = await ci.getMinibarState?.();
-        if (alive && s) {
-          setState(s);
-          setUpdatedAt(new Date());
-        }
-      } catch {
-        // 拉取异常时保留上一份数据，不报错、不伪造
-      }
-    };
 
     void pull();
 
@@ -62,7 +67,7 @@ export function useQuotaState(): UseQuotaStateResult {
       document.removeEventListener('visibilitychange', onVis);
       clearInterval(timer);
     };
-  }, []);
+  }, [pull]);
 
-  return { state, updatedAt };
+  return { state, updatedAt, refresh: pull };
 }

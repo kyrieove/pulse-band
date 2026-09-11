@@ -1,9 +1,15 @@
 import React from 'react';
 import { Minus, Square, X } from 'lucide-react';
-import { useQuotaState } from '../../hooks/useQuotaState';
+import type { MinibarState } from '../../../common/types';
 import { SUPPORTED_AGENTS, isAgentDetected } from '../pulse/AgentSection';
 
-export const TopBar: React.FC = () => {
+export interface TopBarProps {
+  /** 由 App 层唯一一份 useQuotaState 注入，避免重复订阅/轮询 */
+  state: MinibarState | null;
+  updatedAt: Date | null;
+}
+
+export const TopBar: React.FC<TopBarProps> = ({ state, updatedAt }) => {
   const handleMinimize = () => {
     (window as any).pulse?.minimizeWindow?.();
   };
@@ -15,9 +21,6 @@ export const TopBar: React.FC = () => {
   const handleClose = () => {
     (window as any).pulse?.closeWindow?.();
   };
-
-  // 状态行数据：已检测 Agent 数量 + 真正取到数据的更新时刻
-  const { state, updatedAt } = useQuotaState();
 
   const sessions = state?.sessions ?? [];
   const quotas = state?.quotas;

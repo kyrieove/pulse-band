@@ -159,6 +159,14 @@
   -webkit-app-region: no-drag;
 }
 
+/* 主操作按钮：sage 底上浅色字在暗色下对比不足，暗色用 --bg-canvas 深色字覆盖 */
+.btn-primary {
+  color: var(--bg-surface);
+}
+.dark .btn-primary {
+  color: var(--bg-canvas);
+}
+
 html, body, #root {
   width: 100%;
   height: 100%;

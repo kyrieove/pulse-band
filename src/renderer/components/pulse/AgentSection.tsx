@@ -1,6 +1,6 @@
 import React from 'react';
 import { Bot } from 'lucide-react';
-import type { AgentSession } from '../../../common/types';
+import type { AgentSession, MinibarState } from '../../../common/types';
 import { useQuotaState } from '../../hooks/useQuotaState';
 import type { AgentQuota } from '../../../main/services/quota-collector';
 import {
@@ -59,9 +59,15 @@ export function isAgentDetected(
   return false;
 }
 
-export const AgentSection: React.FC = () => {
-  // 统一数据源：主窗口下轮询兜底，悬浮窗下订阅生效（见 useQuotaState）
-  const { state: minibarState } = useQuotaState();
+export interface AgentSectionProps {
+  /** 由上层注入共享数据源；不传时回退到自己的一份 useQuotaState */
+  state?: MinibarState | null;
+}
+
+export const AgentSection: React.FC<AgentSectionProps> = ({ state: propState }) => {
+  // 统一数据源：优先用上层注入的共享 state，否则自己起一份（见 useQuotaState）
+  const hookState = useQuotaState().state;
+  const minibarState = propState ?? hookState;
 
   const sessions: AgentSession[] = minibarState?.sessions ?? [];
   const quotas = minibarState?.quotas;
@@ -144,16 +150,7 @@ export const AgentSection: React.FC = () => {
   })();
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-          AI Agent 状态与额度
-        </h3>
-        <span className="text-[11px] text-[var(--text-muted)]">
-          数据驱动 · 仅展示已检测实体
-        </span>
-      </div>
-
+    <section className="shrink-0">
       {agentList.length > 0 ? (
         <div className="grid grid-cols-3 gap-2.5">
           {agentList.map((agent) => (

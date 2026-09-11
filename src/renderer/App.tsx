@@ -1,16 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Watch, Clock3 } from 'lucide-react';
 import { TopBar } from './components/layout/TopBar';
 import { Sidebar, type PulsePage } from './components/layout/Sidebar';
 import { ContentArea } from './components/layout/ContentArea';
-import { BandConnectionCard } from './components/pulse/BandConnectionCard';
-import { AgentSection } from './components/pulse/AgentSection';
+import { OverviewPage } from './components/pulse/OverviewPage';
 import { BandManagementPage } from './components/pulse/BandManagementPage';
 import { SettingsPage } from './components/pulse/SettingsPage';
-import { SetupWizard, type QuotaVerifyOutcome } from './components/setup';
+import { SetupWizard } from './components/setup';
 import { DiagnosticsScreen } from './components/pulse/DiagnosticsScreen';
 import { MiniBar } from './components/minibar/MiniBar';
 import { useBandConnection } from './hooks/useBandConnection';
+import { useQuotaState } from './hooks/useQuotaState';
 import type { PulseOronboxState } from '../main/services/oronbox-bridge';
 import type { PulseErrorEntry } from '../main/services/error-log';
 
@@ -41,20 +40,12 @@ export const App: React.FC = () => {
   const [showSetup, setShowSetup] = useState<boolean>(false);
   /** 向导打开时落在第几步（0-based）：稍后验证后可回到第 4 步继续 */
   const [setupStartIndex, setSetupStartIndex] = useState<number>(0);
-  /** 额度验证结果：deferred 表示用户选择了稍后验证，**不得**当作已验证 */
-  const [quotaVerify, setQuotaVerify] = useState<QuotaVerifyOutcome | 'unknown'>('unknown');
-  const [configStatus, setConfigStatus] = useState<{ exists: boolean; valid: boolean } | null>(null);
   const [errors, setErrors] = useState<PulseErrorEntry[]>([]);
   const [state, setState] = useState<PulseOronboxState | null>(null);
   // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
   const band = useBandConnection();
-
-  useEffect(() => {
-    if (screen === 'minibar') return;
-    window.pulse?.getDeviceConfigStatus?.().then((st) => {
-      if (st) setConfigStatus(st);
-    });
-  }, [screen, showSetup]);
+  // 额度/会话数据唯一来源：概览页与 TopBar 共用这一份，不再起第二个订阅
+  const { state: quota, updatedAt, refresh } = useQuotaState();
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
     setTheme(newTheme);
@@ -148,73 +139,19 @@ export const App: React.FC = () => {
 
       {/* 右栏：状态顶栏 + 内容区 */}
       <div className="flex-1 min-w-0 flex flex-col gap-2.5 min-h-0">
-        <TopBar />
+        <TopBar state={quota} updatedAt={updatedAt} />
 
         <ContentArea>
           {page === 'overview' && (
-            <div className="space-y-5">
-              {configStatus !== null && !configStatus.exists && (
-                <div className="p-4 rounded-[var(--radius-lg)] bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-[var(--radius-md)] bg-amber-500/20 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
-                      <Watch className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-semibold text-[var(--text-primary)]">
-                        尚未配置小米手环
-                      </h4>
-                      <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                        绑定手环并导入日志后，即可在手环屏幕实时查看 AI 编程助手状态与配额。
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowSetup(true)}
-                    className="px-3.5 py-1.5 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium cursor-pointer transition-colors shadow-sm shrink-0"
-                  >
-                    配置手环
-                  </button>
-                </div>
-              )}
-              {/* 额度验证未完成：明确标注"未验证"，并提供继续验证入口 */}
-              {quotaVerify === 'deferred' && (
-                <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-[var(--border-default)] flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-[var(--radius-md)] bg-[var(--bg-app)] flex items-center justify-center text-[var(--text-muted)] shrink-0">
-                      <Clock3 className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-semibold text-[var(--text-primary)]">
-                        额度验证未完成
-                      </h4>
-                      <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                        你选择了稍后验证，本项不会记录为已验证。可在手环上打开 Pulse 后回到向导第 4 步继续。
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSetupStartIndex(3);
-                      setShowSetup(true);
-                    }}
-                    className="px-3.5 py-1.5 rounded-[var(--radius-md)] border border-[var(--border-strong)] text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors shrink-0"
-                  >
-                    继续验证
-                  </button>
-                </div>
-              )}
-              <BandConnectionCard
-                connectionState={state?.connection.state}
-                rawError={state?.connection.error}
-                onConnect={band.connect}
-                onDisconnect={band.disconnect}
-                busy={band.busy}
-                canConnect={band.canConnect}
-              />
-              {showAgents && <AgentSection />}
-            </div>
+            <OverviewPage
+              quota={quota}
+              onRefresh={refresh}
+              bandDeviceName={band.device?.name ?? null}
+              bandConnected={band.state === 'connected'}
+              bandBusy={band.busy}
+              bandCanConnect={band.canConnect}
+              onConnect={() => void band.connect()}
+            />
           )}
 
           {page === 'band' && (
@@ -251,10 +188,7 @@ export const App: React.FC = () => {
         <SetupWizard
           initialStepIndex={setupStartIndex}
           onClose={() => setShowSetup(false)}
-          onFinish={(outcome) => {
-            if (outcome) setQuotaVerify(outcome);
-            setShowSetup(false);
-          }}
+          onFinish={() => setShowSetup(false)}
         />
       )}
     </div>
