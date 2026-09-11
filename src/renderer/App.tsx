@@ -169,6 +169,7 @@ export const App: React.FC = () => {
               onThemeChange={handleThemeChange}
               showAgents={showAgents}
               onShowAgentsChange={setShowAgents}
+              onOpenDiagnostics={() => handleNavigate('diagnostics')}
             />
           )}
 
@@ -178,6 +179,8 @@ export const App: React.FC = () => {
               connection={state?.connection ?? { state: 'disconnected' }}
               errors={errors}
               onClearErrors={clearErrors}
+              updatedAt={updatedAt}
+              onRefresh={refresh}
             />
           )}
         </ContentArea>
