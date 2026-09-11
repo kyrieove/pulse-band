@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Minus, Square, X } from 'lucide-react';
-import type { MinibarState } from '../../../common/types';
+import { useQuotaState } from '../../hooks/useQuotaState';
 import { SUPPORTED_AGENTS, isAgentDetected } from '../pulse/AgentSection';
 
 export const TopBar: React.FC = () => {
@@ -16,39 +16,15 @@ export const TopBar: React.FC = () => {
     (window as any).pulse?.closeWindow?.();
   };
 
-  // 状态行数据：已检测 Agent 数量 + 最近一次更新时刻（复用 minibar 配额/会话数据源）
-  const [minibarState, setMinibarState] = useState<MinibarState | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  // 状态行数据：已检测 Agent 数量 + 真正取到数据的更新时刻
+  const { state, updatedAt } = useQuotaState();
 
-  useEffect(() => {
-    if (!window.codeisland) return;
-    let alive = true;
-
-    window.codeisland.getMinibarState?.().then((s) => {
-      if (alive && s) {
-        setMinibarState(s);
-        setUpdatedAt(new Date());
-      }
-    });
-
-    const unsub = window.codeisland.onMinibarState?.((s) => {
-      if (alive && s) {
-        setMinibarState(s);
-        setUpdatedAt(new Date());
-      }
-    });
-
-    return () => {
-      alive = false;
-      unsub?.();
-    };
-  }, []);
-
-  const sessions = minibarState?.sessions ?? [];
-  const quotas = minibarState?.quotas;
+  const sessions = state?.sessions ?? [];
+  const quotas = state?.quotas;
   const agentCount = SUPPORTED_AGENTS.filter((k) =>
     isAgentDetected(k, sessions, quotas ? quotas[k] : null)
   ).length;
+  // 从未成功取到数据则显示占位符，绝不退化为当前时刻
   const timeText = updatedAt
     ? updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '--:--';

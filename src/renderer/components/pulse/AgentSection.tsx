@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Bot } from 'lucide-react';
-import type { AgentSession, MinibarState } from '../../../common/types';
+import type { AgentSession } from '../../../common/types';
+import { useQuotaState } from '../../hooks/useQuotaState';
 import type { AgentQuota } from '../../../main/services/quota-collector';
 import {
   AgentCard,
@@ -59,26 +60,8 @@ export function isAgentDetected(
 }
 
 export const AgentSection: React.FC = () => {
-  const [minibarState, setMinibarState] = useState<MinibarState | null>(null);
-
-  // 仅订阅已有的数据来源 (window.codeisland)
-  useEffect(() => {
-    if (!window.codeisland) return;
-    let alive = true;
-
-    window.codeisland.getMinibarState?.().then((s) => {
-      if (alive && s) setMinibarState(s);
-    });
-
-    const unsub = window.codeisland.onMinibarState?.((s) => {
-      if (alive && s) setMinibarState(s);
-    });
-
-    return () => {
-      alive = false;
-      unsub?.();
-    };
-  }, []);
+  // 统一数据源：主窗口下轮询兜底，悬浮窗下订阅生效（见 useQuotaState）
+  const { state: minibarState } = useQuotaState();
 
   const sessions: AgentSession[] = minibarState?.sessions ?? [];
   const quotas = minibarState?.quotas;
