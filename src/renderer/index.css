@@ -26,18 +26,18 @@
   --accent-primary: #4f7d63;
   --accent-soft: #7aa590;
   --accent-wash: #e4eee8;
-  --accent-hover: #0369a1;
+  --accent-hover: #3d6450;
   --anchor-wash: #dfeae3;         /* 锚点卡底 */
   --anchor-text: #2f5344;         /* 锚点卡文字 */
 
   /* 状态与额度色谱 */
-  --status-success: #16a34a;
-  --status-working: #0284c7;
-  --status-warning: #d97706;
-  --status-error: #dc2626;
-  --status-idle: #64748b;
+  --status-success: #4f7d63;
+  --status-working: #7aa590;
+  --status-warning: #b07d3c;
+  --status-error: #a8675f;
+  --status-idle: #93a099;
 
-  --quota-normal: #16a34a;
+  --quota-normal: #4f7d63;
   --quota-warning: #b07d3c;
   --quota-warning-wash: #f0e4d2;
   --quota-warning-text: #9c6f30;
@@ -55,9 +55,9 @@
   --radius-xl: 18px;
   --radius-full: 9999px;
 
-  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.05);
-  --shadow-card: 0 1px 3px 0 rgba(15, 23, 42, 0.08), 0 1px 2px -1px rgba(15, 23, 42, 0.04);
-  --shadow-elevated: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.03);
+  --shadow-sm: 0 1px 2px 0 rgba(38, 49, 44, 0.04);
+  --shadow-card: 0 1px 2px 0 rgba(38, 49, 44, 0.04);
+  --shadow-elevated: 0 10px 24px -6px rgba(38, 49, 44, 0.12);
   --shadow-minibar: 0 8px 24px -4px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 
   /* 字体（修复 body 引用了从未定义的 --pulse-font-sans，此前整个 app 落回默认字体） */
@@ -101,18 +101,18 @@
   --accent-primary: #7aa590;
   --accent-soft: #5d8a72;
   --accent-wash: rgba(122, 165, 144, 0.14);
-  --accent-hover: #0ea5e9;
+  --accent-hover: #8fb8a3;
   --anchor-wash: #26352d;
   --anchor-text: #a8cbb8;
 
   /* 状态与额度色谱 */
-  --status-success: #22c55e;
-  --status-working: #38bdf8;
-  --status-warning: #f59e0b;
-  --status-error: #ef4444;
-  --status-idle: #94a3b8;
+  --status-success: #7aa590;
+  --status-working: #a8cbb8;
+  --status-warning: #d9b579;
+  --status-error: #d19e96;
+  --status-idle: #7a8781;
 
-  --quota-normal: #22c55e;
+  --quota-normal: #7aa590;
   --quota-warning: #d9b579;
   --quota-warning-wash: rgba(203, 162, 99, 0.16);
   --quota-warning-text: #d9b579;
@@ -127,8 +127,8 @@
   --antigravity: #ad95cd;
 
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-  --shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border-default);
-  --shadow-elevated: 0 12px 32px -4px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--border-strong);
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 12px 28px -8px rgba(0, 0, 0, 0.6);
   --shadow-minibar: 0 16px 36px -10px rgba(0, 0, 0, 0.7), inset 0 1px 0.5px rgba(255, 255, 255, 0.2);
 
   /* 历史兼容变量 */
