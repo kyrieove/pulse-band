@@ -23,9 +23,12 @@
 //!
 //! # 验证状态
 //!
-//! [missing · 未做真机验证] 本模块只能靠真机验证：插上手环点「连接手环」，
-//! 看 PC 是否还弹配对框。回调里打印了实际收到的 authentication method，
-//! 如果自动应答没生效，先看日志里那个值是不是 3。
+//! [implemented · 真机验证通过 2026-09-11] 设备 Xiaomi Smart Band 10 9A06 实测：
+//! 点「连接手环」后 PC 端不再弹出配对框，只在手环屏幕确认一次即完成连接。
+//!
+//! 日后若失效，回调里打印了实际收到的 authentication method——
+//! 先看日志里那个值是不是 3（NUMERIC_COMPARISON）。换了手环型号或
+//! Windows 大版本更新后，这条是第一个要重新验证的假设。
 
 #![allow(non_snake_case)]
 
