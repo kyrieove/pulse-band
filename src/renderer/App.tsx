@@ -134,7 +134,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full flex gap-2.5 p-2.5 bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200">
+    <div className="w-full h-full flex gap-2.5 p-0 bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200">
       <Sidebar currentPage={page} onNavigate={handleNavigate} />
 
       {/* 右栏：状态顶栏 + 内容区 */}

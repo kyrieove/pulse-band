@@ -92,7 +92,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       {/* 最后一行：双周期对比 + 数据来源/手环 */}
       <div className="flex-1 min-h-0 grid grid-cols-[1fr_214px] gap-2.5">
         {/* 双周期对比 */}
-        <div className="min-h-0 rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex flex-col">
+        <div className="min-h-[240px] rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex flex-col">
           <div className="shrink-0 flex items-center justify-between">
             <h3 className="text-[12px] font-semibold text-[var(--text-primary)]">双周期对比</h3>
             <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
@@ -108,14 +108,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 flex items-end justify-around gap-3 pt-3">
+          <div className="flex-1 min-h-[170px] min-w-0 flex items-stretch justify-around gap-3 pt-3">
             {detected.map((a) => {
               const q = quotas ? quotas[a] : null;
               const five = toRemainingPercent(q?.pct5h);
               const seven = toRemainingPercent(q?.pct7d);
               return (
                 <div key={a} className="flex-1 min-h-0 flex flex-col items-center gap-2">
-                  <div className="flex-1 min-h-0 flex items-end justify-center gap-2 w-full">
+                  <div className="flex-1 min-h-0 h-full flex items-end justify-center gap-2 w-full">
                     <Bar pct={five} className={fiveBarTone(five)} />
                     <Bar pct={seven} className="bg-[var(--data-secondary)]" />
                   </div>
