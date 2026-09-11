@@ -8,9 +8,11 @@ import { AgentSection } from './components/pulse/AgentSection';
 import { BandManagementPage } from './components/pulse/BandManagementPage';
 import { SettingsPage } from './components/pulse/SettingsPage';
 import { SetupWizard, type QuotaVerifyOutcome } from './components/setup';
+import { DiagnosticsScreen } from './components/pulse/DiagnosticsScreen';
 import { MiniBar } from './components/minibar/MiniBar';
 import { useBandConnection } from './hooks/useBandConnection';
 import type { PulseOronboxState } from '../main/services/oronbox-bridge';
+import type { PulseErrorEntry } from '../main/services/error-log';
 
 type AppScreen = PulsePage | 'minibar';
 
@@ -42,6 +44,7 @@ export const App: React.FC = () => {
   /** 额度验证结果：deferred 表示用户选择了稍后验证，**不得**当作已验证 */
   const [quotaVerify, setQuotaVerify] = useState<QuotaVerifyOutcome | 'unknown'>('unknown');
   const [configStatus, setConfigStatus] = useState<{ exists: boolean; valid: boolean } | null>(null);
+  const [errors, setErrors] = useState<PulseErrorEntry[]>([]);
   const [state, setState] = useState<PulseOronboxState | null>(null);
   // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
   const band = useBandConnection();
@@ -123,31 +126,29 @@ export const App: React.FC = () => {
     setPage(newPage);
   };
 
-  const getSubtitle = () => {
-    switch (page) {
-      case 'overview':
-        return '· 概览';
-      case 'band':
-        return '· 手环管理';
-      case 'settings':
-        return '· 设置';
-      default:
-        return undefined;
-    }
+  // 运行诊断页：进入时拉取主进程错误日志，清空后同步本地态
+  useEffect(() => {
+    if (page !== 'diagnostics') return;
+    let alive = true;
+    window.pulse?.getErrorLog?.().then((d) => {
+      if (alive) setErrors((d as PulseErrorEntry[]) ?? []);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [page, showSetup]);
+
+  const clearErrors = () => {
+    void window.pulse?.clearErrorLog?.().then(() => setErrors([]));
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[var(--bg-app)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200">
-      {/* 顶部自绘标题栏 */}
-      <TopBar
-        subtitle={getSubtitle()}
-        theme={theme}
-        onToggleTheme={() => handleThemeChange(theme === 'light' ? 'dark' : 'light')}
-      />
+    <div className="w-full h-full flex gap-2.5 p-2.5 bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200">
+      <Sidebar currentPage={page} onNavigate={handleNavigate} />
 
-      {/* 主体工作区布局：左侧导航 + 右侧主内容 */}
-      <div className="flex-1 flex overflow-hidden">
-        <Sidebar currentPage={page} onNavigate={handleNavigate} />
+      {/* 右栏：状态顶栏 + 内容区 */}
+      <div className="flex-1 min-w-0 flex flex-col gap-2.5 min-h-0">
+        <TopBar />
 
         <ContentArea>
           {page === 'overview' && (
@@ -231,6 +232,15 @@ export const App: React.FC = () => {
               onThemeChange={handleThemeChange}
               showAgents={showAgents}
               onShowAgentsChange={setShowAgents}
+            />
+          )}
+
+          {page === 'diagnostics' && (
+            <DiagnosticsScreen
+              daemon={state?.daemon ?? null}
+              connection={state?.connection ?? { state: 'disconnected' }}
+              errors={errors}
+              onClearErrors={clearErrors}
             />
           )}
         </ContentArea>
