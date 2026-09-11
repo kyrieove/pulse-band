@@ -14,6 +14,8 @@ const AGENT_LABEL: Record<string, string> = {
 export interface OverviewPageProps {
   /** 由 App 层唯一一份 useQuotaState 注入 */
   quota: MinibarState | null;
+  loading?: boolean;
+  refreshing?: boolean;
   onRefresh: () => void;
   bandDeviceName: string | null;
   bandConnected: boolean;
@@ -42,6 +44,8 @@ const Bar: React.FC<{ pct: number | null; className: string }> = ({ pct, classNa
 
 export const OverviewPage: React.FC<OverviewPageProps> = ({
   quota,
+  loading = false,
+  refreshing = false,
   onRefresh,
   bandDeviceName,
   bandConnected,
@@ -71,14 +75,18 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           <button
             type="button"
             onClick={onRefresh}
-            className="btn-primary rounded-full px-[15px] py-2 text-[12px] font-semibold flex items-center gap-1.5 select-none cursor-pointer transition-colors bg-[var(--accent-primary)]"
+            disabled={refreshing}
+            className="btn-primary rounded-full px-[15px] py-2 text-[12px] font-semibold flex items-center gap-1.5 select-none transition-colors bg-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            立即刷新
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? '刷新中…' : '立即刷新'}
           </button>
           <button
             type="button"
-            className="rounded-full px-[15px] py-2 text-[12px] font-semibold select-none cursor-pointer transition-colors bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] flex items-center gap-1.5"
+            aria-disabled="true"
+            onClick={(e) => e.preventDefault()}
+            title="即将支持"
+            className="rounded-full px-[15px] py-2 text-[12px] font-semibold select-none transition-colors bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] flex items-center gap-1.5 opacity-50 cursor-not-allowed"
           >
             <Download className="w-3.5 h-3.5" />
             导出记录
@@ -87,12 +95,12 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       </div>
 
       {/* 三张统计卡 */}
-      <AgentSection state={quota} />
+      <AgentSection state={quota} loading={loading} />
 
       {/* 最后一行：双周期对比 + 数据来源/手环 */}
       <div className="flex-1 min-h-0 grid grid-cols-[1fr_214px] gap-2.5">
         {/* 双周期对比 */}
-        <div className="min-h-[240px] rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex flex-col">
+        <div className="min-h-[240px] rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
           <div className="shrink-0 flex items-center justify-between">
             <h3 className="text-[12px] font-semibold text-[var(--text-primary)]">双周期对比</h3>
             <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
@@ -133,7 +141,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
         {/* 右列：数据来源 + 手环 */}
         <div className="min-h-0 flex flex-col gap-2.5">
-          <div className="shrink-0 rounded-[14px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3">
+          <div className="shrink-0 rounded-[10px] bg-[var(--bg-subtle)] p-3">
             <h3 className="text-[11px] font-semibold text-[var(--text-primary)] mb-2">数据来源</h3>
             <div className="space-y-2">
               {detected.map((a) => {
@@ -148,8 +156,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                     <span
                       className={`text-[9px] font-bold px-1.5 py-0.5 rounded-[6px] ${
                         auth
-                          ? 'bg-[var(--quota-warning-wash)] text-[var(--quota-warning-text)]'
-                          : 'bg-[var(--accent-wash)] text-[var(--anchor-text)]'
+                          ? 'bg-[var(--accent-wash)] text-[var(--anchor-text)]'
+                          : 'bg-[var(--quota-warning-wash)] text-[var(--quota-warning-text)]'
                       }`}
                     >
                       {auth ? 'Live' : '估算'}
@@ -163,7 +171,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 rounded-[14px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3 flex flex-col">
+          <div className="flex-1 min-h-0 rounded-[10px] bg-[var(--bg-subtle)] p-3 flex flex-col">
             <h3 className="text-[11px] font-semibold text-[var(--text-primary)]">手环</h3>
             <div className="mt-2 text-[12px] text-[var(--text-secondary)] truncate">
               {bandDeviceName ?? '未连接'}

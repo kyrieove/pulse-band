@@ -62,13 +62,42 @@ export function isAgentDetected(
 export interface AgentSectionProps {
   /** 由上层注入共享数据源；不传时回退到自己的一份 useQuotaState */
   state?: MinibarState | null;
+  loading?: boolean;
 }
 
-export const AgentSection: React.FC<AgentSectionProps> = ({ state: propState }) => {
-  // 统一数据源：优先用上层注入的共享 state，否则自己起一份（见 useQuotaState）
-  const hookState = useQuotaState().state;
-  const minibarState = propState ?? hookState;
+/** 骨架卡：结构、行数、间距与 AgentCard 完全一致，各行替换为灰色条，无任何文字或数字 */
+const AgentCardSkeleton: React.FC = () => (
+  <div className="relative p-3.5 rounded-[10px] bg-[var(--bg-subtle)] animate-pulse select-none">
+    {/* 1. 顶部 Logo 与标题行 */}
+    <div className="flex items-center gap-2">
+      <div className="w-[18px] h-[18px] rounded-full bg-[var(--border-strong)] shrink-0" />
+      <div className="h-[14px] w-20 rounded bg-[var(--border-strong)]" />
+    </div>
 
+    {/* 2. 36px 额度数字行 */}
+    <div className="mt-2.5 flex items-baseline leading-none">
+      <div className="h-[36px] w-16 rounded bg-[var(--border-strong)]" />
+    </div>
+
+    {/* 3. 副标题行 */}
+    <div className="mt-1">
+      <div className="h-[12px] w-14 rounded bg-[var(--border-strong)]" />
+    </div>
+
+    {/* 4. 双列元信息行 */}
+    <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1 min-w-0">
+      <div className="h-[11px] w-24 rounded bg-[var(--border-strong)]" />
+      <div className="h-[11px] w-12 rounded bg-[var(--border-strong)]" />
+    </div>
+  </div>
+);
+
+interface AgentSectionContentProps {
+  minibarState: MinibarState | null;
+  isLoading: boolean;
+}
+
+const AgentSectionContent: React.FC<AgentSectionContentProps> = ({ minibarState, isLoading }) => {
   const sessions: AgentSession[] = minibarState?.sessions ?? [];
   const quotas = minibarState?.quotas;
 
@@ -157,9 +186,16 @@ export const AgentSection: React.FC<AgentSectionProps> = ({ state: propState }) 
             <AgentCard key={agent.id} data={agent} anchor={agent.id === anchorId} />
           ))}
         </div>
+      ) : isLoading ? (
+        /* 初始数据拉取中：三个和 AgentCard 完全一致结构的占位卡，避免高度跳变 */
+        <div className="grid grid-cols-3 gap-2.5">
+          {[0, 1, 2].map((i) => (
+            <AgentCardSkeleton key={i} />
+          ))}
+        </div>
       ) : (
         /* 无活跃 Agent 时展示纯净空状态，杜绝任何假数据 */
-        <div className="p-8 rounded-[var(--radius-lg)] bg-[var(--bg-surface)] border border-dashed border-[var(--border-strong)] text-center space-y-3 transition-colors duration-200">
+        <div className="p-8 rounded-[10px] bg-[var(--bg-subtle)] border border-dashed border-[var(--border-strong)] text-center space-y-3 transition-colors duration-200">
           <div className="w-10 h-10 mx-auto rounded-full bg-[var(--bg-app)] border border-[var(--border-default)] flex items-center justify-center text-[var(--text-muted)]">
             <Bot className="w-5 h-5" />
           </div>
@@ -175,4 +211,24 @@ export const AgentSection: React.FC<AgentSectionProps> = ({ state: propState }) 
       )}
     </section>
   );
+};
+
+/** 仅在上层未注入 state 时调用的内部子组件，负责挂载自身 hook */
+const AgentSectionSelfContained: React.FC<{ loading?: boolean }> = ({ loading }) => {
+  const hookResult = useQuotaState();
+  return (
+    <AgentSectionContent
+      minibarState={hookResult.state}
+      isLoading={loading ?? hookResult.loading}
+    />
+  );
+};
+
+export const AgentSection: React.FC<AgentSectionProps> = ({ state: propState, loading: propLoading }) => {
+  // 收到 state prop（哪怕值是 null）就直接渲染，不调 hook
+  if (propState !== undefined) {
+    return <AgentSectionContent minibarState={propState} isLoading={propLoading ?? false} />;
+  }
+  // 未收到 state prop（undefined）时才渲染内部子组件，由它调用 hook 再渲染
+  return <AgentSectionSelfContained loading={propLoading} />;
 };

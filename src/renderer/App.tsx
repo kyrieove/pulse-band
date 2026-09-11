@@ -45,7 +45,7 @@ export const App: React.FC = () => {
   // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
   const band = useBandConnection();
   // 额度/会话数据唯一来源：概览页与 TopBar 共用这一份，不再起第二个订阅
-  const { state: quota, updatedAt, refresh } = useQuotaState();
+  const { state: quota, updatedAt, loading, refreshing, refresh } = useQuotaState();
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
     setTheme(newTheme);
@@ -134,17 +134,19 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full flex gap-2.5 p-0 bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200">
+    <div className="w-full h-full flex bg-[var(--bg-surface)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200">
       <Sidebar currentPage={page} onNavigate={handleNavigate} />
 
       {/* 右栏：状态顶栏 + 内容区 */}
-      <div className="flex-1 min-w-0 flex flex-col gap-2.5 min-h-0">
+      <div className="flex-1 min-w-0 flex flex-col min-h-0">
         <TopBar state={quota} updatedAt={updatedAt} />
 
         <ContentArea>
           {page === 'overview' && (
             <OverviewPage
               quota={quota}
+              loading={loading}
+              refreshing={refreshing}
               onRefresh={refresh}
               bandDeviceName={band.device?.name ?? null}
               bandConnected={band.state === 'connected'}

@@ -14,6 +14,10 @@ export interface UseQuotaStateResult {
   state: MinibarState | null;
   /** 真正拿到数据的时刻；从未成功取到过则为 null（绝不退化为挂载时刻） */
   updatedAt: Date | null;
+  /** 是否处于初始加载中（首次 pull 结束前为 true，无论成败） */
+  loading: boolean;
+  /** 是否处于手动刷新进行中（只在 refresh() 调用期间为 true） */
+  refreshing: boolean;
   /** 手动触发一次取数（“立即刷新”按钮用） */
   refresh: () => Promise<void>;
 }
@@ -21,13 +25,21 @@ export interface UseQuotaStateResult {
 export function useQuotaState(): UseQuotaStateResult {
   const [state, setState] = useState<MinibarState | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const ciRef = useRef<typeof window.codeisland>(window.codeisland);
 
   const pull = useCallback(async () => {
-    // 页面不可见时跳过，避免后台空转
-    if (document.visibilityState === 'hidden') return;
+    // 页面不可见时跳过，避免后台空转，但仍需落地 loading 状态避免悬挂
+    if (document.visibilityState === 'hidden') {
+      setLoading(false);
+      return;
+    }
     const ci = ciRef.current;
-    if (!ci) return;
+    if (!ci) {
+      setLoading(false);
+      return;
+    }
     try {
       const s = await ci.getMinibarState?.();
       if (s) {
@@ -36,12 +48,26 @@ export function useQuotaState(): UseQuotaStateResult {
       }
     } catch {
       // 拉取异常时保留上一份数据，不报错、不伪造
+    } finally {
+      setLoading(false);
     }
   }, []);
 
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await pull();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [pull]);
+
   useEffect(() => {
     const ci = ciRef.current;
-    if (!ci) return;
+    if (!ci) {
+      setLoading(false);
+      return;
+    }
     let alive = true;
 
     void pull();
@@ -69,5 +95,5 @@ export function useQuotaState(): UseQuotaStateResult {
     };
   }, [pull]);
 
-  return { state, updatedAt, refresh: pull };
+  return { state, updatedAt, loading, refreshing, refresh };
 }

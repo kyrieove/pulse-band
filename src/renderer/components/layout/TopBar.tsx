@@ -27,16 +27,29 @@ export const TopBar: React.FC<TopBarProps> = ({ state, updatedAt }) => {
   const agentCount = SUPPORTED_AGENTS.filter((k) =>
     isAgentDetected(k, sessions, quotas ? quotas[k] : null)
   ).length;
+
+  const dotClass =
+    updatedAt !== null && agentCount > 0
+      ? 'bg-[var(--status-success)]'
+      : 'bg-[var(--status-idle)]';
+
+  const statusTitle =
+    updatedAt === null
+      ? '未获取到额度数据'
+      : `${agentCount} 个 Agent 已接入`;
+
   // 从未成功取到数据则显示占位符，绝不退化为当前时刻
   const timeText = updatedAt
     ? updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '--:--';
 
   return (
-    <header className="h-[44px] shrink-0 rounded-[18px] bg-[var(--bg-surface)] flex items-center justify-between px-4 select-none transition-colors duration-200">
+    <header
+      className="titlebar-drag h-[44px] shrink-0 bg-[var(--bg-surface)] border-b border-[var(--border-strong)] flex items-center justify-between px-4 select-none transition-colors duration-200"
+    >
       {/* 左侧状态行：接入 Agent 数 + 更新时刻 */}
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-success)] shrink-0" />
+      <div className="flex items-center gap-2 min-w-0" title={statusTitle}>
+        <span className={`w-1.5 h-1.5 rounded-full ${dotClass} shrink-0`} />
         <span className="text-[12px] font-medium text-[var(--text-secondary)]">
           {agentCount} 个 Agent 已接入
         </span>

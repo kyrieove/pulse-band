@@ -166,15 +166,23 @@ test('7. 边缘标签与侧栏锚点双向转换无损守恒 (左右吸附均零
 test('8. 中文重置时间解析: 层次分明，缺失时间标为未知，绝不伪造', async () => {
   const { parseResetTimeInfo } = await import('../src/renderer/components/pulse/agent-quota-utils.ts');
 
+  // parseResetTimeInfo 会按「当前时间 + 相对倒计时」判断今天/明天，必须注入固定时刻，
+  // 否则断言结果随跑测试的钟点变化（傍晚跑就会跨天变成「明天」）。
+  const NOON = new Date(2026, 0, 15, 12, 0, 0);
+
   // 1. 包含相对倒计时和绝对钟点：`51min · 18:40`
-  const t1 = parseResetTimeInfo('51min · 18:40');
+  const t1 = parseResetTimeInfo('51min · 18:40', NOON);
   assert.equal(t1.countdownText, '51 分钟后重置');
   assert.equal(t1.absoluteTimeText, '重置于 今天 18:40');
 
   // 2. 包含复合倒计时：`4h 22min · 20:15`
-  const t2 = parseResetTimeInfo('4h 22min · 20:15');
+  const t2 = parseResetTimeInfo('4h 22min · 20:15', NOON);
   assert.equal(t2.countdownText, '4 小时 22 分钟后重置');
   assert.equal(t2.absoluteTimeText, '重置于 今天 20:15');
+
+  // 2b. 相对倒计时跨过午夜时必须标「明天」，不能再无条件写「今天」
+  const t2b = parseResetTimeInfo('5h · 0:11', new Date(2026, 0, 15, 19, 11, 0));
+  assert.equal(t2b.absoluteTimeText, '重置于 明天 0:11');
 
   // 3. 仅有天和小时：`2d 7h`（无绝对钟点）
   const t3 = parseResetTimeInfo('2d 7h');

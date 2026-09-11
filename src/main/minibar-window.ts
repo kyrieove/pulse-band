@@ -332,6 +332,36 @@ export function setWindowExpanded(expand: boolean): void {
   pushState();
 }
 
+/**
+ * 重置 MiniBar 悬浮窗至主显示器右侧停靠位置（默认位置）。
+ */
+export function resetMiniBarDock(): void {
+  if (!minibarWin || minibarWin.isDestroyed()) return;
+
+  try {
+    const primary = screen.getPrimaryDisplay();
+    currentDockSide = 'right';
+    currentDisplayMode = 'full';
+    isExpanded = false;
+
+    const width = COLLAPSED_WIDTH;
+    const height = COLLAPSED_HEIGHT;
+    const newX = Math.round(primary.workArea.x + primary.workArea.width - width);
+    const newY = Math.round(primary.workArea.y + Math.max(24, (primary.workArea.height - height) / 2));
+
+    isProgrammaticMove = true;
+    minibarWin.setBounds({ x: newX, y: newY, width, height });
+    setTimeout(() => {
+      isProgrammaticMove = false;
+    }, 60);
+
+    saveBounds();
+    pushState();
+  } catch {
+    // ignore
+  }
+}
+
 export function createMiniBarWindow(
   sessionManager: SessionManager,
   statusServer: StatusServer
@@ -551,6 +581,12 @@ export function createMiniBarWindow(
     saveVisibility(show);
     notifyVisibility();
     return isMiniBarVisible();
+  });
+
+  ipcMain.removeHandler('minibar:reset-dock');
+  ipcMain.handle('minibar:reset-dock', () => {
+    resetMiniBarDock();
+    return true;
   });
 
   return minibarWin;

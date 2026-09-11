@@ -72,7 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate }) => 
   const miniBar = useMiniBar();
 
   return (
-    <aside className="w-[172px] shrink-0 self-stretch bg-[var(--bg-surface)] rounded-[18px] p-[14px_10px] flex flex-col select-none transition-colors duration-200">
+    <aside className="w-[172px] shrink-0 self-stretch bg-[var(--bg-canvas)] border-r border-[var(--border-strong)] p-[14px_10px] flex flex-col select-none transition-colors duration-200">
       {/* 顶部品牌 logo */}
       <div className="flex items-center gap-2.5 px-2 pb-4">
         <div className="w-7 h-7 rounded-full bg-[var(--accent-wash)] flex items-center justify-center text-[var(--anchor-text)]">
@@ -92,6 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate }) => 
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-[var(--anchor-text)]">独立于手环显示</span>
             <Toggle
+              label="额度悬浮窗"
               checked={miniBar.visible}
               disabled={miniBar.busy}
               onChange={(v) => void miniBar.setVisible(v)}

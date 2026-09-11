@@ -128,10 +128,10 @@ export const DiagnosticsScreen: React.FC<DiagnosticsScreenProps> = ({
 
       <div className="flex-1 min-h-0 grid grid-cols-[1fr_258px] gap-2.5 overflow-y-auto custom-scrollbar">
         {/* 左：链路检查 */}
-        <section className="min-h-0 rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex flex-col">
+        <section className="min-h-0 rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
           <h3 className="shrink-0 text-[13px] font-semibold text-[var(--text-primary)]">链路检查</h3>
           {!report && !reportError && !runningDiagnostics && (
-            <div className="py-8 text-center text-[11px] text-[var(--text-muted)] border border-dashed border-[var(--border-strong)] rounded-[14px] mt-3">
+            <div className="py-8 text-center text-[11px] text-[var(--text-muted)] border border-dashed border-[var(--border-strong)] rounded-[10px] mt-3">
               点击「一键完整诊断」检查 Pulse、Hook、手环连接与应用、额度数据。
             </div>
           )}
@@ -178,7 +178,7 @@ export const DiagnosticsScreen: React.FC<DiagnosticsScreenProps> = ({
 
         {/* 右列：设备守护进程 + 异常日志 */}
         <div className="min-h-0 flex flex-col gap-2.5">
-          <section className="shrink-0 rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5">
+          <section className="shrink-0 rounded-[10px] bg-[var(--bg-subtle)] p-3.5">
             <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">设备守护进程</h3>
             <div className="mt-2 space-y-1">
               <KV label="进程 PID" value={daemon?.pid != null ? String(daemon.pid) : '--'} />
@@ -193,7 +193,7 @@ export const DiagnosticsScreen: React.FC<DiagnosticsScreenProps> = ({
             )}
           </section>
 
-          <section className="flex-1 min-h-0 rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex flex-col">
+          <section className="flex-1 min-h-0 rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
             <div className="shrink-0 flex items-center justify-between">
               <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">异常日志</h3>
               {errors.length > 0 && (

@@ -38,7 +38,10 @@ export interface FormattedResetInfo {
  * 将采集器回传的 resetText 格式化为层级清晰的中文可读倒计时与绝对时间。
  * 严格基于可信数据，无可靠绝对钟点时不随意猜测，缺失数据时标为未知。
  */
-export function parseResetTimeInfo(rawText: string | null | undefined): FormattedResetInfo {
+export function parseResetTimeInfo(
+  rawText: string | null | undefined,
+  now: Date = new Date()
+): FormattedResetInfo {
   if (!rawText || rawText.trim() === '' || rawText === '--') {
     return {
       countdownText: '重置时间未知',
@@ -60,6 +63,9 @@ export function parseResetTimeInfo(rawText: string | null | undefined): Formatte
   const timePart = parts[1];
 
   let countdownText = '重置时间未知';
+  let hasRelative = false;
+  let relativeMs = 0;
+
   if (relativePart) {
     let cn = relativePart
       .replace(/(\d+)\s*d/g, '$1 天 ')
@@ -70,11 +76,57 @@ export function parseResetTimeInfo(rawText: string | null | undefined): Formatte
     if (cn) {
       countdownText = `${cn}后重置`;
     }
+
+    let days = 0;
+    let hours = 0;
+    let minutes = 0;
+    const dMatch = relativePart.match(/(\d+)\s*d/);
+    if (dMatch) days = parseInt(dMatch[1], 10);
+    const hMatch = relativePart.match(/(\d+)\s*h/);
+    if (hMatch) hours = parseInt(hMatch[1], 10);
+    const mMatch = relativePart.match(/(\d+)\s*min/);
+    if (mMatch) minutes = parseInt(mMatch[1], 10);
+
+    if (dMatch || hMatch || mMatch) {
+      hasRelative = true;
+      relativeMs = ((days * 24 + hours) * 60 + minutes) * 60 * 1000;
+    }
   }
 
   let absoluteTimeText: string | null = null;
   if (timePart && /^\d{1,2}:\d{2}$/.test(timePart)) {
-    absoluteTimeText = `重置于 今天 ${timePart}`;
+    let dayLabel = '今天';
+
+    if (hasRelative) {
+      const targetTime = new Date(now.getTime() + relativeMs);
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const startOfTargetDay = new Date(
+        targetTime.getFullYear(),
+        targetTime.getMonth(),
+        targetTime.getDate()
+      ).getTime();
+      const diffDays = Math.round((startOfTargetDay - startOfToday) / (24 * 60 * 60 * 1000));
+      if (diffDays === 1) {
+        dayLabel = '明天';
+      } else if (diffDays > 1) {
+        dayLabel = `${diffDays} 天后`;
+      } else {
+        dayLabel = '今天';
+      }
+    } else {
+      // 相对部分缺失或解析不出时，退化规则：目标钟点 < 当前钟点 则判为明天。
+      // 按「当天第几分钟」比较，避免同一小时内已过去的分钟被误判成今天。
+      const [targetHour, targetMinute] = timePart.split(':').map((v) => parseInt(v, 10));
+      const targetMinuteOfDay = targetHour * 60 + targetMinute;
+      const nowMinuteOfDay = now.getHours() * 60 + now.getMinutes();
+      if (targetMinuteOfDay < nowMinuteOfDay) {
+        dayLabel = '明天';
+      } else {
+        dayLabel = '今天';
+      }
+    }
+
+    absoluteTimeText = `重置于 ${dayLabel} ${timePart}`;
   }
 
   return {

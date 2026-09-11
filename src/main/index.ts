@@ -86,7 +86,8 @@ function createWindow() {
     minHeight: 520,
     center: true,
     frame: false,
-    backgroundColor: '#0d0f14',
+    // 必须和 index.css 的 --bg-canvas 浅色值保持一致（#e9ece9），避免冷启动先刷一帧旧深色残留
+    backgroundColor: '#e9ece9',
     show: false,
     webPreferences: {
       preload: preloadPath,

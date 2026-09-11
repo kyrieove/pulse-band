@@ -96,7 +96,7 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
       {/* 下排双卡 */}
       <div className="flex-1 min-h-0 grid grid-cols-2 gap-2.5">
         {/* 内置手环应用 */}
-        <section className="min-h-0 rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex flex-col">
+        <section className="min-h-0 rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
           <div className="flex items-center gap-2.5">
             <Package className="w-4 h-4 text-[var(--text-muted)]" />
             <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">内置手环应用</h3>
@@ -131,7 +131,7 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
         </section>
 
         {/* 推送其他快应用 */}
-        <section className="min-h-0 rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex flex-col">
+        <section className="min-h-0 rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
           <div className="flex items-center gap-2.5">
             <Upload className="w-4 h-4 text-[var(--text-muted)]" />
             <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">推送其他快应用</h3>

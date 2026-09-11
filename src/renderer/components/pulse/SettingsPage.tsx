@@ -12,12 +12,21 @@ export interface SettingsPageProps {
   onOpenDiagnostics?: () => void;
 }
 
-const KV: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <div className="flex items-center justify-between py-1">
-    <span className="text-[11px] text-[var(--text-muted)]">{label}</span>
-    <span className="text-[11px] font-mono text-[var(--text-primary)] tabular-nums">{value}</span>
-  </div>
-);
+const KV: React.FC<{ label: string; value: string }> = ({ label, value }) => {
+  const isUpcoming = value === '即将支持';
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="text-[11px] text-[var(--text-muted)]">{label}</span>
+      <span
+        className={`text-[11px] tabular-nums ${
+          isUpcoming ? 'text-[var(--text-muted)]' : 'font-mono text-[var(--text-primary)]'
+        }`}
+      >
+        {value}
+      </span>
+    </div>
+  );
+};
 
 const ThemeOption: React.FC<{
   mode: 'light' | 'dark';
@@ -98,7 +107,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         {/* 左列三卡 */}
         <div className="min-h-0 flex flex-col gap-2.5">
           {/* 主题外观 */}
-          <section className="rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5">
+          <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5">
             <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">主题外观</h3>
             <p className="text-[11px] text-[var(--text-muted)] mt-0.5">选择浅色或深色界面</p>
             <div className="mt-3 grid grid-cols-2 gap-2.5">
@@ -108,7 +117,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </section>
 
           {/* 显示 */}
-          <section className="rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 space-y-3">
+          <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 space-y-3">
             <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">显示</h3>
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -117,7 +126,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   在桌面悬浮监控条与概览工作区呈现已识别 Agent 的实时运行状态与额度
                 </div>
               </div>
-              <Toggle checked={showAgents} onChange={(v) => onShowAgentsChange?.(v)} />
+              <Toggle label="显示 Agent 状态" checked={showAgents} onChange={(v) => onShowAgentsChange?.(v)} />
             </div>
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -126,13 +135,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   独立于手环，未配置手环也可使用；关闭只隐藏窗口，不影响额度采集
                 </div>
               </div>
-              <Toggle checked={miniBar.visible} disabled={miniBar.busy} onChange={(v) => void miniBar.setVisible(v)} />
+              <Toggle label="显示额度悬浮窗" checked={miniBar.visible} disabled={miniBar.busy} onChange={(v) => void miniBar.setVisible(v)} />
             </div>
             {miniBar.error && <p className="text-[11px] text-[var(--status-error)]">{miniBar.error}</p>}
           </section>
 
           {/* 运行诊断 */}
-          <section className="rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex items-center gap-3">
+          <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex items-center gap-3">
             <div className="w-8 h-8 rounded-[10px] bg-[var(--accent-wash)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
               <Activity className="w-4 h-4" />
             </div>
@@ -151,18 +160,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
 
         {/* 右列：版本与环境 */}
-        <section className="min-h-0 rounded-[18px] bg-[var(--bg-surface)] border border-[var(--border-default)] p-3.5 flex flex-col">
+        <section className="min-h-0 rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
           <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">版本与环境</h3>
           <div className="mt-2 space-y-1">
             <KV label="应用版本" value={appVersion} />
-            <KV label="设备核心" value="--" />
-            <KV label="运行模式" value="--" />
-            <KV label="平台" value="--" />
-            <KV label="Electron" value="--" />
+            <KV label="设备核心" value="即将支持" />
+            <KV label="运行模式" value="即将支持" />
+            <KV label="平台" value="即将支持" />
+            <KV label="Electron" value="即将支持" />
           </div>
           <button
             type="button"
-            className="btn-primary mt-4 w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)]"
+            aria-disabled="true"
+            onClick={(e) => e.preventDefault()}
+            title="即将支持"
+            className="btn-primary mt-4 w-full rounded-full py-2 text-[12px] font-semibold select-none bg-[var(--accent-primary)] opacity-50 cursor-not-allowed"
           >
             检查更新
           </button>

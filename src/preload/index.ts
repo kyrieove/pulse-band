@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('codeisland', {
     return () => ipcRenderer.removeListener('minibar:window-blur', subscription);
   },
   closeMinibar: () => ipcRenderer.send('minibar:close'),
+  resetMiniBarDock: () => ipcRenderer.invoke('minibar:reset-dock'),
 });
 
 // Pulse 2.0 新界面 API（阶段 4）。OronBox 状态由主进程消毒后推送，authkey 永不出主进程。

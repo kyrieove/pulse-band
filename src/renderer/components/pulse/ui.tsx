@@ -30,17 +30,18 @@ export function StatusBadge(props: { tone: 'success' | 'warning' | 'danger' | 'n
 }
 
 /** 开关（main.html 的 toggle-label/dot 结构） */
-export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
   return (
     <label className={`relative inline-flex items-center ${props.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
       <input
         type="checkbox"
-        className="sr-only"
+        className="sr-only peer"
         checked={props.checked}
         disabled={props.disabled}
+        aria-label={props.label}
         onChange={(e) => props.onChange(e.target.checked)}
       />
-      <div className={`w-8 h-4 rounded-full transition-colors ${props.checked ? 'bg-[var(--accent-primary)]' : 'bg-[var(--border-strong)]'}`}>
+      <div className={`w-8 h-4 rounded-full transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-[var(--accent-primary)] peer-focus-visible:outline-offset-2 ${props.checked ? 'bg-[var(--accent-primary)]' : 'bg-[var(--border-strong)]'}`}>
         <div
           className={`w-4 h-4 bg-white rounded-full shadow transition-transform ${props.checked ? 'translate-x-4' : 'translate-x-0'}`}
         />

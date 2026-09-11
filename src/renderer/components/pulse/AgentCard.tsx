@@ -61,10 +61,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data, anchor = false }) =>
 
   return (
     <div
-      className={`relative p-3.5 rounded-[18px] border transition-colors duration-200 select-none ${
-        anchor
-          ? 'bg-[var(--anchor-wash)] border-transparent'
-          : 'bg-[var(--bg-surface)] border-[var(--border-default)]'
+      className={`relative p-3.5 rounded-[10px] transition-colors duration-200 select-none ${
+        anchor ? 'bg-[var(--anchor-wash)]' : 'bg-[var(--bg-subtle)]'
       }`}
     >
       {/* 顶部只保留品牌与名称；不再放无动作的外链箭头 */}
