@@ -48,8 +48,6 @@ let minibarWin: BrowserWindow | null = null;
 let isExpanded = false;
 let currentDockSide: DockSide = 'right';
 let currentDisplayMode: import('../common/types').MinibarDisplayMode = 'full';
-let isProgrammaticMove = false;
-let moveDebounceTimer: NodeJS.Timeout | null = null;
 let updateTimer: NodeJS.Timeout | null = null;
 let sessionManagerRef: SessionManager | null = null;
 let statusServerRef: StatusServer | null = null;
@@ -194,21 +192,14 @@ function handleDragSettle(): void {
   const targetW = horizontal ? H_COLLAPSED_WIDTH : COLLAPSED_WIDTH;
   const targetH = horizontal ? H_COLLAPSED_HEIGHT : COLLAPSED_HEIGHT;
 
-  isProgrammaticMove = true;
-  try {
-    minibarWin.setBounds({
-      x: dock.x,
-      y: dock.y,
-      width: targetW,
-      height: targetH,
-    });
-    saveBounds();
-    pushState();
-  } finally {
-    setTimeout(() => {
-      isProgrammaticMove = false;
-    }, 60);
-  }
+  minibarWin.setBounds({
+    x: dock.x,
+    y: dock.y,
+    width: targetW,
+    height: targetH,
+  });
+  saveBounds();
+  pushState();
 }
 
 function startDragFollow(): void {
@@ -221,7 +212,6 @@ function startDragFollow(): void {
     dx: cursor.x - bounds.x,
     dy: cursor.y - bounds.y,
   };
-  isProgrammaticMove = true;
 
   dragFollowTimer = setInterval(() => {
     if (!minibarWin || minibarWin.isDestroyed()) return;
@@ -239,7 +229,6 @@ function stopDragFollowAndSettle(): void {
     dragFollowTimer = null;
   }
   if (!minibarWin || minibarWin.isDestroyed()) return;
-  isProgrammaticMove = false;
   handleDragSettle();
 }
 
@@ -257,11 +246,7 @@ export function setDisplayMode(mode: import('../common/types').MinibarDisplayMod
     isExpanded = false;
     const tabBounds = calculateEdgeTabBounds(anchor, currentDockSide);
     currentDisplayMode = 'edge-tab';
-    isProgrammaticMove = true;
     minibarWin.setBounds(tabBounds);
-    setTimeout(() => {
-      isProgrammaticMove = false;
-    }, 60);
     saveBounds();
     pushState();
   } else {
@@ -276,16 +261,12 @@ export function setDisplayMode(mode: import('../common/types').MinibarDisplayMod
     );
     currentDisplayMode = 'full';
     isExpanded = false;
-    isProgrammaticMove = true;
     minibarWin.setBounds({
       x: fixed.x,
       y: fixed.y,
       width: horizontal ? H_COLLAPSED_WIDTH : COLLAPSED_WIDTH,
       height: horizontal ? H_COLLAPSED_HEIGHT : COLLAPSED_HEIGHT,
     });
-    setTimeout(() => {
-      isProgrammaticMove = false;
-    }, 60);
     saveBounds();
     pushState();
   }
@@ -297,11 +278,7 @@ function ensureOnScreen(): void {
   const b = minibarWin.getBounds();
   const fixed = clampToVisibleArea(b.x, b.y, b.width, b.height, isExpanded);
   if (fixed.x !== b.x || fixed.y !== b.y) {
-    isProgrammaticMove = true;
     minibarWin.setPosition(fixed.x, fixed.y);
-    setTimeout(() => {
-      isProgrammaticMove = false;
-    }, 60);
     saveBounds();
   }
 }
@@ -359,11 +336,7 @@ export function setWindowExpanded(expand: boolean): void {
   isExpanded = expand;
   const newBounds = calculateWindowBoundsForState(anchor, isExpanded, currentDockSide);
 
-  isProgrammaticMove = true;
   minibarWin.setBounds(newBounds);
-  setTimeout(() => {
-    isProgrammaticMove = false;
-  }, 60);
   pushState();
 }
 
@@ -384,12 +357,7 @@ export function resetMiniBarDock(): void {
     const newX = Math.round(primary.workArea.x + primary.workArea.width - width);
     const newY = Math.round(primary.workArea.y + Math.max(24, (primary.workArea.height - height) / 2));
 
-    isProgrammaticMove = true;
     minibarWin.setBounds({ x: newX, y: newY, width, height });
-    setTimeout(() => {
-      isProgrammaticMove = false;
-    }, 60);
-
     saveBounds();
     pushState();
   } catch {
@@ -459,7 +427,6 @@ export function createMiniBarWindow(
     defaultY = fixed.y;
   }
 
-  isProgrammaticMove = true;
   minibarWin = new BrowserWindow({
     width: initW,
     height: initH,
@@ -499,9 +466,6 @@ export function createMiniBarWindow(
     pushState();
     if (loadVisibility()) minibarWin?.show();
     notifyVisibility();
-    setTimeout(() => {
-      isProgrammaticMove = false;
-    }, 200);
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -548,7 +512,6 @@ export function createMiniBarWindow(
       const currentBounds = minibarWin.getBounds();
       const anchor = calculateCollapsedBounds(currentBounds, true, currentDockSide);
       const horizontal = isHorizontalDock(currentDockSide);
-      isProgrammaticMove = true;
       minibarWin.setBounds({
         x: anchor.x,
         y: anchor.y,
@@ -633,10 +596,6 @@ export function createMiniBarWindow(
 }
 
 export function disposeMiniBar(): void {
-  if (moveDebounceTimer) {
-    clearTimeout(moveDebounceTimer);
-    moveDebounceTimer = null;
-  }
   if (updateTimer) {
     clearInterval(updateTimer);
     updateTimer = null;
