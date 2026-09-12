@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Activity, Sun, Moon } from 'lucide-react';
 import { Toggle } from './ui';
+import { AgentLogo } from './AgentLogo';
 import { useMiniBar } from '../../hooks/useMiniBar';
 import type { MiniBarDockPreference } from '../../../main/services/minibar-preference';
 import type { HookStatus } from '../../../main/services/claude-hook-install';
+import type { MinibarState } from '../../../common/types';
 import { APP_VERSION } from '../../../common/app-info';
 
 export interface SettingsPageProps {
@@ -124,6 +126,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [hookStatus, setHookStatus] = useState<HookStatus | null>(null);
   const [hookBusy, setHookBusy] = useState(false);
   const [hookNotice, setHookNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  // 各 agent 会话检测方式（main 进程判定，随 minibar:get-state 下发）
+  const [sessionDetection, setSessionDetection] = useState<MinibarState['sessionDetection'] | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -133,6 +137,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         if (alive && s) setHookStatus(s);
       })
       .catch(() => {});
+    const refreshDetection = () => {
+      window.codeisland
+        ?.getMinibarState?.()
+        .then((s) => {
+          if (alive && s?.sessionDetection) setSessionDetection(s.sessionDetection);
+        })
+        .catch(() => {});
+    };
+    refreshDetection();
     return () => {
       alive = false;
     };
@@ -151,6 +164,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           settingsPath: res.settingsPath ?? hookStatus?.settingsPath ?? '',
           command: res.command ?? null,
         });
+        // hook 装卸会改变 Claude 的检测方式，重拉一次让行内状态跟上
+        void window.codeisland
+          ?.getMinibarState?.()
+          .then((s) => {
+            if (s?.sessionDetection) setSessionDetection(s.sessionDetection);
+          })
+          .catch(() => {});
         setHookNotice(
           !installed
             ? { ok: true, text: '已安装 · 请重开 Claude Code 会话后生效' }
@@ -247,35 +267,66 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
           </section>
 
-          {/* Agent 接入 */}
+          {/* 检测 Agent 接入：三行各自呈现会话识别方式与局限，「修复」只给修得了的 Claude */}
           <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5">
-            <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">Agent 接入</h3>
+            <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">检测 Agent 接入</h3>
             <p className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-relaxed">
-              未安装 Claude Code hook 时，会话开始与结束依赖转录轮询识别，思考中的状态会明显滞后
+              各 agent 会话状态的识别方式与局限；只有 Claude 的轮询问题可以通过安装 hook 修复
             </p>
-            <div className="mt-2.5 flex items-center justify-between gap-3">
+            <div className="mt-2.5 space-y-2">
               <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    hookStatus?.installed ? 'bg-[var(--status-success)]' : 'bg-[var(--status-idle)]'
-                  }`}
-                />
-                <span className="text-[12px] font-medium text-[var(--text-primary)] truncate">
-                  {hookStatus === null
-                    ? 'Claude Code hook 检测中…'
-                    : hookStatus.installed
-                    ? 'Claude Code hook 已安装'
-                    : 'Claude Code hook 未安装'}
+                <AgentLogo agent="claude" size={16} />
+                <span className="text-[12px] font-medium text-[var(--text-primary)] shrink-0">Claude Code</span>
+                <span className="text-[11px] truncate flex-1">
+                  {hookStatus?.installed ? (
+                    <>
+                      <span className="text-[var(--status-success)] font-medium">实时</span>
+                      <span className="text-[var(--text-muted)]"> · hook 已安装，提交即识别</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[var(--text-secondary)] font-medium">轮询</span>
+                      <span className="text-[var(--text-muted)]"> · 未安装 hook，思考中的状态检测不到</span>
+                    </>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void toggleHook()}
+                  disabled={hookBusy || hookStatus === null}
+                  title={hookStatus?.installed ? '卸载 Claude Code hook' : '安装 Claude Code hook'}
+                  className="rounded-full px-[13px] py-1.5 text-[11px] font-semibold select-none cursor-pointer transition-colors bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {hookStatus?.installed ? '卸载' : '修复'}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 min-w-0">
+                <AgentLogo agent="codex" size={16} />
+                <span className="text-[12px] font-medium text-[var(--text-primary)] shrink-0">Codex</span>
+                <span className="text-[11px] truncate flex-1">
+                  {sessionDetection?.codex === 'event' ? (
+                    <>
+                      <span className="text-[var(--status-success)] font-medium">实时</span>
+                      <span className="text-[var(--text-muted)]"> · 监听会话文件写入，另有 500ms 兜底轮询</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[var(--text-secondary)] font-medium">轮询</span>
+                      <span className="text-[var(--text-muted)]"> · 文件监听不可用，退化为 500ms 轮询</span>
+                    </>
+                  )}
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => void toggleHook()}
-                disabled={hookBusy || hookStatus === null}
-                className="rounded-full px-[13px] py-1.5 text-[11px] font-semibold select-none cursor-pointer transition-colors bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {hookStatus?.installed ? '卸载' : '安装'}
-              </button>
+
+              <div className="flex items-center gap-2 min-w-0">
+                <AgentLogo agent="antigravity" size={16} />
+                <span className="text-[12px] font-medium text-[var(--text-primary)] shrink-0">Antigravity</span>
+                <span className="text-[11px] truncate flex-1" title="会话状态每 5 秒查询一次；这是对语言服务器请求频率的权衡，不是故障">
+                  <span className="text-[var(--text-secondary)] font-medium">轮询</span>
+                  <span className="text-[var(--text-muted)]"> · 每 5 秒查询一次会话状态，这是设计权衡不是故障</span>
+                </span>
+              </div>
             </div>
             {hookNotice && (
               <p
