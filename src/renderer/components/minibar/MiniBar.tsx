@@ -899,7 +899,8 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
         role="region"
         aria-label="Agent 额度微型边缘标签"
       >
-        <div
+        <button
+          type="button"
           className={`${isHorizontal ? 'w-[48px] h-[18px]' : 'w-[18px] h-[48px]'} rounded-[9px] flex items-center justify-center cursor-pointer transition-all duration-150 group border border-white/10 ${
             isHorizontal
               ? dockAtTop ? 'rounded-b-none border-b-0' : 'rounded-t-none border-t-0'
@@ -912,6 +913,13 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
           title={isHorizontal
             ? dockAtTop ? '点击恢复侧栏 (向下展开)' : '点击恢复侧栏 (向上展开)'
             : isLeftDock ? '点击恢复侧栏 (向右展开)' : '点击恢复侧栏 (向左展开)'}
+          onKeyDown={(e) => {
+            // 原生 button 的 click 只由左键触发，键盘 Enter/Space 在这里显式接住
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleRestoreFromEdgeTab();
+            }
+          }}
           onPointerDown={(e) => {
             tabDragRef.current = { startX: e.screenX, startY: e.screenY, moved: false };
           }}
@@ -943,7 +951,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
           ) : (
             <ChevronLeft className="w-3.5 h-3.5 text-white/50 group-hover:text-white transition-colors" />
           )}
-        </div>
+        </button>
       </div>
     );
   }
@@ -1015,15 +1023,14 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
             const strokeOffset = ringDashOffset(remaining5h);
 
             return (
-              <div
+              <button
+                type="button"
                 key={cfg.key}
                 className="no-drag absolute top-0 bottom-0 flex items-center justify-center cursor-pointer group transition-all"
                 style={{ left: `${cfg.centerY - 20}px` }}
                 onMouseEnter={() => handleMouseEnterAgent(cfg.key)}
                 onMouseLeave={handleMouseLeaveAgent}
                 onClick={() => handleRingClick(cfg.key)}
-                role="button"
-                tabIndex={0}
                 aria-label={`${cfg.name} 5小时剩余额度 ${remaining5h != null ? `${remaining5h}%` : '无数据'}`}
               >
                 <div
@@ -1068,7 +1075,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
                     {remaining5h != null ? `${remaining5h}%` : '—'}
                   </span>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -1180,15 +1187,14 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
               const strokeOffset = ringDashOffset(remaining5h);
 
               return (
-                <div
+                <button
+                  type="button"
                   key={cfg.key}
                   className="no-drag absolute left-0 right-0 flex flex-col items-center cursor-pointer group transition-all"
                   style={{ top: `${cfg.centerY - 20}px` }}
                   onMouseEnter={() => handleMouseEnterAgent(cfg.key)}
                   onMouseLeave={handleMouseLeaveAgent}
                   onClick={() => handleRingClick(cfg.key)}
-                  role="button"
-                  tabIndex={0}
                   aria-label={`${cfg.name} 5小时剩余额度 ${remaining5h != null ? `${remaining5h}%` : '无数据'}`}
                 >
                   {/* 46 DIP 额度圆环主体（无发灰阴影） */}
@@ -1240,7 +1246,7 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
                       {remaining5h != null ? `${remaining5h}%` : '—'}
                     </span>
                   </div>
-                </div>
+                </button>
               );
             })}
         </div>
