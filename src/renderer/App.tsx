@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { TopBar } from './components/layout/TopBar';
+import { StatusBar } from './components/layout/StatusBar';
 import { Sidebar, type PulsePage } from './components/layout/Sidebar';
 import { ContentArea } from './components/layout/ContentArea';
 import { OverviewPage } from './components/pulse/OverviewPage';
@@ -139,7 +140,7 @@ export const App: React.FC = () => {
 
       {/* 右栏：状态顶栏 + 内容区 */}
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
-        <TopBar state={quota} updatedAt={updatedAt} lastError={lastError} />
+        <TopBar />
 
         <ContentArea>
           {page === 'overview' && (
@@ -186,6 +187,7 @@ export const App: React.FC = () => {
             />
           )}
         </ContentArea>
+        <StatusBar state={quota} updatedAt={updatedAt} lastError={lastError} />
       </div>
 
       {/* 配置手环向导 (默认隐藏，仅在触发「配置手环」时展示) */}
