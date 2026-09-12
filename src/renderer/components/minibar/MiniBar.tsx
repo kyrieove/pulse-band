@@ -803,17 +803,17 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
         收起为边缘标签
       </button>
 
-      {/* 1.5 重置到右侧 */}
+      {/* 1.5 重置悬浮窗位置（回到主显示器右侧默认停靠） */}
       <button
         type="button"
         onClick={() => {
           closeContextMenu();
-          (window.codeisland as any)?.resetMiniBarDock?.();
+          void window.codeisland?.resetMiniBarDock?.();
         }}
         className="w-full px-3 py-1.5 text-[12px] text-left text-white/90 hover:bg-white/10 flex items-center gap-2 transition-colors cursor-pointer"
       >
         <ChevronRight className="w-3.5 h-3.5" />
-        重置到右侧
+        重置悬浮窗位置
       </button>
 
       {/* 2. 固定/取消固定当前详情卡 */}

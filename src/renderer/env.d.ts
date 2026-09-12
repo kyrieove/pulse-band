@@ -98,6 +98,8 @@ export interface CodeislandBridge {
   notifyMenuOpen?: () => void;
   onWindowBlur?: (cb: () => void) => () => void;
   closeMinibar: () => void;
+  /** 重置悬浮窗停靠位置到主显示器右侧（minibar:reset-dock） */
+  resetMiniBarDock: () => Promise<boolean>;
 }
 
 /** Pulse 2.0 主进程桥（阶段 4） */
