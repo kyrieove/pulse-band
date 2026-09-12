@@ -1,7 +1,12 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { X, Pin, PinOff, Sliders, EyeOff, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import type { MinibarState, AgentKind, AgentSession } from '../../../common/types';
-import { toRemainingPercent, parseResetTimeInfo, resolveQuotaTrustState } from '../pulse/agent-quota-utils';
+import {
+  toRemainingPercent,
+  parseResetTimeInfo,
+  resolveQuotaTrustState,
+  type AgentSessionStatus,
+} from '../pulse/agent-quota-utils';
 import { AgentLogo } from '../pulse/AgentLogo';
 
 export interface MiniBarProps {
@@ -145,6 +150,40 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
       unsub?.();
     };
   }, []);
+
+  // 为当前选定 Agent 保留最近一次的明确结果（待命 / 思考中 / 执行中 / 已完成 / 出错），防止完成后立刻塌缩成待命
+  const [lastResults, setLastResults] = useState<
+    Partial<Record<AgentKind, { status: AgentSessionStatus; toolName?: string; error?: string }>>
+  >({});
+
+  useEffect(() => {
+    const rawSessions = state?.sessions;
+    if (!rawSessions || rawSessions.length === 0) return;
+    setLastResults((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const s of rawSessions) {
+        if (!s.agent) continue;
+        if (s.status === 'thinking' || s.status === 'running_tool' || s.status === 'completed' || s.status === 'error') {
+          const current = next[s.agent];
+          if (
+            !current ||
+            current.status !== s.status ||
+            current.toolName !== s.currentTool?.name ||
+            current.error !== s.error
+          ) {
+            next[s.agent] = {
+              status: s.status as AgentSessionStatus,
+              toolName: s.currentTool?.name,
+              error: s.error,
+            };
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [state?.sessions]);
 
   // 向主进程同步物理窗口展开/收缩几何
   const syncExpandedToMain = useCallback((expanded: boolean) => {
@@ -470,9 +509,38 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
   const activeKeyForCard = mountedAgent;
   const currentAgentConfig = AGENT_CONFIGS.find((c) => c.key === activeKeyForCard);
   const currentQuota = quotas && activeKeyForCard ? quotas[activeKeyForCard] : null;
-  const currentActiveSession = sessions.find(
-    (s) => s.agent === activeKeyForCard && (s.status === 'running_tool' || s.status === 'thinking')
+
+  // 查找当前选定 Agent 的活跃会话或最近会话
+  const agentSessions = sessions.filter((s) => s.agent === activeKeyForCard);
+  const activeSession = agentSessions.find(
+    (s) => s.status === 'running_tool' || s.status === 'thinking'
   );
+  const endedSession = agentSessions.find(
+    (s) => s.status === 'completed' || s.status === 'error'
+  );
+
+  const currentDisplayStatus = (() => {
+    if (!activeKeyForCard) return { status: 'idle' as AgentSessionStatus };
+    if (activeSession) {
+      return {
+        status: activeSession.status as AgentSessionStatus,
+        toolName: activeSession.currentTool?.name,
+        error: activeSession.error,
+      };
+    }
+    if (endedSession) {
+      return {
+        status: endedSession.status as AgentSessionStatus,
+        toolName: endedSession.currentTool?.name,
+        error: endedSession.error,
+      };
+    }
+    const cached = lastResults[activeKeyForCard];
+    if (cached) {
+      return cached;
+    }
+    return { status: 'idle' as AgentSessionStatus };
+  })();
 
   // =========================================================================
   // 共用渲染片段：详情卡内容体与右键菜单（竖向/横向复用同一套 markup）
@@ -661,21 +729,54 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
 
       {/* 3. 卡片底部：极简状态胶囊 (Status Pill) */}
       <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
-        {currentActiveSession ? (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-[10px] font-normal text-emerald-300 border border-emerald-500/20 max-w-[220px] truncate">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-            <span className="truncate">
-              {currentActiveSession.status === 'running_tool'
-                ? `Running: ${currentActiveSession.currentTool?.name ?? 'tool'}`
-                : 'Thinking...'}
+        {(() => {
+          const { status, toolName, error } = currentDisplayStatus;
+
+          if (status === 'running_tool') {
+            return (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-[10px] font-normal text-emerald-300 border border-emerald-500/20 max-w-[220px] truncate">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <span className="truncate">
+                  {toolName ? `执行中: ${toolName}` : '执行中'}
+                </span>
+              </span>
+            );
+          }
+
+          if (status === 'thinking') {
+            return (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-sky-500/10 text-[10px] font-normal text-sky-300 border border-sky-500/20 max-w-[220px] truncate">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse shrink-0" />
+                <span className="truncate">思考中</span>
+              </span>
+            );
+          }
+
+          if (status === 'completed') {
+            return (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-sky-500/10 text-[10px] font-normal text-sky-300 border border-sky-500/20 max-w-[220px] truncate">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                <span className="truncate">已完成</span>
+              </span>
+            );
+          }
+
+          if (status === 'error') {
+            return (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-500/10 text-[10px] font-normal text-rose-300 border border-rose-500/20 max-w-[220px] truncate">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+                <span className="truncate">{error ? `出错: ${error}` : '出错'}</span>
+              </span>
+            );
+          }
+
+          return (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/[0.04] text-[10px] font-normal text-white/45 border border-white/[0.06]">
+              <span className="w-1.5 h-1.5 rounded-full bg-white/20 shrink-0" />
+              待命
             </span>
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/[0.04] text-[10px] font-normal text-white/45 border border-white/[0.06]">
-            <span className="w-1.5 h-1.5 rounded-full bg-white/20" />
-            Ready
-          </span>
-        )}
+          );
+        })()}
         <span className="text-[9.5px] font-normal text-white/25">Pulse 2.0</span>
       </div>
     </>
