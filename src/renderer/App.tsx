@@ -4,6 +4,7 @@ import { Sidebar, type PulsePage } from './components/layout/Sidebar';
 import { ContentArea } from './components/layout/ContentArea';
 import { OverviewPage } from './components/pulse/OverviewPage';
 import { BandManagementPage } from './components/pulse/BandManagementPage';
+import { WatchFacePage } from './components/pulse/WatchFacePage';
 import { SettingsPage } from './components/pulse/SettingsPage';
 import { SetupWizard } from './components/setup';
 import { DiagnosticsScreen } from './components/pulse/DiagnosticsScreen';
@@ -19,7 +20,7 @@ const getInitialScreen = (): AppScreen => {
   try {
     const s = new URLSearchParams(window.location.search).get('screen');
     if (s === 'minibar') return 'minibar';
-    if (s === 'band' || s === 'settings') return s;
+    if (s === 'band' || s === 'settings' || s === 'watchface') return s;
     return 'overview';
   } catch {
     return 'overview';
@@ -163,6 +164,8 @@ export const App: React.FC = () => {
               }}
             />
           )}
+
+          {page === 'watchface' && <WatchFacePage onNavigate={handleNavigate} />}
 
           {page === 'settings' && (
             <SettingsPage

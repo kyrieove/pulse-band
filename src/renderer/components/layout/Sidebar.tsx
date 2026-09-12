@@ -1,10 +1,11 @@
 import React from 'react';
 import { LayoutDashboard, Watch, Settings2, Activity } from 'lucide-react';
+import { Palette } from 'lucide-react';
 import { Toggle } from '../pulse/ui';
 import { useMiniBar } from '../../hooks/useMiniBar';
 import { APP_NAME, APP_VERSION } from '../../../common/app-info';
 
-export type PulsePage = 'overview' | 'band' | 'settings' | 'diagnostics';
+export type PulsePage = 'overview' | 'band' | 'watchface' | 'settings' | 'diagnostics';
 
 export interface SidebarProps {
   currentPage: PulsePage;
@@ -20,6 +21,7 @@ interface NavItem {
 const MENU_ITEMS: NavItem[] = [
   { id: 'overview', label: '概览', icon: LayoutDashboard },
   { id: 'band', label: '手环', icon: Watch },
+  { id: 'watchface', label: '表盘', icon: Palette },
 ];
 
 const REGULAR_ITEMS: NavItem[] = [
