@@ -3,6 +3,7 @@ import { Check, Activity, Sun, Moon } from 'lucide-react';
 import { Toggle } from './ui';
 import { useMiniBar } from '../../hooks/useMiniBar';
 import type { MiniBarDockPreference } from '../../../main/services/minibar-preference';
+import type { HookStatus } from '../../../main/services/claude-hook-install';
 import { APP_VERSION } from '../../../common/app-info';
 
 export interface SettingsPageProps {
@@ -119,6 +120,52 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       });
   };
 
+  // Claude Code hook 状态：挂载读真实值，安装/卸载后用返回的同一份状态刷新
+  const [hookStatus, setHookStatus] = useState<HookStatus | null>(null);
+  const [hookBusy, setHookBusy] = useState(false);
+  const [hookNotice, setHookNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    window.pulse
+      ?.getHookStatus?.()
+      .then((s) => {
+        if (alive && s) setHookStatus(s);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const toggleHook = async () => {
+    if (!window.pulse || hookBusy) return;
+    const installed = hookStatus?.installed === true;
+    setHookBusy(true);
+    setHookNotice(null);
+    try {
+      const res = installed ? await window.pulse.uninstallHook() : await window.pulse.installHook();
+      if (res && res.ok) {
+        setHookStatus({
+          installed: res.installed ?? !installed,
+          settingsPath: res.settingsPath ?? hookStatus?.settingsPath ?? '',
+          command: res.command ?? null,
+        });
+        setHookNotice(
+          !installed
+            ? { ok: true, text: '已安装 · 请重开 Claude Code 会话后生效' }
+            : { ok: true, text: '已卸载' }
+        );
+      } else {
+        setHookNotice({ ok: false, text: `操作失败：${res?.error ?? '未知错误'}` });
+      }
+    } catch (err: any) {
+      setHookNotice({ ok: false, text: `操作失败：${err?.message ?? '未知错误'}` });
+    } finally {
+      setHookBusy(false);
+    }
+  };
+
   useEffect(() => {
     let alive = true;
     window.pulse?.getAppVersion?.().then((v) => {
@@ -198,6 +245,47 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </p>
               )}
             </div>
+          </section>
+
+          {/* Agent 接入 */}
+          <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5">
+            <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">Agent 接入</h3>
+            <p className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-relaxed">
+              未安装 Claude Code hook 时，会话开始与结束依赖转录轮询识别，思考中的状态会明显滞后
+            </p>
+            <div className="mt-2.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    hookStatus?.installed ? 'bg-[var(--status-success)]' : 'bg-[var(--status-idle)]'
+                  }`}
+                />
+                <span className="text-[12px] font-medium text-[var(--text-primary)] truncate">
+                  {hookStatus === null
+                    ? 'Claude Code hook 检测中…'
+                    : hookStatus.installed
+                    ? 'Claude Code hook 已安装'
+                    : 'Claude Code hook 未安装'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void toggleHook()}
+                disabled={hookBusy || hookStatus === null}
+                className="rounded-full px-[13px] py-1.5 text-[11px] font-semibold select-none cursor-pointer transition-colors bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {hookStatus?.installed ? '卸载' : '安装'}
+              </button>
+            </div>
+            {hookNotice && (
+              <p
+                className={`mt-1.5 text-[11px] ${
+                  hookNotice.ok ? 'text-[var(--status-success)]' : 'text-[var(--status-error)]'
+                }`}
+              >
+                {hookNotice.text}
+              </p>
+            )}
           </section>
 
           {/* 运行诊断 */}
