@@ -471,6 +471,11 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
     // 普通鼠标悬停绝不抢占焦点
     window.codeisland?.notifyMenuOpen?.();
 
+    if (isEdgeTab) {
+      // 边缘标签模式（物理窗口 18×48 / 48×18）由主进程直接弹出原生菜单，不受窗口物理边界裁剪
+      return;
+    }
+
     const rect = containerRef.current?.getBoundingClientRect();
     const relX = rect ? e.clientX - rect.left : e.clientX;
     const relY = rect ? e.clientY - rect.top : e.clientY;
@@ -939,38 +944,6 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
             <ChevronLeft className="w-3.5 h-3.5 text-white/50 group-hover:text-white transition-colors" />
           )}
         </div>
-
-        {/* 边缘标签模式下的微型右键菜单 */}
-        {contextMenu.visible && (
-          <div
-            className="fixed z-[100] w-[130px] rounded-xl py-1 text-white border border-white/10 shadow-2xl minibar-context-menu"
-            style={{
-              left: `${Math.max(4, contextMenu.x)}px`,
-              top: `${Math.max(4, contextMenu.y)}px`,
-              backgroundColor: 'rgba(18, 18, 20, 0.96)',
-              backdropFilter: 'blur(20px)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={handleRestoreFromEdgeTab}
-              className="w-full px-2.5 py-1.5 text-[12px] text-left text-white/90 hover:bg-white/10 flex items-center gap-2 transition-colors cursor-pointer"
-            >
-              {isLeftDock ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
-              恢复完整侧栏
-            </button>
-            <div className="h-[1px] bg-white/[0.08] my-1" />
-            <button
-              type="button"
-              onClick={handleClose}
-              className="w-full px-2.5 py-1.5 text-[12px] text-left text-rose-300/90 hover:bg-rose-500/15 flex items-center gap-2 transition-colors cursor-pointer"
-            >
-              <EyeOff className="w-3 h-3 text-rose-400" />
-              完全隐藏悬浮窗
-            </button>
-          </div>
-        )}
       </div>
     );
   }

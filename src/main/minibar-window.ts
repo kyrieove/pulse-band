@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { SessionManager } from './services/session-manager';
@@ -539,6 +539,34 @@ export function createMiniBarWindow(
     if (!minibarWin || minibarWin.isDestroyed()) return;
     // 仅在显式右键打开菜单时给予窗口前台焦点，确保点击外部产生原生 blur 自动关闭菜单
     minibarWin.focus();
+
+    if (currentDisplayMode === 'edge-tab') {
+      const isHorizontal = isHorizontalDock(currentDockSide);
+      const menu = Menu.buildFromTemplate([
+        {
+          label: isHorizontal ? '恢复完整胶囊条' : '恢复完整侧栏',
+          click: () => {
+            setDisplayMode('full');
+          },
+        },
+        {
+          label: '重置悬浮窗位置',
+          click: () => {
+            resetMiniBarDock();
+          },
+        },
+        { type: 'separator' },
+        {
+          label: '完全隐藏悬浮窗',
+          click: () => {
+            minibarWin?.hide();
+            saveVisibility(false);
+            notifyVisibility();
+          },
+        },
+      ]);
+      menu.popup({ window: minibarWin });
+    }
   });
 
   ipcMain.removeAllListeners('minibar:close');
