@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Minus, Square, X } from 'lucide-react';
+import { pickRandomPoem } from './poems';
 
 export interface TopBarProps {}
 
 export const TopBar: React.FC<TopBarProps> = () => {
+  // 每次窗口挂载取一句，不轮播：顶栏是窗口框架，持续变化的文字会跟内容区抢注意力
+  const [poem] = useState(pickRandomPoem);
+
   const handleMinimize = () => {
     (window as any).pulse?.minimizeWindow?.();
   };
@@ -18,8 +22,16 @@ export const TopBar: React.FC<TopBarProps> = () => {
 
   return (
     <header
-      className="titlebar-drag h-[32px] shrink-0 bg-[var(--bg-surface)] border-b border-[var(--border-strong)] flex items-center justify-end px-3 select-none transition-colors duration-200"
+      className="titlebar-drag h-[32px] shrink-0 bg-[var(--bg-surface)] border-b border-[var(--border-strong)] flex items-center justify-between px-3 select-none transition-colors duration-200"
     >
+      {/* 左侧诗句：留在拖拽区内（不加 no-drag），点它照样能拖窗口 */}
+      <div className="flex items-baseline gap-2 min-w-0 overflow-hidden" title={poem.from}>
+        <span className="text-[11px] text-[var(--text-muted)] truncate">{poem.text}</span>
+        <span className="text-[10px] text-[var(--text-muted)] opacity-60 shrink-0">
+          {poem.from}
+        </span>
+      </div>
+
       {/* 右侧窗口三联按钮 */}
       <div className="flex items-center no-drag">
         <button
