@@ -4,7 +4,12 @@ import fs from 'node:fs';
 import type { SessionManager } from './services/session-manager';
 import type { StatusServer } from './services/status-server';
 import type { MinibarState } from '../common/types';
-import { resolveMiniBarVisibility } from './services/minibar-preference';
+import {
+  resolveMiniBarVisibility,
+  resolveMiniBarDockPreference,
+  resolveInitialDockSide,
+  type MiniBarDockPreference,
+} from './services/minibar-preference';
 import {
   COLLAPSED_WIDTH,
   COLLAPSED_HEIGHT,
@@ -60,20 +65,50 @@ export function getPreferenceFile(): string {
   return path.join(app.getPath('userData'), 'minibar-preferences.json');
 }
 
-function loadVisibility(): boolean {
-  try {
-    return resolveMiniBarVisibility(JSON.parse(fs.readFileSync(getPreferenceFile(), 'utf-8'))?.visible);
-  } catch {
-    return true;
-  }
+interface MiniBarPreferences {
+  visible?: boolean;
+  dockPreference?: MiniBarDockPreference;
 }
 
-function saveVisibility(visible: boolean): void {
+function loadPreferences(): MiniBarPreferences {
   try {
-    fs.writeFileSync(getPreferenceFile(), JSON.stringify({ visible }), 'utf-8');
+    const p = getPreferenceFile();
+    if (fs.existsSync(p)) {
+      return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function savePreferences(patch: Partial<MiniBarPreferences>): void {
+  try {
+    const current = loadPreferences();
+    const next: MiniBarPreferences = {
+      ...current,
+      ...patch,
+    };
+    fs.writeFileSync(getPreferenceFile(), JSON.stringify(next, null, 2), 'utf-8');
   } catch {
     /* 界面状态持久化失败不影响悬浮窗本身 */
   }
+}
+
+function loadVisibility(): boolean {
+  return resolveMiniBarVisibility(loadPreferences().visible);
+}
+
+function saveVisibility(visible: boolean): void {
+  savePreferences({ visible });
+}
+
+export function loadDockPreference(): MiniBarDockPreference {
+  return resolveMiniBarDockPreference(loadPreferences().dockPreference);
+}
+
+export function saveDockPreference(dockPreference: MiniBarDockPreference): void {
+  savePreferences({ dockPreference });
 }
 
 function loadSavedBounds(): {
@@ -381,9 +416,12 @@ export function createMiniBarWindow(
   const saved = loadSavedBounds();
   let defaultX = saved.x;
   let defaultY = saved.y;
-  if (saved.dockSide) {
-    currentDockSide = saved.dockSide;
-  }
+
+  // 启动停靠偏好：控制启动时的停靠行为（'remember' | 'left' | 'right'）
+  // 保证首次与每次启动均停靠在屏幕侧边（left 或 right），绝不以横向条（top/bottom）启动
+  const dockPref = loadDockPreference();
+  currentDockSide = resolveInitialDockSide(dockPref, saved.dockSide);
+
   if (saved.displayMode) {
     currentDisplayMode = saved.displayMode;
   }
@@ -405,7 +443,9 @@ export function createMiniBarWindow(
         defaultX = Math.round(primary.workArea.x + Math.max(24, (primary.workArea.width - initW) / 2));
         defaultY = primary.workArea.y + Math.max(24, Math.round((primary.workArea.height - initH) * 0.25));
       } else {
-        defaultX = Math.round(primary.workArea.x + primary.workArea.width - initW);
+        defaultX = currentDockSide === 'left'
+          ? primary.workArea.x
+          : Math.round(primary.workArea.x + primary.workArea.width - initW);
         defaultY = Math.round(primary.workArea.y + Math.max(24, (primary.workArea.height - initH) / 2));
       }
     } catch {
@@ -413,12 +453,13 @@ export function createMiniBarWindow(
       defaultY = 100;
     }
   } else {
-    // 上次保存的位置若换了显示器，夹回可见工作区
+    // 上次保存的位置若换了显示器或停靠边变更，夹回可见工作区
     const fixed = clampToVisibleArea(defaultX, defaultY, initW, initH, false);
     defaultX = fixed.x;
     defaultY = fixed.y;
   }
 
+  isProgrammaticMove = true;
   minibarWin = new BrowserWindow({
     width: initW,
     height: initH,
@@ -439,22 +480,6 @@ export function createMiniBarWindow(
     },
   });
 
-  // 跨屏拖拽与释放检测（加速至 90ms 防抖，松手即迅速吸附）
-  const onWindowDragMove = () => {
-    if (!minibarWin || minibarWin.isDestroyed() || isProgrammaticMove) return;
-
-    if (moveDebounceTimer) {
-      clearTimeout(moveDebounceTimer);
-    }
-    moveDebounceTimer = setTimeout(() => {
-      moveDebounceTimer = null;
-      handleDragSettle();
-    }, 90);
-  };
-
-  minibarWin.on('moved', onWindowDragMove);
-  minibarWin.on('move', onWindowDragMove);
-
   minibarWin.on('close', (e) => {
     e.preventDefault();
     minibarWin?.hide();
@@ -474,6 +499,9 @@ export function createMiniBarWindow(
     pushState();
     if (loadVisibility()) minibarWin?.show();
     notifyVisibility();
+    setTimeout(() => {
+      isProgrammaticMove = false;
+    }, 200);
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -589,10 +617,26 @@ export function createMiniBarWindow(
     return true;
   });
 
+  ipcMain.removeHandler('minibar:get-dock-preference');
+  ipcMain.handle('minibar:get-dock-preference', () => {
+    return loadDockPreference();
+  });
+
+  ipcMain.removeHandler('minibar:set-dock-preference');
+  ipcMain.handle('minibar:set-dock-preference', (_, pref: unknown) => {
+    const valid = resolveMiniBarDockPreference(pref);
+    saveDockPreference(valid);
+    return valid;
+  });
+
   return minibarWin;
 }
 
 export function disposeMiniBar(): void {
+  if (moveDebounceTimer) {
+    clearTimeout(moveDebounceTimer);
+    moveDebounceTimer = null;
+  }
   if (updateTimer) {
     clearInterval(updateTimer);
     updateTimer = null;
