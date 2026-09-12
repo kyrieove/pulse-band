@@ -32,13 +32,30 @@ const fiveBarTone = (remaining: number | null) => {
   return 'bg-[var(--quota-critical)]';
 };
 
-/** 柱：pct 为 null 时整根铺 --hatch，否则按百分比高度 */
-const Bar: React.FC<{ pct: number | null; className: string }> = ({ pct, className }) => (
-  <div className="w-[26px] rounded-full overflow-hidden bg-[var(--bg-subtle)] self-end h-full flex items-end">
-    <div
-      className={`w-full rounded-full ${className}`}
-      style={pct == null ? { height: '100%', background: 'var(--hatch)' } : { height: `${pct}%` }}
-    />
+/** 柱顶百分比数字按同一套剩余阈值着色（两个周期同口径），未提供为弱化 -- */
+const barValueTone = (remaining: number | null) => {
+  if (remaining == null) return 'text-[var(--text-muted)]';
+  if (remaining > 40) return 'text-[var(--text-primary)]';
+  if (remaining >= 20) return 'text-[var(--quota-warning)]';
+  return 'text-[var(--quota-critical)]';
+};
+
+/** 柱：数值钉在列顶一行便于横向比较；pct 为 null 时整根铺 --hatch 并显示 -- */
+const Bar: React.FC<{ pct: number | null; className: string; valueClassName: string }> = ({
+  pct,
+  className,
+  valueClassName,
+}) => (
+  <div className="w-[26px] self-stretch flex flex-col items-center justify-end gap-1">
+    <span className={`shrink-0 text-[11px] font-normal tabular-nums leading-none ${valueClassName}`}>
+      {pct != null ? `${pct}%` : '--'}
+    </span>
+    <div className="w-full flex-1 min-h-0 rounded-full overflow-hidden bg-[var(--bg-subtle)] flex items-end">
+      <div
+        className={`w-full rounded-full ${className}`}
+        style={pct == null ? { height: '100%', background: 'var(--hatch)' } : { height: `${pct}%` }}
+      />
+    </div>
   </div>
 );
 
@@ -101,37 +118,37 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       <div className="flex-1 min-h-0 grid grid-cols-[1fr_214px] gap-2.5">
         {/* 双周期对比 */}
         <div className="min-h-[240px] rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
-          <div className="shrink-0 flex items-center justify-between">
+          <div className="shrink-0 flex items-center justify-between gap-2">
             <h3 className="text-[12px] font-semibold text-[var(--text-primary)]">双周期对比</h3>
-            <div className="flex items-center gap-2.5 text-[10px] text-[var(--text-muted)] flex-wrap justify-end">
+            {/* 图例先分系列，再在下方注明数值与 5h 柱色的阈值含义 */}
+            <div className="flex items-center gap-2.5 text-[11px] font-normal text-[var(--text-muted)] flex-wrap justify-end">
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-[var(--accent-primary)]" />5h 正常
+                <span className="w-2 h-2 rounded-full bg-[var(--accent-primary)]" />5 小时剩余
               </span>
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-[var(--quota-warning)]" />偏低
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-[var(--quota-critical)]" />濒危
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-[var(--data-secondary)]" />7 天
+                <span className="w-2 h-2 rounded-full bg-[var(--data-secondary)]" />7 天剩余
               </span>
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full" style={{ background: 'var(--hatch)' }} />未提供
               </span>
             </div>
           </div>
+          <p className="shrink-0 text-[11px] font-normal text-[var(--text-muted)] mt-2">
+            百分比均为剩余额度；数值与 5 小时柱色按阈值变色：
+            <span className="text-[var(--quota-warning)]">20–40% 偏低</span> ·{' '}
+            <span className="text-[var(--quota-critical)]">＜20% 濒危</span>
+          </p>
 
-          <div className="flex-1 min-h-[170px] min-w-0 flex items-stretch justify-around gap-3 pt-3">
+          <div className="flex-1 min-h-[170px] min-w-0 flex items-stretch justify-around gap-3 pt-2">
             {detected.map((a) => {
               const q = quotas ? quotas[a] : null;
               const five = toRemainingPercent(q?.pct5h);
               const seven = toRemainingPercent(q?.pct7d);
               return (
                 <div key={a} className="flex-1 min-h-0 flex flex-col items-center gap-2">
-                  <div className="flex-1 min-h-0 h-full flex items-end justify-center gap-2 w-full">
-                    <Bar pct={five} className={fiveBarTone(five)} />
-                    <Bar pct={seven} className="bg-[var(--data-secondary)]" />
+                  <div className="flex-1 min-h-0 h-full flex items-stretch justify-center gap-2 w-full">
+                    <Bar pct={five} className={fiveBarTone(five)} valueClassName={barValueTone(five)} />
+                    <Bar pct={seven} className="bg-[var(--data-secondary)]" valueClassName={barValueTone(seven)} />
                   </div>
                   <span className="shrink-0 text-[12px] font-normal text-[var(--text-secondary)] truncate">
                     {AGENT_LABEL[a] ?? a}
@@ -177,16 +194,28 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 rounded-[10px] bg-[var(--bg-subtle)] p-3 flex flex-col">
+          {/* 手环卡压缩为内容高度：不再撑满右列，消除名称与按钮之间的无信息空白 */}
+          <div className="shrink-0 rounded-[10px] bg-[var(--bg-subtle)] p-3">
             <h3 className="text-[12px] font-semibold text-[var(--text-primary)]">手环</h3>
-            <div className="mt-2 text-[12px] text-[var(--text-secondary)] truncate">
-              {bandDeviceName ?? '未连接'}
+            <div className="mt-2 flex items-center gap-1.5 min-w-0">
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  bandConnected ? 'bg-[var(--status-success)]' : 'bg-[var(--status-idle)]'
+                }`}
+              />
+              <span className="text-[12px] font-normal text-[var(--text-secondary)] truncate">
+                {bandDeviceName
+                  ? `${bandDeviceName} · ${bandConnected ? '已连接' : '未连接'}`
+                  : bandConnected
+                  ? '已连接'
+                  : '未连接'}
+              </span>
             </div>
             <button
               type="button"
               onClick={onConnect}
               disabled={!bandCanConnect}
-              className="btn-primary mt-auto w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary mt-3 w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {bandBusy ? '连接中…' : bandConnected ? '已连接' : '连接手环'}
             </button>
