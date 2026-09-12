@@ -116,4 +116,10 @@ contextBridge.exposeInMainWorld('pulse', {
       return () => ipcRenderer.removeListener('pulse:app-install-progress', subscription);
     },
   },
+  // 表盘管理（device.watchface.*，已真机验证的本地表盘列表 / 切换 / 安装）
+  watchface: {
+    list: () => ipcRenderer.invoke('pulse:watchface:list'),
+    set: (id: string) => ipcRenderer.invoke('pulse:watchface:set', { id }),
+    install: (filePath: string) => ipcRenderer.invoke('pulse:watchface:install', { filePath }),
+  },
 });

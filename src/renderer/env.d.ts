@@ -19,6 +19,28 @@ import type {
 } from '../common/types';
 import type { PulseOronboxState, PulseErrorEntry } from '../main/services/oronbox-bridge';
 import type { DiagnosticReport } from '../main/services/diagnostics';
+import type {
+  WatchfaceItem,
+  WatchfaceListData,
+  WatchfaceSetData,
+  WatchfaceInstallData,
+  WatchfaceResult,
+} from '../main/services/watchface-service';
+
+export type {
+  WatchfaceItem,
+  WatchfaceListData,
+  WatchfaceSetData,
+  WatchfaceInstallData,
+  WatchfaceResult,
+};
+
+/** 表盘管理桥接（device.watchface.*：本地表盘列表 / 切换 / 本地文件安装） */
+export interface WatchfaceBridge {
+  list: () => Promise<WatchfaceResult<WatchfaceListData>>;
+  set: (id: string) => Promise<WatchfaceResult<WatchfaceSetData>>;
+  install: (filePath: string) => Promise<WatchfaceResult<WatchfaceInstallData>>;
+}
 
 /** 快应用原生安装 RPC 桥接接口（阶段契约：仅定义类型边界） */
 export interface AppInstallBridge {
@@ -171,6 +193,8 @@ export interface PulseBridge {
   }>;
   /** 快应用原生安装协议契约（阶段契约：仅暴露类型边界，未绑定真实 IPC） */
   appInstall?: AppInstallBridge;
+  /** 表盘管理（device.watchface.*，主进程统一错误形状） */
+  watchface?: WatchfaceBridge;
 }
 
 declare global {
