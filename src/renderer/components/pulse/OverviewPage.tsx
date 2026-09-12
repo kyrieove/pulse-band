@@ -133,14 +133,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                     <Bar pct={five} className={fiveBarTone(five)} />
                     <Bar pct={seven} className="bg-[var(--data-secondary)]" />
                   </div>
-                  <span className="shrink-0 text-[10.5px] text-[var(--text-muted)] truncate">
+                  <span className="shrink-0 text-[12px] font-normal text-[var(--text-secondary)] truncate">
                     {AGENT_LABEL[a] ?? a}
                   </span>
                 </div>
               );
             })}
             {detected.length === 0 && (
-              <p className="text-[11px] text-[var(--text-muted)] self-center">暂无可对比的 Agent</p>
+              <p className="text-[12px] font-normal text-[var(--text-muted)] self-center">暂无可对比的 Agent</p>
             )}
           </div>
         </div>
@@ -148,7 +148,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         {/* 右列：数据来源 + 手环 */}
         <div className="min-h-0 flex flex-col gap-2.5">
           <div className="shrink-0 rounded-[10px] bg-[var(--bg-subtle)] p-3">
-            <h3 className="text-[11px] font-semibold text-[var(--text-primary)] mb-2">数据来源</h3>
+            <h3 className="text-[12px] font-semibold text-[var(--text-primary)] mb-2">数据来源</h3>
             <div className="space-y-2">
               {detected.map((a) => {
                 const q = quotas ? quotas[a] : null;
@@ -156,11 +156,11 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 return (
                   <div key={a} className="flex items-center gap-2">
                     <AgentLogo agent={a} size={16} />
-                    <span className="text-[11px] text-[var(--text-secondary)] truncate flex-1">
+                    <span className="text-[12px] font-normal text-[var(--text-secondary)] truncate flex-1">
                       {AGENT_LABEL[a] ?? a}
                     </span>
                     <span
-                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded-[6px] ${
+                      className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-[6px] ${
                         auth
                           ? 'bg-[var(--accent-wash)] text-[var(--anchor-text)]'
                           : 'bg-[var(--quota-warning-wash)] text-[var(--quota-warning-text)]'
@@ -172,13 +172,13 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 );
               })}
               {detected.length === 0 && (
-                <p className="text-[10px] text-[var(--text-muted)]">暂无已检测的 Agent</p>
+                <p className="text-[11px] text-[var(--text-muted)]">暂无已检测的 Agent</p>
               )}
             </div>
           </div>
 
           <div className="flex-1 min-h-0 rounded-[10px] bg-[var(--bg-subtle)] p-3 flex flex-col">
-            <h3 className="text-[11px] font-semibold text-[var(--text-primary)]">手环</h3>
+            <h3 className="text-[12px] font-semibold text-[var(--text-primary)]">手环</h3>
             <div className="mt-2 text-[12px] text-[var(--text-secondary)] truncate">
               {bandDeviceName ?? '未连接'}
             </div>

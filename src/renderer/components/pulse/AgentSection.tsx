@@ -81,13 +81,13 @@ const AgentCardSkeleton: React.FC = () => (
 
     {/* 3. 副标题行 */}
     <div className="mt-1">
-      <div className="h-[12px] w-14 rounded bg-[var(--border-strong)]" />
+      <div className="h-[14px] w-14 rounded bg-[var(--border-strong)]" />
     </div>
 
     {/* 4. 双列元信息行 */}
     <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1 min-w-0">
-      <div className="h-[11px] w-24 rounded bg-[var(--border-strong)]" />
-      <div className="h-[11px] w-12 rounded bg-[var(--border-strong)]" />
+      <div className="h-[13px] w-24 rounded bg-[var(--border-strong)]" />
+      <div className="h-[13px] w-12 rounded bg-[var(--border-strong)]" />
     </div>
   </div>
 );

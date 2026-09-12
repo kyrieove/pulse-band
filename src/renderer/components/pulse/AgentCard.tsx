@@ -111,7 +111,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data, anchor = false }) =>
         </div>
         {alertText && (
           <span
-            className={`shrink-0 text-[9.5px] font-semibold px-1.5 py-0.5 rounded-[4px] leading-tight ${
+            className={`shrink-0 text-[11px] font-semibold px-1.5 py-0.5 rounded-[4px] leading-tight ${
               is5hCrit || is7dCrit
                 ? 'bg-[var(--quota-critical-wash)] text-[var(--quota-critical-text)] border border-[var(--quota-critical)]/30'
                 : 'bg-[var(--quota-warning-wash)] text-[var(--quota-warning-text)] border border-[var(--quota-warning)]/30'
@@ -128,16 +128,16 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data, anchor = false }) =>
         </span>
         <span className="text-[19px] font-semibold ml-0.5">%</span>
       </div>
-      <div className={`mt-1 text-[10.5px] ${mutedText}`}>5 小时剩余</div>
+      <div className={`mt-1 text-[12px] font-normal ${mutedText}`}>5 小时剩余</div>
 
       {/* 时间信息固定成两列，避免状态长文案撑乱三张卡 */}
       <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1 min-w-0">
-        <span className={`text-[10px] truncate ${mutedText}`}>{resetText}</span>
-        <span className={`text-[10px] tabular-nums text-right ${sevenDayColor}`}>
+        <span className={`text-[12px] font-normal truncate ${mutedText}`}>{resetText}</span>
+        <span className={`text-[12px] font-normal tabular-nums text-right ${sevenDayColor}`}>
           7 天 {sevenDay.remaining != null ? `${sevenDay.remaining}%` : NO_DATA}
         </span>
         {data.status === 'running' && data.currentToolName && (
-          <span className={`col-span-2 inline-flex items-center gap-1 text-[10px] truncate ${mutedText}`}>
+          <span className={`col-span-2 inline-flex items-center gap-1 text-[12px] font-normal truncate ${mutedText}`}>
             <ArrowRight className="w-3 h-3 shrink-0" />运行 {data.currentToolName}
           </span>
         )}
