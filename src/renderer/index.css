@@ -65,7 +65,12 @@
      浏览器按字符逐个回退：Noto Sans 不含汉字，所以中文自动落到后面的宋体。
      两者同属 Noto 超级家族，垂直度量与笔形逻辑天然对齐；
      Noto Sans 带真正的等宽数字，界面里 8 处 tabular-nums 才能生效。
-     变量名沿用 --pulse-font-sans 以免改动所有引用方。 */
+     变量名沿用 --pulse-font-sans 以免改动所有引用方。
+
+     2026-09-12 定稿：UI 审查第 7 项曾建议「保留宋体就提高小字字重」，
+     经确认不采纳——汉字保持 Light 是本设计的既定取向。
+     关键小字的可读性改由字号承担（10px → 12px，见 AgentCard / OverviewPage），
+     不要为此调整本字体栈的顺序，也不要放开 font-synthesis-weight。 */
   --pulse-font-sans: "Noto Sans", "Segoe UI Variable Text", "Segoe UI",
     "Noto Serif SC Light", "Noto Serif SC", "Source Han Serif SC", "思源宋体", serif;
 
