@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WatchfaceItem } from '../../main/services/watchface-service';
+import type { WatchfacePreviewView } from '../../main/services/watchface-preview-service';
 
 export interface WatchfaceOpResult {
   ok: boolean;
@@ -27,14 +28,23 @@ export interface UseWatchFaceResult {
   installWatchface: (filePath: string, fileName: string) => Promise<void>;
   retryInstall: () => Promise<void>;
   dismissInstallFeedback: () => void;
+  /** 本地预览图，按表盘 id 索引；来源可能是用户手动指定或自动提取 */
+  previews: Record<string, WatchfacePreviewView>;
+  /** 正在写/清预览图的表盘 id；null 表示没有进行中 */
+  previewBusyId: string | null;
+  previewError: string | null;
+  setPreview: (id: string, filePath: string) => Promise<WatchfaceOpResult>;
+  clearPreview: (id: string) => Promise<WatchfaceOpResult>;
+  dismissPreviewError: () => void;
 }
 
 /**
- * 表盘列表 / 切换 / 本地安装的前端状态。
+ * 表盘列表 / 切换 / 本地安装 / 本地预览图的前端状态。
  *
- * 数据唯一来源是 window.pulse.watchface（device.watchface.* RPC），
+ * 数据唯一来源是 window.pulse.watchface（device.watchface.* RPC + 本机预览缓存），
  * 不引入任何本地模拟数据；切换与安装共用同一互斥位，同一时刻只允许一个操作。
  * 安装是阻塞式长操作且无进度事件，这里不产生任何进度数值。
+ * 预览图读写是本地文件操作，与切换/安装互不阻塞。
  */
 export function useWatchFace(connected: boolean): UseWatchFaceResult {
   const [items, setItems] = useState<WatchfaceItem[]>([]);
@@ -44,6 +54,9 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
   const [installing, setInstalling] = useState(false);
   const [installOutcome, setInstallOutcome] = useState<WatchfaceInstallOutcome | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [previews, setPreviews] = useState<Record<string, WatchfacePreviewView>>({});
+  const [previewBusyId, setPreviewBusyId] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const aliveRef = useRef(true);
   const busyRef = useRef(false);
@@ -84,6 +97,71 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
   useEffect(() => {
     if (connected) refresh();
   }, [connected, refresh]);
+
+  // 本地预览图与设备无关，但只在表盘页真正可用（已连接）时读一次
+  useEffect(() => {
+    if (!connected) return;
+    window.pulse
+      ?.watchface?.preview?.list?.()
+      .then((res) => {
+        if (aliveRef.current && res?.ok) setPreviews(res.data?.previews ?? {});
+      })
+      .catch(() => {
+        // 读不到本地预览图只表现为"卡片没有图"，不阻断列表本身
+      });
+  }, [connected]);
+
+  const setPreview = useCallback(async (id: string, filePath: string): Promise<WatchfaceOpResult> => {
+    if (!id) return { ok: false, message: '缺少表盘 id' };
+    if (!filePath) return { ok: false, message: '无法获取所选图片的本地路径' };
+    setPreviewBusyId(id);
+    setPreviewError(null);
+    try {
+      const res = await window.pulse?.watchface?.preview?.set?.(id, filePath);
+      if (!aliveRef.current) return { ok: false, message: '页面已关闭' };
+      if (res && res.ok) {
+        const preview = res.data.preview;
+        setPreviews((prev) => ({ ...prev, [preview.id]: preview }));
+        return { ok: true };
+      }
+      const message = (res && !res.ok ? res.message : null) ?? '设置本地预览图失败';
+      setPreviewError(message);
+      return { ok: false, message };
+    } catch {
+      setPreviewError('设置本地预览图失败');
+      return { ok: false, message: '设置本地预览图失败' };
+    } finally {
+      if (aliveRef.current) setPreviewBusyId(null);
+    }
+  }, []);
+
+  const clearPreview = useCallback(async (id: string): Promise<WatchfaceOpResult> => {
+    if (!id) return { ok: false, message: '缺少表盘 id' };
+    setPreviewBusyId(id);
+    setPreviewError(null);
+    try {
+      const res = await window.pulse?.watchface?.preview?.clear?.(id);
+      if (!aliveRef.current) return { ok: false, message: '页面已关闭' };
+      if (res && res.ok) {
+        setPreviews((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        return { ok: true };
+      }
+      const message = (res && !res.ok ? res.message : null) ?? '清除本地预览图失败';
+      setPreviewError(message);
+      return { ok: false, message };
+    } catch {
+      setPreviewError('清除本地预览图失败');
+      return { ok: false, message: '清除本地预览图失败' };
+    } finally {
+      if (aliveRef.current) setPreviewBusyId(null);
+    }
+  }, []);
+
+  const dismissPreviewError = useCallback(() => setPreviewError(null), []);
 
   const setWatchface = useCallback(async (id: string): Promise<WatchfaceOpResult> => {
     if (busyRef.current) return { ok: false, message: '有操作正在进行中，请稍候' };
@@ -175,5 +253,11 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
     installWatchface,
     retryInstall,
     dismissInstallFeedback,
+    previews,
+    previewBusyId,
+    previewError,
+    setPreview,
+    clearPreview,
+    dismissPreviewError,
   };
 }

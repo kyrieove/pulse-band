@@ -36,11 +36,15 @@ test('normalizeWatchfaceColor: 非法值一律 null，交给调用方回退中�
   assert.equal(normalizeWatchfaceColor('expression(alert(1))'), null);
 });
 
-test('isSupportedImageFileName: 只看后缀，大小写不敏感', () => {
+test('isSupportedImageFileName: 只收 nativeImage 能可靠解码的 PNG / JPEG', () => {
   assert.equal(isSupportedImageFileName('a.png'), true);
   assert.equal(isSupportedImageFileName('a.JPEG'), true);
-  assert.equal(isSupportedImageFileName('my.face.webp'), true);
-  assert.equal(isSupportedImageFileName('a.gif'), true);
+  assert.equal(isSupportedImageFileName('a.jpg'), true);
+  assert.equal(isSupportedImageFileName('my.face.png'), true);
+  // 明确拒绝：nativeImage.createFromBuffer 解不出这些格式
+  assert.equal(isSupportedImageFileName('a.webp'), false);
+  assert.equal(isSupportedImageFileName('a.gif'), false);
+  assert.equal(isSupportedImageFileName('a.bmp'), false);
   assert.equal(isSupportedImageFileName('a.bin'), false);
   assert.equal(isSupportedImageFileName('noext'), false);
   assert.equal(isSupportedImageFileName('a.png.exe'), false);

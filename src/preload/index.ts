@@ -125,5 +125,12 @@ contextBridge.exposeInMainWorld('pulse', {
     list: () => ipcRenderer.invoke('pulse:watchface:list'),
     set: (id: string) => ipcRenderer.invoke('pulse:watchface:set', { id }),
     install: (filePath: string) => ipcRenderer.invoke('pulse:watchface:install', { filePath }),
+    // 本地预览图缓存（用户自己关联的图片，只存在本机 userData）
+    preview: {
+      list: () => ipcRenderer.invoke('pulse:watchface:preview:list'),
+      set: (id: string, filePath: string) =>
+        ipcRenderer.invoke('pulse:watchface:preview:set', { id, filePath }),
+      clear: (id: string) => ipcRenderer.invoke('pulse:watchface:preview:clear', { id }),
+    },
   },
 });

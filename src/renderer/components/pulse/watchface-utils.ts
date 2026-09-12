@@ -26,9 +26,18 @@ export function normalizeWatchfaceColor(raw: unknown): string | null {
   return `#${matched[1].toLowerCase()}`;
 }
 
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif']);
+/**
+ * 本地预览图后缀白名单。
+ *
+ * 只收 PNG / JPEG：主进程用 Electron nativeImage.createFromBuffer 解码，
+ * 它只可靠支持这两种（webp / gif / bmp 会解出空图）。这里不承诺解不开的格式，
+ * 避免用户选完才在下一层报错。
+ */
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg']);
 
-/** 本地预览图只接受常见位图后缀；主进程还会用 nativeImage 二次校验能否解码 */
+/** 供文件选择框 accept 使用，与 IMAGE_EXTENSIONS 同源，避免两处漂移 */
+export const WATCHFACE_IMAGE_ACCEPT = '.png,.jpg,.jpeg';
+
 export function isSupportedImageFileName(fileName: string): boolean {
   const dot = fileName.lastIndexOf('.');
   if (dot < 0) return false;

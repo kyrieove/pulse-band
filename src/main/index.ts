@@ -18,6 +18,11 @@ import { isVersionNewer } from './services/version-check';
 import { AppInstallService, registerAppInstallIpc } from './services/app-install-service';
 import { CoreAppInstallBridge } from './services/core-app-install-bridge';
 import { WatchfaceService, registerWatchfaceIpc } from './services/watchface-service';
+import { WatchfacePreviewStore, WATCHFACE_PREVIEW_DIR_NAME } from './services/watchface-preview-store';
+import {
+  WatchfacePreviewService,
+  registerWatchfacePreviewIpc,
+} from './services/watchface-preview-service';
 import { deviceConfigService } from './services/device-config-service';
 
 // Ensure single instance
@@ -76,6 +81,10 @@ const oronboxBridge = new OronBoxBridge(
 const coreAppInstallBridge = new CoreAppInstallBridge(oronbox);
 const appInstallService = new AppInstallService(coreAppInstallBridge);
 const watchfaceService = new WatchfaceService(oronbox);
+// 用户自己关联的表盘预览图缓存：只落本机 userData，不进仓库、不上传、不碰协议
+const watchfacePreviewService = new WatchfacePreviewService(
+  new WatchfacePreviewStore(path.join(app.getPath('userData'), WATCHFACE_PREVIEW_DIR_NAME)),
+);
 oronbox.on('daemon-spawned', (pid) => console.log('[OronBox] daemon 已拉起 pid=' + pid));
 oronbox.on('degraded', (info) =>
   console.warn('[OronBox] protocolVersion 不匹配，进入降级（继续用旧链路）:', JSON.stringify(info))
@@ -247,6 +256,7 @@ app.whenReady().then(async () => {
   registerBandKeyExtract(ipcMain);
   registerAppInstallIpc(appInstallService, ipcMain, () => win);
   registerWatchfaceIpc(watchfaceService, ipcMain);
+  registerWatchfacePreviewIpc(watchfacePreviewService, ipcMain);
 
   // 设备配置与已配对手环管理 IPC
   ipcMain.handle('pulse:device-config:status', () => {

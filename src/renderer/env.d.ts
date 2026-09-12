@@ -29,6 +29,10 @@ import type {
   WatchfaceInstallData,
   WatchfaceResult,
 } from '../main/services/watchface-service';
+import type {
+  WatchfacePreviewView,
+  WatchfacePreviewResult,
+} from '../main/services/watchface-preview-service';
 
 export type {
   WatchfaceItem,
@@ -36,13 +40,23 @@ export type {
   WatchfaceSetData,
   WatchfaceInstallData,
   WatchfaceResult,
+  WatchfacePreviewView,
+  WatchfacePreviewResult,
 };
 
-/** 表盘管理桥接（device.watchface.*：本地表盘列表 / 切换 / 本地文件安装） */
+/** 表盘管理桥接（device.watchface.*：本地表盘列表 / 切换 / 本地文件安装 + 本地预览图缓存） */
 export interface WatchfaceBridge {
   list: () => Promise<WatchfaceResult<WatchfaceListData>>;
   set: (id: string) => Promise<WatchfaceResult<WatchfaceSetData>>;
   install: (filePath: string) => Promise<WatchfaceResult<WatchfaceInstallData>>;
+  preview?: {
+    list: () => Promise<WatchfacePreviewResult<{ previews: Record<string, WatchfacePreviewView> }>>;
+    set: (
+      id: string,
+      filePath: string,
+    ) => Promise<WatchfacePreviewResult<{ preview: WatchfacePreviewView }>>;
+    clear: (id: string) => Promise<WatchfacePreviewResult<{ id: string }>>;
+  };
 }
 
 /** 快应用原生安装 RPC 桥接接口（阶段契约：仅定义类型边界） */
