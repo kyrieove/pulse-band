@@ -5,12 +5,14 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
+  Check,
   RefreshCw,
   Upload,
 } from 'lucide-react';
 import type { PulsePage } from '../layout/Sidebar';
 import { useBandConnection } from '../../hooks/useBandConnection';
 import { useWatchFace } from '../../hooks/useWatchFace';
+import { normalizeWatchfaceColor, watchfaceDisplayName } from './watchface-utils';
 
 export interface WatchFacePageProps {
   /** 未连接手环时跳转「手环」页 */
@@ -111,11 +113,11 @@ export const WatchFacePage: React.FC<WatchFacePageProps> = ({ onNavigate }) => {
         </div>
       </div>
 
-      {/* 状态二：读取中（无任何已有列表时给骨架屏） */}
+      {/* 状态二：读取中（无任何已有列表时给骨架屏，占位比例与真实卡片一致） */}
       {wf.loading && wf.items.length === 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-[110px] rounded-[10px] bg-[var(--bg-subtle)] animate-pulse" />
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-2.5">
+          {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="w-full aspect-[192/490] rounded-[10px] bg-[var(--bg-subtle)] animate-pulse" />
           ))}
         </div>
       )}
@@ -159,8 +161,13 @@ export const WatchFacePage: React.FC<WatchFacePageProps> = ({ onNavigate }) => {
             </div>
           )}
 
-          <div className="shrink-0 flex items-center justify-between">
-            <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">已安装表盘</h3>
+          <div className="shrink-0 flex items-end justify-between">
+            <div>
+              <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">已安装表盘</h3>
+              <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                点击卡片切换表盘；标「使用中」的是当前表盘
+              </p>
+            </div>
             <button
               type="button"
               onClick={wf.refresh}
@@ -180,10 +187,17 @@ export const WatchFacePage: React.FC<WatchFacePageProps> = ({ onNavigate }) => {
             </div>
           )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          {/*
+            卡片比例 = 手环屏 192:490。协议不返回缩略图，所以底色用设备返回的
+            background_color；该字段缺失或不是合法颜色时回退中性底色 + 表盘图标，
+            保证每张卡片都是一个可辨认的形状，而不是一个留白块。
+          */}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-2.5">
             {wf.items.map((item) => {
               const isSetting = wf.settingId === item.id;
               const locked = busy && !isSetting;
+              const bg = normalizeWatchfaceColor(item.background_color);
+              const displayName = watchfaceDisplayName(item.name, item.id);
               return (
                 <button
                   key={item.id}
@@ -195,48 +209,53 @@ export const WatchFacePage: React.FC<WatchFacePageProps> = ({ onNavigate }) => {
                       if (!res.ok && res.message) setSetError(res.message);
                     });
                   }}
-                  className={`relative rounded-[10px] border p-3 text-left transition-colors select-none ${
+                  title={`${displayName} · v${item.version_code ?? '?'}${
+                    item.can_remove ? '' : ' · 内置表盘（设备不允许删除）'
+                  }`}
+                  className={`relative block w-full aspect-[192/490] overflow-hidden rounded-[10px] border transition-colors select-none text-left ${
                     item.is_current
-                      ? 'border-[var(--accent-soft)] bg-[var(--accent-wash)] cursor-default'
-                      : 'border-[var(--border-strong)] bg-[var(--bg-surface)] hover:border-[var(--accent-soft)] cursor-pointer disabled:cursor-not-allowed'
+                      ? 'border-[var(--accent-primary)] cursor-default'
+                      : 'border-[var(--border-strong)] hover:border-[var(--accent-soft)] cursor-pointer disabled:cursor-not-allowed'
                   } ${locked ? 'opacity-60' : ''}`}
                 >
-                  {isSetting ? (
-                    <div className="h-full min-h-[64px] flex flex-col items-center justify-center gap-1.5">
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-0"
+                    style={{ backgroundColor: bg ?? 'var(--bg-subtle)' }}
+                  />
+                  {!bg && (
+                    <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center">
+                      <Watch className="w-6 h-6 text-[var(--text-muted)] opacity-40" />
+                    </span>
+                  )}
+
+                  {/* 状态标识用文字 + 图标，不依赖描边颜色单独表达 */}
+                  <span className="absolute top-1 left-1 flex flex-col items-start gap-1">
+                    {item.is_current && (
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-[var(--accent-primary)] px-1.5 py-[3px] text-[9px] font-semibold leading-none text-white">
+                        <Check className="w-2.5 h-2.5" />
+                        使用中
+                      </span>
+                    )}
+                    {!item.can_remove && (
+                      <span className="rounded-full bg-[var(--bg-surface)] px-1.5 py-[3px] text-[9px] font-medium leading-none text-[var(--text-muted)]">
+                        内置
+                      </span>
+                    )}
+                  </span>
+
+                  {/* 名称过长截断，悬停卡片用 title 看全名 */}
+                  <span className="absolute inset-x-0 bottom-0 p-1">
+                    <span className="line-clamp-2 block rounded-[6px] bg-[var(--bg-surface)] px-1.5 py-1 text-[10px] font-semibold leading-[1.25] text-[var(--text-primary)]">
+                      {displayName}
+                    </span>
+                  </span>
+
+                  {isSetting && (
+                    <span className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-[var(--bg-surface)]">
                       <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
-                      <span className="text-[11px] font-medium text-[var(--text-secondary)]">切换中…</span>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-start justify-between gap-2">
-                        <span
-                          className="text-[12.5px] font-semibold text-[var(--text-primary)] leading-snug break-all"
-                          title={item.name}
-                        >
-                          {item.name || item.id}
-                        </span>
-                        {item.is_current && (
-                          <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-[var(--accent-primary)] text-white text-[9.5px] font-semibold">
-                            使用中
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                        {!item.can_remove && (
-                          <span className="px-1.5 py-0.5 rounded-full bg-[var(--bg-subtle)] border border-[var(--border-strong)] text-[9.5px] text-[var(--text-muted)]">
-                            内置
-                          </span>
-                        )}
-                        <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                          v{item.version_code ?? '?'}
-                        </span>
-                      </div>
-                      {!item.is_current && !busy && (
-                        <span className="mt-2 block text-[10.5px] font-medium text-[var(--anchor-text)]">
-                          设为当前表盘
-                        </span>
-                      )}
-                    </>
+                      <span className="text-[10px] font-medium text-[var(--text-secondary)]">切换中…</span>
+                    </span>
                   )}
                 </button>
               );
