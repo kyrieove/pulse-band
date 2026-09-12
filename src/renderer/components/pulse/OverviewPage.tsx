@@ -214,25 +214,26 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   : '未连接'}
               </span>
             </div>
-            {bandConnected ? (
-              <button
-                type="button"
-                onClick={onDisconnect}
-                disabled={bandBusy}
-                className="btn-primary mt-3 w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {bandBusy ? '断开中…' : '断开连接'}
-              </button>
-            ) : (
+            <div className="mt-3 space-y-2">
               <button
                 type="button"
                 onClick={onConnect}
                 disabled={!bandCanConnect}
-                className="btn-primary mt-3 w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="btn-primary w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {bandBusy ? '连接中…' : '连接手环'}
+                {bandBusy ? '连接中…' : bandConnected ? '已连接' : '连接手环'}
               </button>
-            )}
+              {bandConnected && (
+                <button
+                  type="button"
+                  onClick={onDisconnect}
+                  disabled={bandBusy}
+                  className="w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  断开连接
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
