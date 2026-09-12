@@ -56,8 +56,40 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data, anchor = false }) =>
   const sevenDay: QuotaWindow = data.sevenDay ?? { remaining: null, resetText: null, status: 'idle' };
   const remaining = fiveHour.remaining;
   const resetText = parseResetTimeInfo(fiveHour.resetText).countdownText;
-  const numberColor = anchor ? 'text-[var(--anchor-text)]' : percentColor(remaining);
+
+  const is5hCrit = fiveHour.status === 'critical';
+  const is5hWarn = fiveHour.status === 'warning';
+  const is7dCrit = sevenDay.status === 'critical';
+  const is7dWarn = sevenDay.status === 'warning';
+
+  // 告警优先级高于重点卡装饰配色：5h 受限时优先使用警告/濒危色
+  const numberColor = is5hCrit
+    ? 'text-[var(--quota-critical)]'
+    : is5hWarn
+    ? 'text-[var(--quota-warning)]'
+    : anchor
+    ? 'text-[var(--anchor-text)]'
+    : percentColor(remaining);
+
   const mutedText = anchor ? 'text-[var(--anchor-text)]/80' : 'text-[var(--text-muted)]';
+  const sevenDayColor = is7dCrit
+    ? 'text-[var(--quota-critical)] font-semibold'
+    : is7dWarn
+    ? 'text-[var(--quota-warning)] font-semibold'
+    : mutedText;
+
+  // 任一周期进入 warning/critical 时提供明确文字短提示，灰度截图亦可区分受限周期
+  const alertText = (() => {
+    if (is5hCrit && is7dCrit) return '双周期濒危';
+    if (is5hCrit && is7dWarn) return '5h 濒危 · 7d 偏低';
+    if (is5hWarn && is7dCrit) return '7d 濒危 · 5h 偏低';
+    if (is5hWarn && is7dWarn) return '双周期偏低';
+    if (is5hCrit) return '5 小时濒危';
+    if (is5hWarn) return '5 小时偏低';
+    if (is7dCrit) return '7 天濒危';
+    if (is7dWarn) return '7 天偏低';
+    return null;
+  })();
 
   return (
     <div
@@ -65,16 +97,29 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data, anchor = false }) =>
         anchor ? 'bg-[var(--anchor-wash)]' : 'bg-[var(--bg-subtle)]'
       }`}
     >
-      {/* 顶部只保留品牌与名称；不再放无动作的外链箭头 */}
-      <div className="flex items-center gap-2">
-        <AgentLogo agent={data.id} size={18} />
-        <h4
-          className={`text-[13px] font-semibold truncate ${
-            anchor ? 'text-[var(--anchor-text)]' : 'text-[var(--text-primary)]'
-          }`}
-        >
-          {data.name}
-        </h4>
+      {/* 顶部：品牌名称 + 独立告警文字标识 */}
+      <div className="flex items-center justify-between gap-1.5 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 truncate">
+          <AgentLogo agent={data.id} size={18} />
+          <h4
+            className={`text-[13px] font-semibold truncate ${
+              anchor ? 'text-[var(--anchor-text)]' : 'text-[var(--text-primary)]'
+            }`}
+          >
+            {data.name}
+          </h4>
+        </div>
+        {alertText && (
+          <span
+            className={`shrink-0 text-[9.5px] font-semibold px-1.5 py-0.5 rounded-[4px] leading-tight ${
+              is5hCrit || is7dCrit
+                ? 'bg-[var(--quota-critical-wash)] text-[var(--quota-critical-text)] border border-[var(--quota-critical)]/30'
+                : 'bg-[var(--quota-warning-wash)] text-[var(--quota-warning-text)] border border-[var(--quota-warning)]/30'
+            }`}
+          >
+            {alertText}
+          </span>
+        )}
       </div>
 
       <div className={`mt-2.5 flex items-baseline leading-none ${numberColor}`}>
@@ -88,7 +133,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({ data, anchor = false }) =>
       {/* 时间信息固定成两列，避免状态长文案撑乱三张卡 */}
       <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1 min-w-0">
         <span className={`text-[10px] truncate ${mutedText}`}>{resetText}</span>
-        <span className={`text-[10px] font-medium tabular-nums text-right ${mutedText}`}>
+        <span className={`text-[10px] tabular-nums text-right ${sevenDayColor}`}>
           7 天 {sevenDay.remaining != null ? `${sevenDay.remaining}%` : NO_DATA}
         </span>
         {data.status === 'running' && data.currentToolName && (

@@ -103,9 +103,15 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         <div className="min-h-[240px] rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
           <div className="shrink-0 flex items-center justify-between">
             <h3 className="text-[12px] font-semibold text-[var(--text-primary)]">双周期对比</h3>
-            <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
+            <div className="flex items-center gap-2.5 text-[10px] text-[var(--text-muted)] flex-wrap justify-end">
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-[var(--accent-primary)]" />5 小时
+                <span className="w-2 h-2 rounded-full bg-[var(--accent-primary)]" />5h 正常
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-[var(--quota-warning)]" />偏低
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-[var(--quota-critical)]" />濒危
               </span>
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-[var(--data-secondary)]" />7 天
