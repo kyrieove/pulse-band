@@ -155,7 +155,7 @@ export const OtherAppInstall: React.FC<OtherAppInstallProps> = ({ connected }) =
       >
         <Upload className="w-6 h-6 mx-auto text-[var(--text-muted)]" />
         <p className="text-xs text-[var(--text-secondary)]">
-          {connected ? '拖入 .rpk 文件，或点击下方选择' : '请先在「手环」页连接手环'}
+          {connected ? '拖入 .rpk 文件，或点击下方选择' : '请先连接手环'}
         </p>
         <button
           type="button"
