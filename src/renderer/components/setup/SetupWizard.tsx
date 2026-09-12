@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Watch,
   FileText,
@@ -17,6 +17,7 @@ import {
 import {
   type SetupStepId,
   type StepStatus,
+  type StepExecutionStatus,
   type SetupStep,
   INITIAL_SETUP_STEPS,
 } from './types';
@@ -53,9 +54,56 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
   });
   const [stepError, setStepError] = useState<string | null>(null);
 
+  // 严格记录每一步的真实执行状态，绝不根据访问顺序伪造成功标记
+  const [stepExecution, setStepExecution] = useState<Partial<Record<SetupStepId, StepExecutionStatus>>>(() => {
+    const initial: Partial<Record<SetupStepId, StepExecutionStatus>> = {
+      import_log: 'pending',
+      connect_band: 'pending',
+      install_app: 'pending',
+      verify_quota: 'pending',
+    };
+    const start = typeof initialStepIndex === 'number' ? initialStepIndex : 0;
+    const startId = INITIAL_SETUP_STEPS[start]?.id;
+    if (startId) {
+      initial[startId] = 'visited';
+    }
+    return initial;
+  });
+
+  // 挂载时检查本机已有真实配置与手环连接，如已真实就绪则标记为已成功
+  useEffect(() => {
+    let alive = true;
+    window.pulse?.getDeviceConfigStatus?.()
+      .then((status) => {
+        if (alive && status?.exists && status?.valid) {
+          setStepExecution((prev) => ({
+            ...prev,
+            import_log: 'success',
+          }));
+        }
+      })
+      .catch(() => {});
+
+    window.pulse?.getOronboxState?.()
+      .then((s) => {
+        if (alive && s?.connection?.state === 'connected') {
+          setStepExecution((prev) => ({
+            ...prev,
+            connect_band: 'success',
+          }));
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const steps: SetupStep[] = INITIAL_SETUP_STEPS.map((step, idx) => {
+    const exec = stepExecution[step.id] || 'pending';
     let status: StepStatus = 'pending';
-    if (idx < currentIndex) {
+    if (exec === 'success') {
       status = 'completed';
     } else if (idx === currentIndex) {
       status = stepError ? 'error' : 'active';
@@ -64,6 +112,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
     }
     return {
       ...step,
+      executionStatus: exec,
       status,
       error: idx === currentIndex && stepError ? stepError : undefined,
     };
@@ -72,14 +121,73 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
   const currentStep = steps[currentIndex];
   const isFirstStep = currentIndex === 0;
   const isLastStep = currentIndex === steps.length - 1;
+  const currentExec = stepExecution[currentStep.id] || 'pending';
+  const isCurrentSuccess = currentExec === 'success';
+
+  const handleFinish = (outcome?: QuotaVerifyOutcome) => {
+    onFinish?.(outcome);
+    onClose();
+  };
+
+  const handleImportLogSuccess = () => {
+    setStepExecution((prev) => ({ ...prev, import_log: 'success' }));
+    setCurrentIndex(1);
+    setStepExecution((prev) => ({
+      ...prev,
+      connect_band: prev.connect_band === 'pending' ? 'visited' : prev.connect_band,
+    }));
+  };
+
+  const handleConnectBandSuccess = () => {
+    setStepExecution((prev) => ({ ...prev, connect_band: 'success' }));
+  };
+
+  const handleInstallAppSuccess = () => {
+    setStepExecution((prev) => ({ ...prev, install_app: 'success' }));
+  };
+
+  const handleVerifyQuotaComplete = (outcome: QuotaVerifyOutcome) => {
+    if (outcome === 'confirmed') {
+      setStepExecution((prev) => ({ ...prev, verify_quota: 'success' }));
+      handleFinish('confirmed');
+    } else {
+      setStepExecution((prev) => ({
+        ...prev,
+        verify_quota: prev.verify_quota === 'success' ? 'success' : 'skipped',
+      }));
+      handleFinish('deferred');
+    }
+  };
 
   const handleNext = () => {
     setStepError(null);
     if (isLastStep) {
-      onFinish?.();
-      onClose();
+      if (isCurrentSuccess) {
+        handleFinish('confirmed');
+      } else {
+        setStepExecution((prev) => ({
+          ...prev,
+          [currentStep.id]: prev[currentStep.id] === 'success' ? 'success' : 'skipped',
+        }));
+        handleFinish('deferred');
+      }
     } else {
-      setCurrentIndex((prev) => Math.min(steps.length - 1, prev + 1));
+      // 未确认成功的步骤在跳往下一步时标记为已跳过
+      if (!isCurrentSuccess) {
+        setStepExecution((prev) => ({
+          ...prev,
+          [currentStep.id]: prev[currentStep.id] === 'success' ? 'success' : 'skipped',
+        }));
+      }
+      const nextIndex = Math.min(steps.length - 1, currentIndex + 1);
+      setCurrentIndex(nextIndex);
+      const nextStep = INITIAL_SETUP_STEPS[nextIndex];
+      if (nextStep) {
+        setStepExecution((prev) => ({
+          ...prev,
+          [nextStep.id]: prev[nextStep.id] === 'pending' ? 'visited' : prev[nextStep.id],
+        }));
+      }
     }
   };
 
@@ -91,28 +199,116 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
   const handleStepClick = (index: number) => {
     setStepError(null);
     setCurrentIndex(index);
-  };
-
-  const handleFinish = (outcome?: QuotaVerifyOutcome) => {
-    onFinish?.(outcome);
-    onClose();
+    const targetStep = INITIAL_SETUP_STEPS[index];
+    if (targetStep) {
+      setStepExecution((prev) => ({
+        ...prev,
+        [targetStep.id]: prev[targetStep.id] === 'pending' ? 'visited' : prev[targetStep.id],
+      }));
+    }
   };
 
   const renderStepContent = (step: SetupStep) => {
     if (step.id === 'import_log') {
-      return <LogImportStep onSuccess={handleNext} />;
+      return <LogImportStep onSuccess={handleImportLogSuccess} />;
     }
 
     if (step.id === 'connect_band') {
-      return <ConnectBandStep onSuccess={() => {}} />;
+      return <ConnectBandStep onSuccess={handleConnectBandSuccess} />;
     }
 
     if (step.id === 'install_app') {
-      return <InstallAppStep onSuccess={() => {}} />;
+      return <InstallAppStep onSuccess={handleInstallAppSuccess} />;
     }
 
     if (step.id === 'verify_quota') {
-      return <VerifyQuotaStep onComplete={handleFinish} />;
+      return (
+        <div className="space-y-4">
+          {/* 最后一页：向导步骤完成汇总 */}
+          <div className="p-4 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
+                <h4 className="text-xs font-semibold text-[var(--text-primary)]">向导配置执行汇总</h4>
+              </div>
+              <span className="text-[11px] font-mono text-[var(--text-muted)]">
+                已就绪 {steps.filter((s) => stepExecution[s.id] === 'success').length} / {steps.length} 项
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {steps.map((s) => {
+                const exec = stepExecution[s.id];
+                const isOk = exec === 'success';
+                const isSkip = exec === 'skipped';
+                return (
+                  <div
+                    key={s.id}
+                    className={`p-2.5 rounded-[var(--radius-md)] border flex items-start gap-2 ${
+                      isOk
+                        ? 'bg-emerald-500/[0.06] border-emerald-500/25 text-[var(--text-primary)]'
+                        : isSkip
+                        ? 'bg-[var(--bg-surface)] border-[var(--border-default)] text-[var(--text-muted)]'
+                        : 'bg-amber-500/[0.05] border-amber-500/25 text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    {isOk ? (
+                      <CheckCircle2 className="w-4 h-4 text-[var(--status-success)] shrink-0 mt-0.5" />
+                    ) : isSkip ? (
+                      <span className="w-4 h-4 rounded-full bg-[var(--border-strong)] flex items-center justify-center text-[10px] text-white shrink-0 mt-0.5 font-bold">
+                        —
+                      </span>
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-[11px] flex items-center justify-between">
+                        <span className="truncate">{s.title}</span>
+                        <span
+                          className={`text-[10px] px-1 py-0.2 rounded font-normal shrink-0 ${
+                            isOk
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                              : isSkip
+                              ? 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'
+                              : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                          }`}
+                        >
+                          {isOk ? '已完成' : isSkip ? '已跳过' : '未完成'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[var(--text-muted)] mt-0.5 leading-tight">
+                        {s.id === 'import_log'
+                          ? isOk
+                            ? '已提取 AuthKey 并完成设备绑定'
+                            : '未绑定设备配置'
+                          : s.id === 'connect_band'
+                          ? isOk
+                            ? '蓝牙 RFCOMM 安全通道已就绪'
+                            : '手环当前未连接'
+                          : s.id === 'install_app'
+                          ? isOk
+                            ? 'Pulse 快应用已推送至手环'
+                            : '手环端尚未安装快应用'
+                          : isOk
+                          ? '已在手环屏幕确认卡片显示正常'
+                          : '待在手环屏幕核验'}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {steps.some((s) => stepExecution[s.id] !== 'success') && (
+              <p className="text-[11px] text-[var(--text-muted)] leading-relaxed pt-1">
+                未完成或跳过的步骤不会影响桌面端运行，可随时在「手环」管理页继续操作。
+              </p>
+            )}
+          </div>
+
+          <VerifyQuotaStep onComplete={handleVerifyQuotaComplete} />
+        </div>
+      );
     }
 
     return (
@@ -174,17 +370,28 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
             {steps.map((s, idx) => {
               const Icon = STEP_ICONS[s.id] ?? Clock;
               const isSelected = idx === currentIndex;
+              const exec = s.executionStatus;
 
               let statusBadge = (
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--border-strong)]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--border-strong)] shrink-0" />
               );
 
-              if (s.status === 'completed') {
+              if (exec === 'success') {
                 statusBadge = <CheckCircle2 className="w-3.5 h-3.5 text-[var(--status-success)] shrink-0" />;
-              } else if (s.status === 'active') {
+              } else if (exec === 'skipped') {
+                statusBadge = (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-muted)] leading-none shrink-0 font-normal">
+                    已跳过
+                  </span>
+                );
+              } else if (exec === 'visited' && !isSelected) {
+                statusBadge = (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 leading-none shrink-0 font-normal">
+                    待办
+                  </span>
+                );
+              } else if (isSelected) {
                 statusBadge = <span className="w-2 h-2 rounded-full bg-[var(--accent-primary)] animate-pulse shrink-0" />;
-              } else if (s.status === 'error') {
-                statusBadge = <AlertCircle className="w-3.5 h-3.5 text-[var(--status-error)] shrink-0" />;
               }
 
               return (
@@ -203,7 +410,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
                       className={`w-3.5 h-3.5 shrink-0 ${
                         isSelected
                           ? 'text-[var(--accent-primary)]'
-                          : s.status === 'completed'
+                          : exec === 'success'
                           ? 'text-[var(--status-success)]'
                           : 'text-[var(--text-muted)]'
                       }`}
@@ -281,10 +488,28 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
             <button
               type="button"
               onClick={handleNext}
-              className="flex items-center gap-1 px-4 py-1.5 rounded-[var(--radius-md)] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-medium transition-colors shadow-sm cursor-pointer"
+              className={`flex items-center gap-1 px-4 py-1.5 rounded-[var(--radius-md)] text-xs font-medium transition-colors shadow-sm cursor-pointer ${
+                isCurrentSuccess
+                  ? 'bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white'
+                  : 'bg-[var(--bg-subtle)] hover:bg-[var(--border-strong)] border border-[var(--border-default)] text-[var(--text-primary)]'
+              }`}
             >
-              <span>{isLastStep ? '完成向导' : '下一步'}</span>
-              {!isLastStep && <ChevronRight className="w-3.5 h-3.5" />}
+              <span>
+                {isLastStep
+                  ? isCurrentSuccess
+                    ? '完成向导'
+                    : '跳过，稍后配置'
+                  : isCurrentSuccess
+                  ? '下一步'
+                  : '跳过，稍后配置'}
+              </span>
+              {isLastStep ? (
+                isCurrentSuccess ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                ) : null
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
             </button>
           </div>
         </div>

@@ -19,6 +19,15 @@ export type {
 /** 向后兼容现有 SetupWizard 内部引用的别名 */
 export type StepStatus = SetupStepStatus;
 
+/**
+ * 步骤真实执行结果状态：
+ * - pending: 尚未访问过
+ * - visited: 已访问但未完成
+ * - skipped: 用户主动选择跳过稍后配置
+ * - success: 真实操作已成功确认
+ */
+export type StepExecutionStatus = 'pending' | 'visited' | 'skipped' | 'success';
+
 export interface SetupStep {
   id: SetupStepId;
   index: number;
@@ -26,6 +35,7 @@ export interface SetupStep {
   shortLabel: string;
   description: string;
   status: SetupStepStatus;
+  executionStatus?: StepExecutionStatus;
   error?: string;
 }
 
