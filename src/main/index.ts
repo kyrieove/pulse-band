@@ -16,6 +16,7 @@ import { createMiniBarWindow, disposeMiniBar, toggleMiniBar, isMiniBarVisible } 
 import { isVersionNewer } from './services/version-check';
 import { AppInstallService, registerAppInstallIpc } from './services/app-install-service';
 import { CoreAppInstallBridge } from './services/core-app-install-bridge';
+import { WatchfaceService, registerWatchfaceIpc } from './services/watchface-service';
 import { deviceConfigService } from './services/device-config-service';
 
 // Ensure single instance
@@ -55,6 +56,7 @@ const oronboxBridge = new OronBoxBridge(
 );
 const coreAppInstallBridge = new CoreAppInstallBridge(oronbox);
 const appInstallService = new AppInstallService(coreAppInstallBridge);
+const watchfaceService = new WatchfaceService(oronbox);
 oronbox.on('daemon-spawned', (pid) => console.log('[OronBox] daemon 已拉起 pid=' + pid));
 oronbox.on('degraded', (info) =>
   console.warn('[OronBox] protocolVersion 不匹配，进入降级（继续用旧链路）:', JSON.stringify(info))
@@ -225,6 +227,7 @@ app.whenReady().then(async () => {
   registerClaudeHookInstall();
   registerBandKeyExtract(ipcMain);
   registerAppInstallIpc(appInstallService, ipcMain, () => win);
+  registerWatchfaceIpc(watchfaceService, ipcMain);
 
   // 设备配置与已配对手环管理 IPC
   ipcMain.handle('pulse:device-config:status', () => {
