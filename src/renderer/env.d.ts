@@ -19,6 +19,9 @@ import type {
 } from '../common/types';
 import type { PulseOronboxState, PulseErrorEntry } from '../main/services/oronbox-bridge';
 import type { DiagnosticReport } from '../main/services/diagnostics';
+import type { MiniBarDockPreference } from '../main/services/minibar-preference';
+
+export type { MiniBarDockPreference };
 import type {
   WatchfaceItem,
   WatchfaceListData,
@@ -164,6 +167,9 @@ export interface PulseBridge {
   isMiniBarVisible: () => Promise<boolean>;
   setMiniBarVisible: (show: boolean) => Promise<boolean>;
   onMiniBarVisibilityChange: (cb: (visible: boolean) => void) => () => void;
+  /** MiniBar 启动停靠偏好读写（minibar:get/set-dock-preference，非法值主进程归一为 remember） */
+  getMiniBarDockPreference: () => Promise<MiniBarDockPreference>;
+  setMiniBarDockPreference: (pref: MiniBarDockPreference) => Promise<MiniBarDockPreference>;
   /** Electron ≥32 拖拽文件取本地路径（webUtils 只在 preload 可用） */
   getPathForFile: (file: File) => string;
   /** 设备配置状态与手环绑定相关 API */

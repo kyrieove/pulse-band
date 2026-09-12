@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Check, Activity, Sun, Moon } from 'lucide-react';
 import { Toggle } from './ui';
 import { useMiniBar } from '../../hooks/useMiniBar';
+import type { MiniBarDockPreference } from '../../../main/services/minibar-preference';
 import { APP_VERSION } from '../../../common/app-info';
 
 export interface SettingsPageProps {
@@ -10,10 +11,10 @@ export interface SettingsPageProps {
   onOpenDiagnostics?: () => void;
 }
 
-/** MiniBar 启动停靠偏好三取值（与主进程 minibar-preference 约定一致） */
-export type MiniBarStartupDock = 'remember' | 'left' | 'right';
+/** MiniBar 启动停靠偏好三取值（主进程 minibar-preference 的持久化契约） */
+type StartupDock = MiniBarDockPreference;
 
-const STARTUP_DOCK_OPTIONS: Array<{ value: MiniBarStartupDock; label: string }> = [
+const STARTUP_DOCK_OPTIONS: Array<{ value: StartupDock; label: string }> = [
   { value: 'remember', label: '记住侧边' },
   { value: 'left', label: '固定靠左' },
   { value: 'right', label: '固定靠右' },
@@ -87,8 +88,36 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 }) => {
   const miniBar = useMiniBar();
   const [appVersion, setAppVersion] = useState<string>(APP_VERSION);
-  // 启动停靠偏好：仅本地预览态，尚未接线（等主进程 get/set-dock-preference 契约）
-  const [startupDock, setStartupDock] = useState<MiniBarStartupDock>('remember');
+  // 启动停靠偏好：挂载时读主进程持久化值，切换即写回（非法值由主进程归一为 remember）
+  const [startupDock, setStartupDock] = useState<StartupDock>('remember');
+
+  useEffect(() => {
+    let alive = true;
+    window.pulse
+      ?.getMiniBarDockPreference?.()
+      .then((v) => {
+        if (alive && v) setStartupDock(v);
+      })
+      .catch(() => {
+        // 读不到就保持默认 remember，选项仍可用，写回时主进程会返回校验值
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const changeStartupDock = (v: StartupDock) => {
+    setStartupDock(v);
+    window.pulse
+      ?.setMiniBarDockPreference?.(v)
+      .then((saved) => {
+        // 以主进程校验后的持久化值为准（例如旧版本主进程可能归一）
+        if (saved) setStartupDock(saved);
+      })
+      .catch(() => {
+        // 写失败保留本地选择，下次打开设置页会重新读取真实值
+      });
+  };
 
   useEffect(() => {
     let alive = true;
@@ -137,8 +166,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
             {miniBar.error && <p className="text-[11px] text-[var(--status-error)]">{miniBar.error}</p>}
 
-            {/* 启动停靠偏好：UI 先行。主进程 minibar 偏好读写 IPC（channel 名待定）落地后，
-                把本地 state 换成 get/set 调用并移除「即将支持」提示行。 */}
+            {/* 启动停靠偏好：读写走主进程 minibar:get/set-dock-preference（minibar-preference.ts 持久化） */}
             <div className="pt-3 border-t border-[var(--border-default)] space-y-2">
               <div>
                 <div className="text-[12px] font-medium text-[var(--text-primary)]">启动停靠位置</div>
@@ -153,7 +181,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     type="button"
                     role="radio"
                     aria-checked={startupDock === opt.value}
-                    onClick={() => setStartupDock(opt.value)}
+                    onClick={() => changeStartupDock(opt.value)}
                     className={`rounded-[8px] border px-2 py-1.5 text-[11px] font-medium text-center transition-colors cursor-pointer select-none ${
                       startupDock === opt.value
                         ? 'border-[var(--accent-soft)] bg-[var(--accent-wash)] text-[var(--anchor-text)]'
@@ -164,9 +192,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </button>
                 ))}
               </div>
-              <p className="text-[10.5px] text-[var(--text-muted)]">
-                即将支持：主进程偏好接口就绪后生效，当前选择暂不保存
-              </p>
+              {startupDock === 'remember' && (
+                <p className="text-[10.5px] text-[var(--text-muted)]">
+                  记住侧边：沿用上次的左右位置；若上次停在上下边缘，启动时回到右侧
+                </p>
+              )}
             </div>
           </section>
 

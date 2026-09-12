@@ -82,6 +82,10 @@ contextBridge.exposeInMainWorld('pulse', {
     ipcRenderer.on('minibar:visibility-changed', subscription);
     return () => ipcRenderer.removeListener('minibar:visibility-changed', subscription);
   },
+  // MiniBar 启动停靠偏好（主进程 minibar-preference 持久化，非法值主进程归一为 remember）
+  getMiniBarDockPreference: () => ipcRenderer.invoke('minibar:get-dock-preference'),
+  setMiniBarDockPreference: (pref: 'remember' | 'left' | 'right') =>
+    ipcRenderer.invoke('minibar:set-dock-preference', pref),
   installBundledRpk: () => ipcRenderer.invoke('oronbox:install-bundled-rpk'),
   // 拖入 Mi Fitness / 小米健康研究的日志，解析出 authkey（只显示，不代替 OronBox 配对）
   extractBandKey: (filePath: string) => ipcRenderer.invoke('band:extract-key', { path: filePath }),
