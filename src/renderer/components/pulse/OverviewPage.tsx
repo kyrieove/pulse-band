@@ -223,16 +223,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               >
                 {bandBusy ? '连接中…' : bandConnected ? '已连接' : '连接手环'}
               </button>
-              {bandConnected && (
-                <button
-                  type="button"
-                  onClick={onDisconnect}
-                  disabled={bandBusy}
-                  className="w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  断开连接
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={onDisconnect}
+                disabled={!bandConnected || bandBusy}
+                className="w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                断开连接
+              </button>
             </div>
           </div>
         </div>
