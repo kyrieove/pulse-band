@@ -244,6 +244,13 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
         </div>
       </section>
 
+      {/*
+        ↓ 将来插卡位置：运动 / 睡眠数据卡放在这里（设备卡之下、手环端应用卡之上）。
+        本轮不实现，也不放「即将支持」占位 —— docs/design/pulse-2.0-design-system.md:34
+        「严禁展示不可用功能入口」。位置留在这里，将来直接插一张 <section> 即可，
+        不需要再动页面骨架。
+      */}
+
       {/* 手环端应用卡：已配置后才出现，只讲快应用，不混设备信息 */}
       {isConfigured && (
         <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col gap-3">
@@ -254,12 +261,18 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
                 Pulse 手环端快应用
               </h3>
             </div>
+            {/*
+              这里标的是「内置包」版本，即 Pulse 自带的那份 .rpk 的版本，
+              不是手环上已安装的版本 —— 协议侧没有任何 RPC 能读出手环已装版本
+              （device.app.* 只有 install.prepare/chunk/commit/cancel/mode），
+              所以不写「已装版本」，避免把本地包版本冒充成设备状态。
+            */}
             <span className="shrink-0 text-[11px] font-mono text-[var(--text-muted)]">
               {bundled === null
                 ? '读取中…'
                 : !bundled.exists
                 ? '内置包缺失'
-                : `v${bundled.versionName ?? '?'} (${bundled.versionCode ?? '?'})`}
+                : `内置包 v${bundled.versionName ?? '?'} (${bundled.versionCode ?? '?'})`}
             </span>
           </div>
 
@@ -284,11 +297,14 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
           )}
 
           <div className="pt-1">
+            {/* 次级操作：页面唯一的主操作在设备卡，这里保持描边样式不抢权重。
+                安装要走蓝牙通道，未连接时禁用并说明原因。 */}
             <button
               type="button"
               onClick={reinstall}
-              disabled={installing}
-              className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+              disabled={!isConnected || installing}
+              title={!isConnected ? '需要先连接手环' : undefined}
+              className="rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {installing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {installing ? '安装中…' : installResult?.ok ? '重装 Pulse 手环端' : '安装 Pulse 手环端'}
