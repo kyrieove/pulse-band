@@ -154,6 +154,7 @@ export const App: React.FC = () => {
               bandBusy={band.busy}
               bandCanConnect={band.canConnect}
               onConnect={() => void band.connect()}
+              onDisconnect={() => void band.disconnect()}
             />
           )}
 

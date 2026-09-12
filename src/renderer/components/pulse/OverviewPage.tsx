@@ -22,6 +22,8 @@ export interface OverviewPageProps {
   bandBusy: boolean;
   bandCanConnect: boolean;
   onConnect: () => void;
+  /** 已连接时的主动断开入口（useBandConnection.disconnect，PC 侧不会再自动重连） */
+  onDisconnect: () => void;
 }
 
 /** 5 小时柱色按阈值：>40 主色，20–40 警告，<20 濒危 */
@@ -69,6 +71,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   bandBusy,
   bandCanConnect,
   onConnect,
+  onDisconnect,
 }) => {
   const sessions = quota?.sessions ?? [];
   const quotas = quota?.quotas;
@@ -211,14 +214,25 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   : '未连接'}
               </span>
             </div>
-            <button
-              type="button"
-              onClick={onConnect}
-              disabled={!bandCanConnect}
-              className="btn-primary mt-3 w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {bandBusy ? '连接中…' : bandConnected ? '已连接' : '连接手环'}
-            </button>
+            {bandConnected ? (
+              <button
+                type="button"
+                onClick={onDisconnect}
+                disabled={bandBusy}
+                className="btn-primary mt-3 w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {bandBusy ? '断开中…' : '断开连接'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onConnect}
+                disabled={!bandCanConnect}
+                className="btn-primary mt-3 w-full rounded-full py-2 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {bandBusy ? '连接中…' : '连接手环'}
+              </button>
+            )}
           </div>
         </div>
       </div>
