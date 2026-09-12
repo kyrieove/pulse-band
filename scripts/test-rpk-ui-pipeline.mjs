@@ -10,6 +10,8 @@ import {
 } from '../src/main/services/app-install-service.ts';
 
 const RPK_PATH = path.resolve('assets/band-app.rpk');
+// 包体大小不硬编码：assets/band-app.rpk 刷新后跟着变
+const RPK_SIZE = fs.statSync(RPK_PATH).size;
 
 function setupIpc() {
   const ipcHandlers = new Map();
@@ -30,9 +32,9 @@ test('1. prepare-file 返回 metadata 且不暴露敏感字段', async () => {
   const res = await handler({}, { filePath: RPK_PATH });
 
   assert.strictEqual(res.status, 'preparing');
-  assert.strictEqual(res.fileSize, 255523);
+  assert.strictEqual(res.fileSize, RPK_SIZE);
   assert.strictEqual(res.chunkSize, 512);
-  assert.strictEqual(res.totalChunks, Math.ceil(255523 / 512));
+  assert.strictEqual(res.totalChunks, Math.ceil(RPK_SIZE / 512));
   assert.strictEqual(res.packageId, 'com.codeisland.band');
   assert.strictEqual(res.versionName, '1.0.1');
   assert.strictEqual(res.versionCode, 26);
@@ -101,14 +103,15 @@ test('3. sendFileChunks 真实读取', async () => {
   await service.prepareFromFile(RPK_PATH);
 
   const transferResult = await service.sendFileChunks();
-  const expectedChunks = Math.ceil(255523 / 512);
+  // 不硬编码旧包的 500 块/255523 字节：assets/band-app.rpk 刷新后跟着变
+  const expectedChunks = Math.ceil(RPK_SIZE / 512);
 
   assert.strictEqual(transferResult.sentChunks, expectedChunks);
-  assert.strictEqual(transferResult.totalBytes, 255523);
+  assert.strictEqual(transferResult.totalBytes, RPK_SIZE);
 
   const session = service.getSession();
   assert.ok(session);
-  assert.strictEqual(session.receivedBytes, 255523);
+  assert.strictEqual(session.receivedBytes, RPK_SIZE);
   assert.strictEqual(session.receivedChunks.size, expectedChunks);
 });
 
@@ -143,7 +146,7 @@ test('4. progress 百分比正确且单调递增', async () => {
 
   const lastEvent = progressEvents[progressEvents.length - 1];
   assert.strictEqual(lastEvent.percentage, 100);
-  assert.strictEqual(lastEvent.transferredBytes, 255523);
+  assert.strictEqual(lastEvent.transferredBytes, RPK_SIZE);
 });
 
 test('5. chunk 数量正确', async () => {
@@ -151,7 +154,7 @@ test('5. chunk 数量正确', async () => {
   const prepareRes = await service.prepareFromFile(RPK_PATH);
   const transferRes = await service.sendFileChunks();
 
-  const expectedTotalChunks = Math.ceil(255523 / 512);
+  const expectedTotalChunks = Math.ceil(RPK_SIZE / 512);
   assert.strictEqual(prepareRes.totalChunks, expectedTotalChunks);
   assert.strictEqual(transferRes.sentChunks, expectedTotalChunks);
 });

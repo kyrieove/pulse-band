@@ -10,6 +10,8 @@ import {
 } from '../src/main/services/app-install-service.ts';
 
 const RPK_PATH = path.resolve('assets/band-app.rpk');
+// 包体大小不硬编码：assets/band-app.rpk 刷新后跟着变
+const RPK_SIZE = fs.statSync(RPK_PATH).size;
 
 function setupLifecycleIpc() {
   const ipcHandlers = new Map();
@@ -26,7 +28,7 @@ test('1. 正常 prepare 建立生命周期会话', async () => {
   const res = await service.prepareFromFile(RPK_PATH);
 
   assert.strictEqual(res.status, 'preparing');
-  assert.strictEqual(res.fileSize, 255523);
+  assert.strictEqual(res.fileSize, RPK_SIZE);
   assert.strictEqual(res.chunkSize, 512);
 
   const session = service.getSession();

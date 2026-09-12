@@ -108,8 +108,10 @@ test('2. AppInstallService 集成测试: 验证 Main 调用 Core 各接口的精
   const prepCalls = mockClient.calls.filter((c) => c.method === 'device.app.install.prepare');
   assert.strictEqual(prepCalls.length, 1, 'prepare 必须只调用 1 次 Core');
 
-  // 2. sendChunks -> 499 块 -> 自动 commit
-  const expectedTotalChunks = Math.ceil(255523 / 512); // 499
+  // 2. sendChunks -> 按当前内置包实际大小分块 -> 自动 commit
+  // （不硬编码 500：assets/band-app.rpk 刷新后块数会变，用例跟包走）
+  const fs = await import('node:fs');
+  const expectedTotalChunks = Math.ceil(fs.statSync(RPK_PATH).size / 512);
   const transferResult = await service.sendFileChunks();
   assert.strictEqual(transferResult.status, 'verifying');
   assert.notStrictEqual(transferResult.status, 'completed');

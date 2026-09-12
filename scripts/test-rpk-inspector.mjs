@@ -136,7 +136,7 @@ test('5. 合法ZIP+manifest解析成功', () => {
     assert.equal(realMeta.packageId, 'com.codeisland.band');
     assert.equal(realMeta.versionName, '1.0.1');
     assert.equal(realMeta.versionCode, 26);
-    assert.equal(realMeta.fileSize, 255523);
+    assert.equal(realMeta.fileSize, fs.statSync(realRpkPath).size);
   }
 });
 
