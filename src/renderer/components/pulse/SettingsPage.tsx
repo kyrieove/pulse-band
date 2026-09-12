@@ -10,6 +10,15 @@ export interface SettingsPageProps {
   onOpenDiagnostics?: () => void;
 }
 
+/** MiniBar 启动停靠偏好三取值（与主进程 minibar-preference 约定一致） */
+export type MiniBarStartupDock = 'remember' | 'left' | 'right';
+
+const STARTUP_DOCK_OPTIONS: Array<{ value: MiniBarStartupDock; label: string }> = [
+  { value: 'remember', label: '记住侧边' },
+  { value: 'left', label: '固定靠左' },
+  { value: 'right', label: '固定靠右' },
+];
+
 const KV: React.FC<{ label: string; value: string }> = ({ label, value }) => {
   const isUpcoming = value === '即将支持';
   return (
@@ -78,6 +87,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 }) => {
   const miniBar = useMiniBar();
   const [appVersion, setAppVersion] = useState<string>(APP_VERSION);
+  // 启动停靠偏好：仅本地预览态，尚未接线（等主进程 get/set-dock-preference 契约）
+  const [startupDock, setStartupDock] = useState<MiniBarStartupDock>('remember');
 
   useEffect(() => {
     let alive = true;
@@ -125,6 +136,38 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <Toggle label="显示额度悬浮窗" checked={miniBar.visible} disabled={miniBar.busy} onChange={(v) => void miniBar.setVisible(v)} />
             </div>
             {miniBar.error && <p className="text-[11px] text-[var(--status-error)]">{miniBar.error}</p>}
+
+            {/* 启动停靠偏好：UI 先行。主进程 minibar 偏好读写 IPC（channel 名待定）落地后，
+                把本地 state 换成 get/set 调用并移除「即将支持」提示行。 */}
+            <div className="pt-3 border-t border-[var(--border-default)] space-y-2">
+              <div>
+                <div className="text-[12px] font-medium text-[var(--text-primary)]">启动停靠位置</div>
+                <div className="text-[11px] text-[var(--text-muted)]">
+                  MiniBar 每次启动停靠在屏幕左侧或右侧；运行期间仍可拖到任意边缘
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="启动停靠位置">
+                {STARTUP_DOCK_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={startupDock === opt.value}
+                    onClick={() => setStartupDock(opt.value)}
+                    className={`rounded-[8px] border px-2 py-1.5 text-[11px] font-medium text-center transition-colors cursor-pointer select-none ${
+                      startupDock === opt.value
+                        ? 'border-[var(--accent-soft)] bg-[var(--accent-wash)] text-[var(--anchor-text)]'
+                        : 'border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10.5px] text-[var(--text-muted)]">
+                即将支持：主进程偏好接口就绪后生效，当前选择暂不保存
+              </p>
+            </div>
           </section>
 
           {/* 运行诊断 */}
