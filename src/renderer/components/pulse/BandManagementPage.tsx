@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { Package, Upload, Loader2, AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Watch } from 'lucide-react';
 import { useBandConnection } from '../../hooks/useBandConnection';
 import { OtherAppInstall } from './OtherAppInstall';
@@ -47,19 +47,18 @@ const STEP_LABELS: Record<ProgressStep, string> = {
 const FAILABLE_STEPS: readonly ProgressStep[] = ['starting', 'searching', 'connecting', 'authenticating'];
 
 /**
- * MAC 脱敏：保留前 2 组与后 2 组，隐藏中间字节。
+ * 磁盘上的手环配置状态（%LOCALAPPDATA%/PulseDev/run/device.json）。
  *
- * 不复用 device-config-service 的 maskMacAddress —— 那个模块顶层 import 了
- * node:child_process / node:fs / node:path，渲染进程直接引用会把 node 内置模块
- * 带进前端 bundle。本页是渲染层唯一需要脱敏的地方，故就地实现同形状的纯函数。
- * 地址只来自 useBandConnection 的只读快照，这里仅做展示层截断，
- * 不改变真实地址的存储与任何传递路径。
+ * 「是否已配置」的唯一权威来源。不能拿 conn.device 判断 —— 见下面的注释。
  */
-const maskAddress = (address: string): string => {
-  const clean = address.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
-  if (clean.length !== 12) return '已配置手环';
-  return `${clean.slice(0, 2)}:${clean.slice(2, 4)}:**:**:${clean.slice(8, 10)}:${clean.slice(10, 12)}`;
-};
+interface DeviceConfigStatus {
+  exists: boolean;
+  valid: boolean;
+  deviceName?: string;
+  maskedAddr?: string;
+  codename?: string;
+  error?: string;
+}
 
 export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartSetup }) => {
   // 手环设备信息（名称 / 地址 / 连接状态）来自 useBandConnection 的真实快照
@@ -70,6 +69,9 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
   const [installing, setInstalling] = useState(false);
   const [installResult, setInstallResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [showOtherApps, setShowOtherApps] = useState(false);
+
+  // 磁盘上的配置状态 —— 「已配置」的权威来源，与"当前是否连着"无关
+  const [config, setConfig] = useState<DeviceConfigStatus | null>(null);
 
   // 记录最近一次进行中的步骤，连接出错时可精准提示失败于哪一步
   const lastActiveStepRef = useRef<ProgressStep | null>(null);
@@ -95,6 +97,43 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
       alive = false;
     };
   }, []);
+
+  /**
+   * 读磁盘上的配置状态。
+   *
+   * 「是否已配置」不能用 conn.device 判断：core 的 device.status 在未连接时把 device
+   * 直接置为 null（core/src/live.rs:1056 `if connected { live_device_json() } else { Null }`），
+   * oronbox-bridge 的 safeDevice(null) 同样返回 null。于是拿 conn.device 当"已配置"
+   * 会把「断开」误判成「尚未配置」—— 已配对的用户一断开就被推回配置向导，
+   * 而向导第 1 步是「导入手机日志」、第 2 步才是「连接手环」，
+   * 表现成"想连手环必须先点配置手环"。
+   *
+   * 配置本身确实是连接的技术前提（core/src/live.rs:551 `read_device_auth_mac()?`
+   * 需要 device.json 里的 addr 与 32 位 authkey），所以未配置时只给「配置手环」是对的；
+   * 错的只是把"已配置"和"当前连着"混为一谈。
+   *
+   * 重读时机：挂载时、连接状态变化后（向导内连上会触发）、窗口重新获得焦点时
+   * （向导是覆盖层，本页不卸载，关闭向导后靠 focus 兜底）。
+   */
+  const readConfig = useCallback(() => {
+    window.pulse
+      ?.getDeviceConfigStatus?.()
+      .then((s) => {
+        if (s) setConfig(s);
+      })
+      .catch(() => {
+        /* IPC 不可用时保持上一次结果，不把"未知"当成"未配置" */
+      });
+  }, []);
+
+  useEffect(() => {
+    readConfig();
+  }, [readConfig, conn.state]);
+
+  useEffect(() => {
+    window.addEventListener('focus', readConfig);
+    return () => window.removeEventListener('focus', readConfig);
+  }, [readConfig]);
 
   const reinstall = async () => {
     if (!window.pulse?.appInstall?.installBundled) return;
@@ -123,15 +162,34 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
     }
   };
 
-  const isConfigured = Boolean(conn.device);
   const isConnected = conn.state === 'connected';
   const isConnecting = conn.state === 'connecting';
   const isError = conn.state === 'error';
 
+  // 「已配置」看磁盘，不看连接状态 —— 断开手环不会取消配置
+  const configKnown = config !== null;
+  const isConfigured = Boolean(config?.exists && config?.valid);
+
+  const deviceName = config?.deviceName ?? conn.device?.name ?? '已配对手环';
+  // 脱敏地址由主进程 maskMacAddress 给出，渲染层不再自己截断一份
+  const addressLabel = config?.maskedAddr ?? null;
+
+  const cardTitle = !configKnown
+    ? '手环'
+    : isConfigured
+    ? deviceName
+    : config?.exists
+    ? '手环配置无效'
+    : '尚未配置手环';
+
   // 标题行只讲页面状态，设备身份交给设备卡，避免两处重复同一份信息。
   // 未配置时用简写「未配置」，不与设备卡标题「尚未配置手环」重复同一句话。
-  const statusLine = !isConfigured
-    ? '未配置'
+  const statusLine = !configKnown
+    ? '读取中…'
+    : !isConfigured
+    ? config?.exists
+      ? '配置无效'
+      : '未配置'
     : isConnected
     ? '已连接'
     : isConnecting
@@ -139,8 +197,6 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
     : isError
     ? '连接失败'
     : '未连接';
-
-  const addressLabel = conn.device?.address ? maskAddress(conn.device.address) : null;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-y-auto custom-scrollbar">
@@ -165,6 +221,8 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
       {/*
         设备卡：页面主体。五种状态五种面孔，全卡只有一个主操作。
         未配置 → 未连接 → 连接中 → 已连接 → 连接失败，互斥出现。
+        「已配置」来自磁盘 device.json，与当前连接状态无关：
+        断开手环不会退回未配置，配置入口也只在未配置时出现在卡内。
       */}
       <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -172,13 +230,15 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
             <Watch className="w-4 h-4" />
           </span>
           <h3 className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
-            {isConfigured ? conn.device?.name ?? '已配对手环' : '尚未配置手环'}
+            {cardTitle}
           </h3>
         </div>
 
         <p className="text-[11.5px] text-[var(--text-muted)] leading-relaxed">
-          {!isConfigured
-            ? '完成配对与日志导入后即可连接手环、安装手环端快应用'
+          {!configKnown
+            ? '正在读取本机手环配置'
+            : !isConfigured
+            ? config?.error ?? '完成配对与日志导入后即可连接手环、安装手环端快应用'
             : addressLabel ?? '已配置手环'}
         </p>
 
@@ -202,7 +262,16 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
 
         {/* 主操作：每个状态有且只有一个 */}
         <div className="pt-1">
-          {!isConfigured ? (
+          {!configKnown ? (
+            /* 配置状态还没读回来：不给任何可点动作，避免把"未知"渲染成"未配置" */
+            <button
+              type="button"
+              disabled
+              className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 opacity-50 cursor-not-allowed"
+            >
+              读取配置中…
+            </button>
+          ) : !isConfigured ? (
             <button
               type="button"
               onClick={onStartSetup}
