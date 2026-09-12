@@ -11,7 +11,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { createReadStream, stat } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import type { CoreRpcClient } from './core-app-install-bridge.ts';
 
 /** install 阻塞式传输+安装的全量超时（与真机验证脚本一致） */
