@@ -295,6 +295,28 @@ function pushState() {
   minibarWin.webContents.send('minibar-state', state);
 }
 
+// 会话状态推送节流：hook 事件常在几百毫秒内连发数条（提交/工具前后/结束），
+// 1s 心跳 tick 也走同一个 update 事件。120ms 节流压平突发 IPC，
+// 延迟上限 120ms，远小于任何轮询周期，不拖慢状态呈现。
+const SESSION_PUSH_THROTTLE_MS = 120;
+let sessionPushTimer: NodeJS.Timeout | null = null;
+let lastSessionPushAt = 0;
+
+function pushSessionStateThrottled(): void {
+  const elapsed = Date.now() - lastSessionPushAt;
+  if (elapsed >= SESSION_PUSH_THROTTLE_MS) {
+    lastSessionPushAt = Date.now();
+    pushState();
+    return;
+  }
+  if (sessionPushTimer) return;
+  sessionPushTimer = setTimeout(() => {
+    sessionPushTimer = null;
+    lastSessionPushAt = Date.now();
+    pushState();
+  }, SESSION_PUSH_THROTTLE_MS - elapsed);
+}
+
 function notifyVisibility() {
   const visible = isMiniBarVisible();
   for (const w of BrowserWindow.getAllWindows()) {
@@ -461,7 +483,7 @@ export function createMiniBarWindow(
   }
 
   // 监听会话变更与心跳轮询
-  sessionManager.on('update', pushState);
+  sessionManager.on('update', pushSessionStateThrottled);
   if (!updateTimer) {
     updateTimer = setInterval(pushState, 3000);
   }
@@ -611,6 +633,10 @@ export function disposeMiniBar(): void {
   if (updateTimer) {
     clearInterval(updateTimer);
     updateTimer = null;
+  }
+  if (sessionPushTimer) {
+    clearTimeout(sessionPushTimer);
+    sessionPushTimer = null;
   }
   if (dragFollowTimer) {
     clearInterval(dragFollowTimer);
