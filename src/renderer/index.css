@@ -382,10 +382,22 @@ html.screen-minibar #root {
   will-change: opacity, transform;
 }
 
+/* 减弱动态（审查第 13 项）：系统开启后全局压掉持续的呼吸/旋转/ping 与过渡。
+   动画默认 fill-mode 为 none，结束后回到元素基础样式——
+   animate-pulse/ping 的圆点停在原色不消失，Loader2 停止旋转但图标仍在，
+   「思考中/执行中/已完成」等文字状态全部保留。 */
 @media (prefers-reduced-motion: reduce) {
   .minibar-card-anim {
     transition: opacity 160ms ease-in-out !important;
     transform: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
