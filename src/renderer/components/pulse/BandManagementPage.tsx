@@ -128,9 +128,10 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
   const isConnecting = conn.state === 'connecting';
   const isError = conn.state === 'error';
 
-  // 标题行只讲页面状态，设备身份交给设备卡，避免两处重复同一份信息
+  // 标题行只讲页面状态，设备身份交给设备卡，避免两处重复同一份信息。
+  // 未配置时用简写「未配置」，不与设备卡标题「尚未配置手环」重复同一句话。
   const statusLine = !isConfigured
-    ? '尚未配置手环'
+    ? '未配置'
     : isConnected
     ? '已连接'
     : isConnecting
