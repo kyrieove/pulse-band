@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Watch,
   FileText,
@@ -99,6 +99,49 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
       alive = false;
     };
   }, []);
+
+  // ---- 模态焦点管理（审查第 13 项）：打开迁入、Tab 约束在向导内、关闭后恢复触发元素 ----
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    // 焦点先落在面板本身（tabIndex=-1，不显示焦点圈），Tab 从关闭按钮开始
+    dialogRef.current?.focus();
+    return () => {
+      // 卸载（Esc / 关闭 / 完成）时把焦点还给打开向导的元素
+      previousFocusRef.current?.focus?.();
+    };
+  }, []);
+
+  const FOCUSABLE_SELECTOR =
+    'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  const handleWizardKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const panel = dialogRef.current;
+    if (!panel) return;
+    const focusables = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement as HTMLElement | null;
+    const inside = !!active && panel.contains(active);
+    if (e.shiftKey) {
+      if (!inside || active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (!inside || active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   const steps: SetupStep[] = INITIAL_SETUP_STEPS.map((step, idx) => {
     const exec = stepExecution[step.id] || 'pending';
@@ -330,9 +373,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
       role="dialog"
       aria-modal="true"
       aria-labelledby="wizard-title"
+      onKeyDown={handleWizardKeyDown}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 select-none animate-in fade-in duration-200"
     >
-      <div className="w-full max-w-2xl bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-[var(--radius-xl)] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] transition-colors duration-200">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="w-full max-w-2xl bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-[var(--radius-xl)] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] transition-colors duration-200 outline-none"
+      >
         {/* 顶部标题栏 */}
         <div className="px-5 py-3.5 border-b border-[var(--border-default)] flex items-center justify-between bg-[var(--bg-surface)]">
           <div className="flex items-center gap-2.5">
