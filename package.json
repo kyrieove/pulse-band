@@ -53,6 +53,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@remotion/cli": "^4.0.523",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
@@ -65,11 +66,15 @@
     "postcss": "^8.5.28",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "remotion": "^4.0.523",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vite-plugin-electron": "^1.1.2",
     "vite-plugin-electron-renderer": "^1.0.0"
+  },
+  "dependencies": {
+    "@remotion/player": "^4.0.523"
   }
 }
