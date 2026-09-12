@@ -14,6 +14,10 @@ export interface UseQuotaStateResult {
   state: MinibarState | null;
   /** 真正拿到数据的时刻；从未成功取到过则为 null（绝不退化为挂载时刻） */
   updatedAt: Date | null;
+  /** 别名，代表前端拿到最新快照的时刻 */
+  lastUpdatedAt: Date | null;
+  /** 最近一次拉取或连接错误，拉取成功时清空为 null */
+  lastError: Error | string | null;
   /** 是否处于初始加载中（首次 pull 结束前为 true，无论成败） */
   loading: boolean;
   /** 是否处于手动刷新进行中（只在 refresh() 调用期间为 true） */
@@ -25,6 +29,7 @@ export interface UseQuotaStateResult {
 export function useQuotaState(): UseQuotaStateResult {
   const [state, setState] = useState<MinibarState | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [lastError, setLastError] = useState<Error | string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const ciRef = useRef<typeof window.codeisland>(window.codeisland);
@@ -45,9 +50,13 @@ export function useQuotaState(): UseQuotaStateResult {
       if (s) {
         setState(s);
         setUpdatedAt(new Date());
+        setLastError(null);
+      } else {
+        setLastError('未获取到额度快照');
       }
-    } catch {
-      // 拉取异常时保留上一份数据，不报错、不伪造
+    } catch (err: any) {
+      // 拉取异常时保留上一份数据，不伪造，但向页面暴露失败状态
+      setLastError(err?.message ?? String(err) ?? '网络请求异常');
     } finally {
       setLoading(false);
     }
@@ -77,6 +86,7 @@ export function useQuotaState(): UseQuotaStateResult {
       if (!alive || !s) return;
       setState(s);
       setUpdatedAt(new Date());
+      setLastError(null);
     });
 
     const timer = setInterval(pull, POLL_INTERVAL_MS);
@@ -95,5 +105,5 @@ export function useQuotaState(): UseQuotaStateResult {
     };
   }, [pull]);
 
-  return { state, updatedAt, loading, refreshing, refresh };
+  return { state, updatedAt, lastUpdatedAt: updatedAt, lastError, loading, refreshing, refresh };
 }

@@ -7,9 +7,10 @@ export interface TopBarProps {
   /** 由 App 层唯一一份 useQuotaState 注入，避免重复订阅/轮询 */
   state: MinibarState | null;
   updatedAt: Date | null;
+  lastError?: Error | string | null;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({ state, updatedAt }) => {
+export const TopBar: React.FC<TopBarProps> = ({ state, updatedAt, lastError }) => {
   const handleMinimize = () => {
     (window as any).pulse?.minimizeWindow?.();
   };
@@ -28,15 +29,19 @@ export const TopBar: React.FC<TopBarProps> = ({ state, updatedAt }) => {
     isAgentDetected(k, sessions, quotas ? quotas[k] : null)
   ).length;
 
+  const isErr = Boolean(lastError);
   const dotClass =
-    updatedAt !== null && agentCount > 0
+    isErr
+      ? 'bg-[var(--status-error)]'
+      : updatedAt !== null && agentCount > 0
       ? 'bg-[var(--status-success)]'
       : 'bg-[var(--status-idle)]';
 
-  const statusTitle =
-    updatedAt === null
-      ? '未获取到额度数据'
-      : `${agentCount} 个 Agent 已接入`;
+  const statusTitle = isErr
+    ? `拉取快照失败: ${String(lastError)}`
+    : updatedAt === null
+    ? '未获取到额度数据'
+    : `${agentCount} 个 Agent 已接入`;
 
   // 从未成功取到数据则显示占位符，绝不退化为当前时刻
   const timeText = updatedAt
@@ -53,7 +58,9 @@ export const TopBar: React.FC<TopBarProps> = ({ state, updatedAt }) => {
         <span className="text-[12px] font-medium text-[var(--text-secondary)]">
           {agentCount} 个 Agent 已接入
         </span>
-        <span className="text-[11px] text-[var(--text-muted)] tabular-nums">· {timeText} 更新</span>
+        <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
+          · {isErr ? `上次收到快照 ${timeText} (拉取异常)` : `收到快照 ${timeText}`}
+        </span>
       </div>
 
       {/* 右侧窗口三联按钮 */}

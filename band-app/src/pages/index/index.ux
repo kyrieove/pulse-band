@@ -926,10 +926,7 @@ export default {
 
         // 若底层蓝牙发包直接返回错误码 (如 send_fail)，说明 BLE 通道异常，标记 retry 并尝试重新检查链路
         if (respLocal && respLocal.statusText && respLocal.statusText.indexOf('send_fail') !== -1) {
-          if (!this.hasLoadedData) {
-            this['light' + this.curIdx + 'Class'] = 'lt-err';
-            this.setStatusText(respLocal.statusText.slice(0, 18));
-          }
+          this.handleDisconnect(respLocal.statusText.slice(0, 18));
           icMode = 'retry';
           finish();
           return;
@@ -947,20 +944,14 @@ export default {
           }
 
           if (respLan && respLan.statusText && respLan.statusText.indexOf('send_fail') !== -1) {
-            if (!this.hasLoadedData) {
-              this['light' + this.curIdx + 'Class'] = 'lt-err';
-              this.setStatusText(respLan.statusText.slice(0, 18));
-            }
+            this.handleDisconnect(respLan.statusText.slice(0, 18));
             icMode = 'retry';
             finish();
             return;
           }
 
-          const errTxt = (respLocal && respLocal.statusText) || (respLan && respLan.statusText) || 'no_resp';
-          if (!this.hasLoadedData) {
-            this['light' + this.curIdx + 'Class'] = 'lt-err';
-            this.setStatusText(errTxt.slice(0, 20));
-          }
+          const errTxt = (respLocal && respLocal.statusText) || (respLan && respLan.statusText) || '连接中断';
+          this.handleDisconnect(errTxt.slice(0, 20));
           console.log('[CodeIsland] fetch fail both local and lan: ' + errTxt);
           finish();
         });
@@ -981,10 +972,7 @@ export default {
         }
       },
       fail: (err) => {
-        if (!this.hasLoadedData) {
-          this['light' + this.curIdx + 'Class'] = 'lt-err';
-          this.setStatusText('Direct fetch err');
-        }
+        this.handleDisconnect('连接中断');
         console.log('[CodeIsland] fetch fail: ' + err);
       }
     });
@@ -1120,6 +1108,20 @@ export default {
   },
 
 
+
+  // 连接中断/传输异常处理：持续可见提示，并彻底覆盖可能残留的 Running 动词与光效
+  handleDisconnect(msg) {
+    const tip = msg || '连接中断';
+    this['light' + this.curIdx + 'Class'] = 'lt-err';
+    this.setStatusText(tip);
+    for (let i = 0; i < AGENTS.length; i++) {
+      if (this['light' + i + 'Class'] === 'lt-run') {
+        this['light' + i + 'Class'] = 'lt-err';
+        this.setVerbSegs(i, '连接中断');
+        this['a' + i + 'VerbColor'] = '#ff453a';
+      }
+    }
+  },
 
   // 传输层错误等一次性文字：写到当前可见屏的工具名行（灰字，不占用动词行）
   setStatusText(str) {

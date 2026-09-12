@@ -45,7 +45,7 @@ export const App: React.FC = () => {
   // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
   const band = useBandConnection();
   // 额度/会话数据唯一来源：概览页与 TopBar 共用这一份，不再起第二个订阅
-  const { state: quota, updatedAt, loading, refreshing, refresh } = useQuotaState();
+  const { state: quota, updatedAt, lastError, loading, refreshing, refresh } = useQuotaState();
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
     setTheme(newTheme);
@@ -139,7 +139,7 @@ export const App: React.FC = () => {
 
       {/* 右栏：状态顶栏 + 内容区 */}
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
-        <TopBar state={quota} updatedAt={updatedAt} />
+        <TopBar state={quota} updatedAt={updatedAt} lastError={lastError} />
 
         <ContentArea>
           {page === 'overview' && (

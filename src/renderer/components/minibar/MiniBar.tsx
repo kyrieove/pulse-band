@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { X, Pin, PinOff, Sliders, EyeOff, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import type { MinibarState, AgentKind, AgentSession } from '../../../common/types';
-import { toRemainingPercent, parseResetTimeInfo } from '../pulse/agent-quota-utils';
+import { toRemainingPercent, parseResetTimeInfo, resolveQuotaTrustState } from '../pulse/agent-quota-utils';
 import { AgentLogo } from '../pulse/AgentLogo';
 
 export interface MiniBarProps {
@@ -493,26 +493,44 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
             <span className="font-medium text-[15px] text-white tracking-normal truncate">
               {currentAgentConfig!.name}
             </span>
-            {currentQuota?.authoritative === false ? (
-              <span
-                className="text-[9px] px-1 py-0.2 rounded bg-amber-500/10 text-amber-300/90 border border-amber-500/20"
-                title="本地估算数据"
-              >
-                Est
-              </span>
-            ) : (
-              <span
-                className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-300/90 border border-emerald-500/20"
-                title="官方实时权威额度"
-              >
-                Live
-              </span>
-            )}
-            {currentQuota?.needsAuth && (
-              <span className="text-[9px] px-1 py-0.2 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                Auth
-              </span>
-            )}
+            {(() => {
+              const trust = resolveQuotaTrustState(currentQuota);
+              if (trust === 'needs_auth') {
+                return (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                    需登录
+                  </span>
+                );
+              }
+              if (trust === 'estimated') {
+                return (
+                  <span
+                    className="text-[9px] px-1 py-0.2 rounded bg-amber-500/10 text-amber-300/90 border border-amber-500/20"
+                    title="本地估算数据"
+                  >
+                    估算
+                  </span>
+                );
+              }
+              if (trust === 'normal') {
+                return (
+                  <span
+                    className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-300/90 border border-emerald-500/20"
+                    title="官方实时权威额度"
+                  >
+                    正常
+                  </span>
+                );
+              }
+              return (
+                <span
+                  className="text-[9px] px-1 py-0.2 rounded bg-white/[0.06] text-white/40 border border-white/[0.08]"
+                  title="暂无额度数据"
+                >
+                  暂无数据
+                </span>
+              );
+            })()}
           </div>
         </div>
 

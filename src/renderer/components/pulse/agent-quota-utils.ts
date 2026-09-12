@@ -134,3 +134,58 @@ export function parseResetTimeInfo(
     absoluteTimeText,
   };
 }
+
+/** 额度可信度与连接新鲜度状态词（三端共用规范） */
+export type QuotaTrustState =
+  | 'normal'        // 正常
+  | 'estimated'     // 估算
+  | 'no_data'       // 暂无数据
+  | 'needs_auth'    // 需登录
+  | 'disconnected'; // 连接中断
+
+export const QUOTA_TRUST_LABELS: Record<QuotaTrustState, string> = {
+  normal: '正常',
+  estimated: '估算',
+  no_data: '暂无数据',
+  needs_auth: '需登录',
+  disconnected: '连接中断',
+};
+
+/**
+ * 判定当前 Agent 的额度可信状态
+ */
+export function resolveQuotaTrustState(
+  quota: {
+    authoritative?: boolean;
+    needsAuth?: boolean;
+    pct5h?: number | null;
+    pct7d?: number | null;
+  } | null | undefined,
+  isDisconnected?: boolean
+): QuotaTrustState {
+  if (isDisconnected) return 'disconnected';
+  if (!quota || (quota.pct5h == null && quota.pct7d == null)) {
+    if (quota?.needsAuth) return 'needs_auth';
+    return 'no_data';
+  }
+  if (quota.needsAuth) return 'needs_auth';
+  if (quota.authoritative === false) return 'estimated';
+  return 'normal';
+}
+
+/** Agent 运行/会话状态词（MiniBar / 手环统一规范） */
+export type AgentSessionStatus =
+  | 'idle'
+  | 'thinking'
+  | 'running_tool'
+  | 'completed'
+  | 'error';
+
+export const AGENT_SESSION_STATUS_LABELS: Record<AgentSessionStatus, string> = {
+  idle: '待命',
+  thinking: '思考中',
+  running_tool: '执行中',
+  completed: '已完成',
+  error: '出错',
+};
+
