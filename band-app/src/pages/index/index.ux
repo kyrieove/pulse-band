@@ -26,7 +26,7 @@
         </div>
         <text class="tool-name">{{a0Tool}}</text>
         <div class="card card-a0">
-          <text class="card-title tt-a0">5h</text>
+          <text class="card-title tt-a0">5h 剩余</text>
           <text class="card-reset">{{claudeReset5h}}</text>
           <text class="card-val" style="color: {{claudeValC5h}};">{{claudeVal5h}}</text>
           <div class="bar-bg">
@@ -34,7 +34,7 @@
           </div>
         </div>
         <div class="card card-b">
-          <text class="card-title tt-b">7d</text>
+          <text class="card-title tt-b">7d 剩余</text>
           <text class="card-reset">{{claudeReset7d}}</text>
           <text class="card-val" style="color: {{claudeValC7d}};">{{claudeVal7d}}</text>
           <div class="bar-bg">
@@ -68,7 +68,7 @@
         </div>
         <text class="tool-name">{{a1Tool}}</text>
         <div class="card card-a1">
-          <text class="card-title tt-a1">5h</text>
+          <text class="card-title tt-a1">5h 剩余</text>
           <text class="card-reset">{{codexReset5h}}</text>
           <text class="card-val" style="color: {{codexValC5h}};">{{codexVal5h}}</text>
           <div class="bar-bg">
@@ -76,7 +76,7 @@
           </div>
         </div>
         <div class="card card-b">
-          <text class="card-title tt-b">7d</text>
+          <text class="card-title tt-b">7d 剩余</text>
           <text class="card-reset">{{codexReset7d}}</text>
           <text class="card-val" style="color: {{codexValC7d}};">{{codexVal7d}}</text>
           <div class="bar-bg">
@@ -110,7 +110,7 @@
         </div>
         <text class="tool-name">{{a2Tool}}</text>
         <div class="card card-a2">
-          <text class="card-title tt-a2">5h</text>
+          <text class="card-title tt-a2">5h 剩余</text>
           <text class="card-reset">{{antigravityReset5h}}</text>
           <text class="card-val" style="color: {{antigravityValC5h}};">{{antigravityVal5h}}</text>
           <div class="bar-bg">
@@ -118,7 +118,7 @@
           </div>
         </div>
         <div class="card card-b">
-          <text class="card-title tt-b">7d</text>
+          <text class="card-title tt-b">7d 剩余</text>
           <text class="card-reset">{{antigravityReset7d}}</text>
           <text class="card-val" style="color: {{antigravityValC7d}};">{{antigravityVal7d}}</text>
           <div class="bar-bg">
@@ -1082,7 +1082,7 @@ export default {
   //   骨架/缺数  → '--' + 条宽 0（不造数）
   //   不可信估算 → '~n%' 数字置灰 #8e8e93 + 条置灰 #48484a + 倒计时 '--'（剥夺彩色）
   //   正常       → 'n%' 白 + 条平涂屏专属色 + 倒计时
-  // 条宽 = Math.round(140 * pct / 100)
+  // 条宽 = Math.round(140 * remaining / 100)（统一展示剩余额度）
   applyCards(a, l) {
     const FILL_1 = { claude: '#ff9f0a', codex: '#30d158', antigravity: '#9d4edd' };
     const FILL_7D = '#0a84ff';
@@ -1091,22 +1091,25 @@ export default {
     const wins = [['5h', 'pct5h', 'resetText'], ['7d', 'pct7d', 'reset7dText']];
     for (let w = 0; w < wins.length; w++) {
       const tag = wins[w][0];
-      const pct = l ? l[wins[w][1]] : null;
+      const rawPct = l ? l[wins[w][1]] : null;
       const stale = l ? l.authoritative === false : true;
+      const remaining = (rawPct !== null && rawPct !== undefined && !isNaN(rawPct))
+        ? Math.max(0, Math.min(100, Math.round(100 - rawPct)))
+        : null;
       let val = '--';
       let valC = '#ffffff';
       let fillW = 0;
       let fillC = tag === '7d' ? FILL_7D : FILL_1[a];
       let reset = '--';
-      if (l && pct !== null && pct !== undefined && !stale) {
-        val = pct + '%';
-        fillW = Math.round(140 * pct / 100);
+      if (l && remaining !== null && !stale) {
+        val = remaining + '%';
+        fillW = Math.round(140 * remaining / 100);
         reset = l[wins[w][2]] || (tag === '5h' ? 'ready' : '--');
-      } else if (l && pct !== null && pct !== undefined && stale) {
-        val = '~' + pct + '%';
+      } else if (l && remaining !== null && stale) {
+        val = '~' + remaining + '%';
         valC = EST_VAL;
         fillC = EST_FILL;
-        fillW = Math.round(140 * pct / 100);
+        fillW = Math.round(140 * remaining / 100);
       }
       this[a + 'Val' + tag] = val;
       this[a + 'ValC' + tag] = valC;
