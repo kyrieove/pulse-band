@@ -447,6 +447,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
                   key={s.id}
                   type="button"
                   onClick={() => handleStepClick(idx)}
+                  aria-current={isSelected ? 'step' : undefined}
                   className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-[var(--radius-md)] text-xs text-left transition-all cursor-pointer ${
                     isSelected
                       ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] font-semibold shadow-[var(--shadow-sm)] border border-[var(--border-default)]'

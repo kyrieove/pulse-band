@@ -48,6 +48,7 @@ function NavGroup(props: {
             <button
               key={item.id}
               onClick={() => props.onNavigate(item.id)}
+              aria-current={active ? 'page' : undefined}
               className={`relative w-full flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-[12.5px] transition-all duration-150 ${
                 active
                   ? 'bg-[var(--accent-wash)] text-[var(--anchor-text)] font-semibold'
