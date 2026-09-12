@@ -3,7 +3,21 @@ import assert from 'node:assert/strict';
 import {
   toRemainingPercent,
   resolveQuotaStatus,
+  resolveQuotaLiveTier,
 } from '../src/renderer/components/pulse/agent-quota-utils.ts';
+
+test('resolveQuotaLiveTier: 额度权威 + 检测方式决定实时/轮询', () => {
+  assert.equal(resolveQuotaLiveTier({ authoritative: true }, 'event'), 'realtime');
+  assert.equal(resolveQuotaLiveTier({ authoritative: true }, 'polling'), 'polling');
+  // 检测方式缺省（旧状态对象）按轮询保守处理，不谎报实时
+  assert.equal(resolveQuotaLiveTier({ authoritative: true }, undefined), 'polling');
+});
+
+test('resolveQuotaLiveTier: 估算压过会话维度', () => {
+  assert.equal(resolveQuotaLiveTier({ authoritative: false }, 'event'), 'estimated');
+  assert.equal(resolveQuotaLiveTier({ authoritative: false }, undefined), 'estimated');
+  assert.equal(resolveQuotaLiveTier(undefined, 'event'), 'estimated');
+});
 
 test('toRemainingPercent: accurately converts used percentage to remaining percentage', () => {
   assert.equal(toRemainingPercent(0), 100);

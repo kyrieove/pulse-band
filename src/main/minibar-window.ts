@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import type { SessionManager } from './services/session-manager';
 import type { StatusServer } from './services/status-server';
-import type { MinibarState } from '../common/types';
+import type { MinibarState, SessionDetectionMode, AgentKind } from '../common/types';
 import {
   resolveMiniBarVisibility,
   resolveMiniBarDockPreference,
@@ -50,6 +50,8 @@ let currentDockSide: DockSide = 'right';
 let currentDisplayMode: import('../common/types').MinibarDisplayMode = 'full';
 let updateTimer: NodeJS.Timeout | null = null;
 let sessionManagerRef: SessionManager | null = null;
+/** 会话检测方式判定器：由入口注入（Claude=hook、Codex=tailer watch、Antigravity=轮询常量） */
+let detectionProvider: (() => Record<AgentKind, SessionDetectionMode>) | null = null;
 let statusServerRef: StatusServer | null = null;
 // 手动拖拽跟随（替代原生 -webkit-app-region: drag）状态
 let dragFollowTimer: NodeJS.Timeout | null = null;
@@ -291,6 +293,7 @@ function pushState() {
     isExpanded,
     dockSide: currentDockSide,
     displayMode: currentDisplayMode,
+    sessionDetection: detectionProvider ? detectionProvider() : undefined,
   };
   minibarWin.webContents.send('minibar-state', state);
 }
@@ -389,10 +392,12 @@ export function resetMiniBarDock(): void {
 
 export function createMiniBarWindow(
   sessionManager: SessionManager,
-  statusServer: StatusServer
+  statusServer: StatusServer,
+  detection?: () => Record<AgentKind, SessionDetectionMode>
 ): BrowserWindow {
   sessionManagerRef = sessionManager;
   statusServerRef = statusServer;
+  detectionProvider = detection ?? null;
 
   const cjsPreload = path.join(import.meta.dirname, '../preload/index.cjs');
   const jsPreload = path.join(import.meta.dirname, '../preload/index.js');
@@ -490,15 +495,16 @@ export function createMiniBarWindow(
 
   // 注册独立 IPC 事件（幂等单次绑定）
   ipcMain.removeHandler('minibar:get-state');
-  ipcMain.handle('minibar:get-state', () => {
-    return {
-      sessions: sessionManager.getAllSessions(),
-      quotas: statusServer.getQuotas(),
-      isExpanded,
-      dockSide: currentDockSide,
-      displayMode: currentDisplayMode,
-    };
-  });
+    ipcMain.handle('minibar:get-state', () => {
+      return {
+        sessions: sessionManager.getAllSessions(),
+        quotas: statusServer.getQuotas(),
+        isExpanded,
+        dockSide: currentDockSide,
+        displayMode: currentDisplayMode,
+        sessionDetection: detectionProvider ? detectionProvider() : undefined,
+      };
+    });
 
   ipcMain.removeAllListeners('minibar:set-display-mode');
   ipcMain.on('minibar:set-display-mode', (_, mode: import('../common/types').MinibarDisplayMode) => {

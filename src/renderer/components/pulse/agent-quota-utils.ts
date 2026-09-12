@@ -181,6 +181,34 @@ export type AgentSessionStatus =
   | 'completed'
   | 'error';
 
+/** Live 徽标三档：额度维度与会话维度分开表达，估算（额度非权威）优先压过会话维度 */
+export type QuotaLiveTier = 'realtime' | 'polling' | 'estimated';
+
+export const QUOTA_LIVE_TIER_LABELS: Record<QuotaLiveTier, string> = {
+  realtime: '实时',
+  polling: '轮询',
+  estimated: '估算',
+};
+
+export const QUOTA_LIVE_TIER_HINTS: Record<QuotaLiveTier, string> = {
+  realtime: '额度实时，且会话状态为事件驱动',
+  polling: '额度实时，但会话状态按固定周期轮询，存在秒级延迟',
+  estimated: '额度为本地估算，非官方权威数据',
+};
+
+/**
+ * 判定 Live 徽标三档。
+ * @param quota 额度对象（只看 authoritative）
+ * @param detection 会话检测方式（main 进程随 MinibarState.sessionDetection 下发；缺省按轮询保守处理）
+ */
+export function resolveQuotaLiveTier(
+  quota: { authoritative?: boolean } | null | undefined,
+  detection?: 'event' | 'polling'
+): QuotaLiveTier {
+  if (quota?.authoritative !== true) return 'estimated';
+  return detection === 'event' ? 'realtime' : 'polling';
+}
+
 export const AGENT_SESSION_STATUS_LABELS: Record<AgentSessionStatus, string> = {
   idle: '待命',
   thinking: '思考中',

@@ -3,7 +3,7 @@ import { RefreshCw, Download } from 'lucide-react';
 import type { MinibarState } from '../../../common/types';
 import { AgentLogo } from './AgentLogo';
 import { AgentSection, SUPPORTED_AGENTS, isAgentDetected } from './AgentSection';
-import { toRemainingPercent } from './agent-quota-utils';
+import { toRemainingPercent, resolveQuotaLiveTier, QUOTA_LIVE_TIER_LABELS, QUOTA_LIVE_TIER_HINTS } from './agent-quota-utils';
 
 const AGENT_LABEL: Record<string, string> = {
   claude: 'Claude Code',
@@ -172,7 +172,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             <div className="space-y-2">
               {detected.map((a) => {
                 const q = quotas ? quotas[a] : null;
-                const auth = q?.authoritative === true;
+                const tier = resolveQuotaLiveTier(q, quota?.sessionDetection?.[a]);
                 return (
                   <div key={a} className="flex items-center gap-2">
                     <AgentLogo agent={a} size={16} />
@@ -180,13 +180,14 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                       {AGENT_LABEL[a] ?? a}
                     </span>
                     <span
+                      title={QUOTA_LIVE_TIER_HINTS[tier]}
                       className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-[6px] ${
-                        auth
-                          ? 'bg-[var(--accent-wash)] text-[var(--anchor-text)]'
-                          : 'bg-[var(--quota-warning-wash)] text-[var(--quota-warning-text)]'
+                        tier === 'estimated'
+                          ? 'bg-[var(--quota-warning-wash)] text-[var(--quota-warning-text)]'
+                          : 'bg-[var(--accent-wash)] text-[var(--anchor-text)]'
                       }`}
                     >
-                      {auth ? 'Live' : '估算'}
+                      {QUOTA_LIVE_TIER_LABELS[tier]}
                     </span>
                   </div>
                 );

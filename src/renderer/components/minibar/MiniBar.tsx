@@ -5,6 +5,9 @@ import {
   toRemainingPercent,
   parseResetTimeInfo,
   resolveQuotaTrustState,
+  resolveQuotaLiveTier,
+  QUOTA_LIVE_TIER_LABELS,
+  QUOTA_LIVE_TIER_HINTS,
   type AgentSessionStatus,
 } from '../pulse/agent-quota-utils';
 import { AgentLogo } from '../pulse/AgentLogo';
@@ -585,12 +588,17 @@ export const MiniBar: React.FC<MiniBarProps> = ({ theme = 'dark' }) => {
                 );
               }
               if (trust === 'normal') {
+                // Live 名副其实：额度权威（trust=normal）之上，再按会话检测方式分「实时/轮询」
+                const tier = resolveQuotaLiveTier(
+                  currentQuota,
+                  state?.sessionDetection?.[currentAgentConfig!.key]
+                );
                 return (
                   <span
                     className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-300/90 border border-emerald-500/20"
-                    title="官方实时权威额度"
+                    title={QUOTA_LIVE_TIER_HINTS[tier]}
                   >
-                    正常
+                    {QUOTA_LIVE_TIER_LABELS[tier]}
                   </span>
                 );
               }

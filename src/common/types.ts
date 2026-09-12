@@ -45,6 +45,9 @@ export interface ClaudeHookPayload {
 
 export type MinibarDisplayMode = 'full' | 'edge-tab';
 
+/** 会话状态检测方式：event=事件驱动（hook/文件监听），polling=固定周期轮询 */
+export type SessionDetectionMode = 'event' | 'polling';
+
 export interface MinibarState {
   sessions: AgentSession[];
   quotas: import('../main/services/quota-collector').ClusterQuotas;
@@ -52,6 +55,8 @@ export interface MinibarState {
   dockSide?: 'left' | 'right' | 'top' | 'bottom';
   displayMode?: MinibarDisplayMode;
   bgOpacity?: number;
+  /** 各 agent 会话检测方式，main 进程判定（Claude=hook 是否安装、Codex=fs.watch 是否生效、Antigravity=固定 5s 轮询） */
+  sessionDetection?: Record<AgentKind, SessionDetectionMode>;
 }
 
 // ============================================================================

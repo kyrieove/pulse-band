@@ -1,12 +1,13 @@
 import { app, BrowserWindow, ipcMain, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import type { AgentKind, SessionDetectionMode } from '../common/types';
 import { SessionManager } from './services/session-manager';
 import { CodexSessionTailer } from './services/codex-tailer';
 import { ClaudeDesktopTailer } from './services/claude-desktop-tailer';
 import { AntigravitySessionPoller } from './services/antigravity-session';
 import { ClaudeHookServer } from './services/claude-hook-server';
-import { registerClaudeHookInstall } from './services/claude-hook-install';
+import { registerClaudeHookInstall, getHookStatus } from './services/claude-hook-install';
 import { registerBandKeyExtract } from './services/band-key-extract';
 import { StatusServer } from './services/status-server';
 import { OronBoxClient, CORE_EXE } from './services/oronbox-client';
@@ -44,6 +45,24 @@ const codexTailer = new CodexSessionTailer(sessionManager);
 const claudeDesktopTailer = new ClaudeDesktopTailer(sessionManager);
 const antigravityPoller = new AntigravitySessionPoller(sessionManager);
 const claudeServer = new ClaudeHookServer(sessionManager, 41789);
+
+// 各 agent 会话检测方式的唯一判定点（随 MinibarState 下发给渲染层）：
+// Claude=hook 是否安装（未装时 transcript 思考期不落盘，只能轮询且测不到 thinking）；
+// Codex=fs.watch 主通路是否存活（失败时降级为 500ms 轮询）；
+// Antigravity=固定 5 秒 RPC 轮询，非事件驱动。
+const resolveSessionDetection = (): Record<AgentKind, SessionDetectionMode> => {
+  let claude: SessionDetectionMode = 'polling';
+  try {
+    claude = getHookStatus().installed ? 'event' : 'polling';
+  } catch {
+    // 读不到 hook 状态时保守按轮询报，不谎报实时
+  }
+  return {
+    claude,
+    codex: codexTailer.isEventDriven ? 'event' : 'polling',
+    antigravity: 'polling',
+  };
+};
 
 const statusServer = new StatusServer(sessionManager, 8765);
 statusServer.start();
@@ -223,7 +242,7 @@ ipcMain.on('window-maximize', () => {
 
 app.whenReady().then(async () => {
   createWindow();
-  createMiniBarWindow(sessionManager, statusServer);
+  createMiniBarWindow(sessionManager, statusServer, resolveSessionDetection);
   registerClaudeHookInstall();
   registerBandKeyExtract(ipcMain);
   registerAppInstallIpc(appInstallService, ipcMain, () => win);
