@@ -10,6 +10,7 @@ import {
   calculateCollapsedBounds,
   calculateWindowBoundsForState,
   clampBoundsToWorkArea,
+  calculateStartupPosition,
 } from '../src/main/services/minibar-geometry.ts';
 import { toRemainingPercent } from '../src/renderer/components/pulse/agent-quota-utils.ts';
 
@@ -273,6 +274,118 @@ test('12. 悬浮窗原生拖动设计完整性验证', () => {
   
   // 3. 子控件必须标记 no-drag 避免阻断点击
   assert.ok(componentContent.includes('no-drag'), '缺少 no-drag 标记');
+});
+
+test('13. 多显示器启动停靠几何与偏好语义计算 (主屏停靠、记忆副屏、热插拔兜底与边缘标签)', () => {
+  // 用户实测复现布局
+  const DISPLAY2_PRIMARY = { x: 0, y: 0, width: 1920, height: 1080 };
+  const DISPLAY1_SECONDARY = { x: 1920, y: -64, width: 1536, height: 864 };
+  const dualDisplays = [DISPLAY2_PRIMARY, DISPLAY1_SECONDARY];
+
+  // 场景 1: 用户曾拖到副屏 DISPLAY1 (x=1920, y=170)
+  const savedOnSecondary = { x: 1920, y: 170, dockSide: 'left' };
+
+  // 1.1 偏好为 'right'：必须固定停靠在主显示器 DISPLAY2 右边缘 (1920 - 80 = 1840)，严禁留在副显示器
+  const dockRight = calculateStartupPosition({
+    preference: 'right',
+    saved: savedOnSecondary,
+    primaryWorkArea: DISPLAY2_PRIMARY,
+    allWorkAreas: dualDisplays,
+  });
+  assert.equal(dockRight.dockSide, 'right');
+  assert.equal(dockRight.x, 1840);
+  assert.equal(dockRight.y, 170);
+  assert.equal(dockRight.width, 80);
+  assert.equal(dockRight.height, 340);
+
+  // 1.2 偏好为 'left'：必须固定停靠在主显示器 DISPLAY2 左边缘 (0)，严禁留在副显示器
+  const dockLeft = calculateStartupPosition({
+    preference: 'left',
+    saved: savedOnSecondary,
+    primaryWorkArea: DISPLAY2_PRIMARY,
+    allWorkAreas: dualDisplays,
+  });
+  assert.equal(dockLeft.dockSide, 'left');
+  assert.equal(dockLeft.x, 0);
+  assert.equal(dockLeft.y, 170);
+  assert.equal(dockLeft.width, 80);
+  assert.equal(dockLeft.height, 340);
+
+  // 1.3 偏好为 'remember'：沿用上次所在的副显示器 DISPLAY1 及其左侧停靠
+  const dockRemember = calculateStartupPosition({
+    preference: 'remember',
+    saved: savedOnSecondary,
+    primaryWorkArea: DISPLAY2_PRIMARY,
+    allWorkAreas: dualDisplays,
+  });
+  assert.equal(dockRemember.dockSide, 'left');
+  assert.equal(dockRemember.x, 1920);
+  assert.equal(dockRemember.y, 170);
+
+  // 1.4 偏好为 'remember' 且上次在副屏为 top/bottom 横向胶囊条：启动时归到副屏右侧 (竖条)
+  const dockRememberHorizontal = calculateStartupPosition({
+    preference: 'remember',
+    saved: { x: 2200, y: -64, dockSide: 'top' },
+    primaryWorkArea: DISPLAY2_PRIMARY,
+    allWorkAreas: dualDisplays,
+  });
+  assert.equal(dockRememberHorizontal.dockSide, 'right');
+  assert.equal(dockRememberHorizontal.x, 1920 + 1536 - 80); // 3376 (DISPLAY1 右边缘)
+  assert.equal(dockRememberHorizontal.width, 80);
+  assert.equal(dockRememberHorizontal.height, 340);
+
+  // 边角 1: Windows 主显示器切换（DISPLAY1 成为主屏）
+  const switchPrimary = calculateStartupPosition({
+    preference: 'left',
+    saved: { x: 0, y: 170, dockSide: 'right' },
+    primaryWorkArea: DISPLAY1_SECONDARY,
+    allWorkAreas: dualDisplays,
+  });
+  assert.equal(switchPrimary.dockSide, 'left');
+  assert.equal(switchPrimary.x, 1920); // 立即跟随新主屏左边缘
+
+  // 边角 2: 显示器热插拔（副显示器 DISPLAY1 被拔掉）
+  const unplugSecondary = calculateStartupPosition({
+    preference: 'remember',
+    saved: savedOnSecondary, // 原坐标在已不存在的 1920
+    primaryWorkArea: DISPLAY2_PRIMARY,
+    allWorkAreas: [DISPLAY2_PRIMARY], // 仅剩 DISPLAY2
+  });
+  // 必须安全回落到主显示器 DISPLAY2
+  assert.equal(unplugSecondary.dockSide, 'left');
+  assert.equal(unplugSecondary.x, 0); // 回落到主显示器左边缘
+  assert.equal(unplugSecondary.y, 170);
+
+  // 边角 3: 越界 Y 轴夹持（防止因 DPI/分辨率差异导致出屏）
+  const overflowY = calculateStartupPosition({
+    preference: 'right',
+    saved: { x: 1920, y: 9999, dockSide: 'left' },
+    primaryWorkArea: DISPLAY2_PRIMARY,
+    allWorkAreas: dualDisplays,
+  });
+  assert.equal(overflowY.y, 1080 - 340); // 740
+
+  const underflowY = calculateStartupPosition({
+    preference: 'right',
+    saved: { x: 1920, y: -500, dockSide: 'left' },
+    primaryWorkArea: DISPLAY2_PRIMARY,
+    allWorkAreas: dualDisplays,
+  });
+  assert.equal(underflowY.y, 0);
+
+  // 边角 4: 边缘标签态 (edge-tab) 启动
+  const edgeTabStartup = calculateStartupPosition({
+    preference: 'right',
+    saved: { x: 1840, y: 100, dockSide: 'right', displayMode: 'edge-tab' },
+    primaryWorkArea: DISPLAY2_PRIMARY,
+    allWorkAreas: dualDisplays,
+    displayMode: 'edge-tab',
+  });
+  assert.equal(edgeTabStartup.dockSide, 'right');
+  assert.equal(edgeTabStartup.width, 18);
+  assert.equal(edgeTabStartup.height, 48);
+  assert.equal(edgeTabStartup.x, 1920 - 18); // 1902
+  assert.equal(edgeTabStartup.y, 100 + (340 - 48) / 2); // 246 (相对侧栏纵向居中)
 });
 
 

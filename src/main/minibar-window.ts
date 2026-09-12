@@ -7,7 +7,6 @@ import type { MinibarState } from '../common/types';
 import {
   resolveMiniBarVisibility,
   resolveMiniBarDockPreference,
-  resolveInitialDockSide,
   type MiniBarDockPreference,
 } from './services/minibar-preference';
 import {
@@ -19,8 +18,6 @@ import {
   H_COLLAPSED_HEIGHT,
   EDGE_TAB_WIDTH,
   EDGE_TAB_HEIGHT,
-  H_EDGE_TAB_WIDTH,
-  H_EDGE_TAB_HEIGHT,
   calculateCollapsedBounds,
   calculateWindowBoundsForState,
   calculateEdgeTabBounds,
@@ -28,6 +25,8 @@ import {
   clampBoundsToWorkArea,
   resolveDockTarget,
   isHorizontalDock,
+  calculateStartupPosition,
+  type WorkAreaRect,
 } from './services/minibar-geometry';
 import type { DockSide } from './services/minibar-geometry';
 
@@ -42,6 +41,7 @@ export {
   calculateWindowBoundsForState,
   calculateEdgeTabBounds,
   restoreAnchorFromEdgeTab,
+  calculateStartupPosition,
 };
 
 let minibarWin: BrowserWindow | null = null;
@@ -382,50 +382,34 @@ export function createMiniBarWindow(
     : mjsPreload;
 
   const saved = loadSavedBounds();
-  let defaultX = saved.x;
-  let defaultY = saved.y;
-
-  // 启动停靠偏好：控制启动时的停靠行为（'remember' | 'left' | 'right'）
-  // 保证首次与每次启动均停靠在屏幕侧边（left 或 right），绝不以横向条（top/bottom）启动
   const dockPref = loadDockPreference();
-  currentDockSide = resolveInitialDockSide(dockPref, saved.dockSide);
 
   if (saved.displayMode) {
     currentDisplayMode = saved.displayMode;
   }
 
-  const horizontal = isHorizontalDock(currentDockSide);
-  const initW =
-    currentDisplayMode === 'edge-tab'
-      ? (horizontal ? H_EDGE_TAB_WIDTH : EDGE_TAB_WIDTH)
-      : (horizontal ? H_COLLAPSED_WIDTH : COLLAPSED_WIDTH);
-  const initH =
-    currentDisplayMode === 'edge-tab'
-      ? (horizontal ? H_EDGE_TAB_HEIGHT : EDGE_TAB_HEIGHT)
-      : (horizontal ? H_COLLAPSED_HEIGHT : COLLAPSED_HEIGHT);
-
-  if (defaultX === undefined || defaultY === undefined) {
-    try {
-      const primary = screen.getPrimaryDisplay();
-      if (horizontal) {
-        defaultX = Math.round(primary.workArea.x + Math.max(24, (primary.workArea.width - initW) / 2));
-        defaultY = primary.workArea.y + Math.max(24, Math.round((primary.workArea.height - initH) * 0.25));
-      } else {
-        defaultX = currentDockSide === 'left'
-          ? primary.workArea.x
-          : Math.round(primary.workArea.x + primary.workArea.width - initW);
-        defaultY = Math.round(primary.workArea.y + Math.max(24, (primary.workArea.height - initH) / 2));
-      }
-    } catch {
-      defaultX = 100;
-      defaultY = 100;
-    }
-  } else {
-    // 上次保存的位置若换了显示器或停靠边变更，夹回可见工作区
-    const fixed = clampToVisibleArea(defaultX, defaultY, initW, initH, false);
-    defaultX = fixed.x;
-    defaultY = fixed.y;
+  let primaryWorkArea: WorkAreaRect = { x: 0, y: 0, width: 1920, height: 1080 };
+  let allWorkAreas: WorkAreaRect[] = [primaryWorkArea];
+  try {
+    primaryWorkArea = screen.getPrimaryDisplay().workArea;
+    allWorkAreas = screen.getAllDisplays().map((d) => d.workArea);
+  } catch {
+    // 单元测试或无原生显示环境兜底
   }
+
+  const startup = calculateStartupPosition({
+    preference: dockPref,
+    saved,
+    primaryWorkArea,
+    allWorkAreas,
+    displayMode: currentDisplayMode,
+  });
+
+  currentDockSide = startup.dockSide;
+  const initW = startup.width;
+  const initH = startup.height;
+  const defaultX = startup.x;
+  const defaultY = startup.y;
 
   minibarWin = new BrowserWindow({
     width: initW,

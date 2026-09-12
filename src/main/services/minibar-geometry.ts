@@ -284,3 +284,110 @@ export function restoreAnchorFromEdgeTab(
     : tabBounds.x + EDGE_TAB_WIDTH - COLLAPSED_WIDTH;
   return { x, y };
 }
+
+export interface WorkAreaRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface StartupPositionParams {
+  preference: 'remember' | 'left' | 'right';
+  saved?: {
+    x?: number;
+    y?: number;
+    dockSide?: DockSide;
+    displayMode?: 'full' | 'edge-tab';
+  };
+  primaryWorkArea: WorkAreaRect;
+  allWorkAreas: WorkAreaRect[];
+  displayMode?: 'full' | 'edge-tab';
+}
+
+export interface StartupPositionResult {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  dockSide: 'left' | 'right';
+}
+
+/**
+ * 计算 MiniBar 启动时的停靠位置与尺寸。
+ *
+ * 偏好语义规范：
+ * - 'left': 每次启动固定在 Windows 主显示器（primaryWorkArea）左边缘。
+ * - 'right': 每次启动固定在 Windows 主显示器（primaryWorkArea）右边缘。
+ * - 'remember': 沿用上次所在的显示器与停靠边；若原显示器不存在（已拔出），回落到主显示器。
+ *   若上次停靠边为 top/bottom 或未记录，归到该显示器右边缘（保证竖向侧栏启动）。
+ *
+ * 在 'left' 与 'right' 模式下，显示器始终由 primaryWorkArea 决定，彻底消除多显示器下落在副屏问题；
+ * 上次保存的 Y 轴坐标在目标显示器工作区范围内 clamp 保留（保证垂直位置连贯）。
+ */
+export function calculateStartupPosition(params: StartupPositionParams): StartupPositionResult {
+  const { preference, saved, primaryWorkArea, allWorkAreas } = params;
+  const effectiveMode = params.displayMode ?? saved?.displayMode ?? 'full';
+
+  // 1. 确定目标显示器工作区
+  let targetWorkArea = primaryWorkArea;
+  if (preference === 'remember' && saved?.x !== undefined && saved?.y !== undefined) {
+    const matched = allWorkAreas.find((a) => (
+      saved.x! + COLLAPSED_WIDTH > a.x &&
+      saved.x! < a.x + a.width &&
+      saved.y! + COLLAPSED_HEIGHT > a.y &&
+      saved.y! < a.y + a.height
+    ));
+    if (matched) {
+      targetWorkArea = matched;
+    }
+  }
+
+  // 2. 确定初始停靠边（保证为 'left' 或 'right'，绝不以横向条启动）
+  let dockSide: 'left' | 'right';
+  if (preference === 'left') {
+    dockSide = 'left';
+  } else if (preference === 'right') {
+    dockSide = 'right';
+  } else {
+    dockSide = saved?.dockSide === 'left' ? 'left' : 'right';
+  }
+
+  // 3. 计算收起态基准锚点（COLLAPSED_WIDTH x COLLAPSED_HEIGHT）
+  const anchorX = dockSide === 'left'
+    ? targetWorkArea.x
+    : Math.max(targetWorkArea.x, Math.round(targetWorkArea.x + targetWorkArea.width - COLLAPSED_WIDTH));
+
+  const minY = targetWorkArea.y;
+  const maxY = Math.max(minY, targetWorkArea.y + targetWorkArea.height - COLLAPSED_HEIGHT);
+  let anchorY: number;
+  if (saved?.y !== undefined) {
+    anchorY = clamp(saved.y, minY, maxY);
+  } else {
+    anchorY = clamp(
+      Math.round(targetWorkArea.y + Math.max(24, (targetWorkArea.height - COLLAPSED_HEIGHT) / 2)),
+      minY,
+      maxY
+    );
+  }
+
+  // 4. 根据显示形态计算最终窗口尺寸与坐标
+  if (effectiveMode === 'edge-tab') {
+    const tabBounds = calculateEdgeTabBounds({ x: anchorX, y: anchorY }, dockSide, COLLAPSED_HEIGHT);
+    return {
+      x: tabBounds.x,
+      y: tabBounds.y,
+      width: tabBounds.width,
+      height: tabBounds.height,
+      dockSide,
+    };
+  }
+
+  return {
+    x: anchorX,
+    y: anchorY,
+    width: COLLAPSED_WIDTH,
+    height: COLLAPSED_HEIGHT,
+    dockSide,
+  };
+}
