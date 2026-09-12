@@ -36,7 +36,6 @@ export const App: React.FC = () => {
       return 'light';
     }
   });
-  const [showAgents, setShowAgents] = useState<boolean>(true);
   const [showSetup, setShowSetup] = useState<boolean>(false);
   /** 向导打开时落在第几步（0-based）：稍后验证后可回到第 4 步继续 */
   const [setupStartIndex, setSetupStartIndex] = useState<number>(0);
@@ -110,7 +109,7 @@ export const App: React.FC = () => {
 
   // 如果处于 MiniBar 独立小窗
   if (screen === 'minibar') {
-    return <MiniBar theme={theme} showAgents={showAgents} />;
+    return <MiniBar theme={theme} />;
   }
 
   const handleNavigate = (newPage: PulsePage) => {
@@ -169,8 +168,6 @@ export const App: React.FC = () => {
             <SettingsPage
               theme={theme}
               onThemeChange={handleThemeChange}
-              showAgents={showAgents}
-              onShowAgentsChange={setShowAgents}
               onOpenDiagnostics={() => handleNavigate('diagnostics')}
             />
           )}

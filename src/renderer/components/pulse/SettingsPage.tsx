@@ -7,8 +7,6 @@ import { APP_VERSION } from '../../../common/app-info';
 export interface SettingsPageProps {
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
-  showAgents?: boolean;
-  onShowAgentsChange?: (show: boolean) => void;
   onOpenDiagnostics?: () => void;
 }
 
@@ -76,8 +74,6 @@ const ThemeOption: React.FC<{
 export const SettingsPage: React.FC<SettingsPageProps> = ({
   theme,
   onThemeChange,
-  showAgents = true,
-  onShowAgentsChange,
   onOpenDiagnostics,
 }) => {
   const miniBar = useMiniBar();
@@ -121,15 +117,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">显示</h3>
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[12px] font-medium text-[var(--text-primary)]">显示 Agent 状态</div>
-                <div className="text-[11px] text-[var(--text-muted)]">
-                  在桌面悬浮监控条与概览工作区呈现已识别 Agent 的实时运行状态与额度
-                </div>
-              </div>
-              <Toggle label="显示 Agent 状态" checked={showAgents} onChange={(v) => onShowAgentsChange?.(v)} />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <div>
                 <div className="text-[12px] font-medium text-[var(--text-primary)]">显示额度悬浮窗</div>
                 <div className="text-[11px] text-[var(--text-muted)]">
                   独立于手环，未配置手环也可使用；关闭只隐藏窗口，不影响额度采集
@@ -164,22 +151,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">版本与环境</h3>
           <div className="mt-2 space-y-1">
             <KV label="应用版本" value={appVersion} />
-            <KV label="设备核心" value="即将支持" />
-            <KV label="运行模式" value="即将支持" />
-            <KV label="平台" value="即将支持" />
-            <KV label="Electron" value="即将支持" />
           </div>
-          <button
-            type="button"
-            aria-disabled="true"
-            onClick={(e) => e.preventDefault()}
-            title="即将支持"
-            className="btn-primary mt-4 w-full rounded-full py-2 text-[12px] font-semibold select-none bg-[var(--accent-primary)] opacity-50 cursor-not-allowed"
-          >
-            检查更新
-          </button>
-          <p className="mt-2 text-[10px] text-[var(--text-muted)] leading-relaxed">
-            配置与凭据保存在本机，不会上传到任何服务器。
+          <p className="mt-3 text-[11px] text-[var(--text-muted)] leading-relaxed">
+            配置与凭据保存在本机，不会上传到任何服务器。更新由 GitHub Releases 发布。
           </p>
         </section>
       </div>

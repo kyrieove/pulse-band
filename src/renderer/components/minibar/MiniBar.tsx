@@ -6,7 +6,6 @@ import { AgentLogo } from '../pulse/AgentLogo';
 
 export interface MiniBarProps {
   theme?: 'light' | 'dark';
-  showAgents?: boolean;
 }
 
 interface AgentConfig {
