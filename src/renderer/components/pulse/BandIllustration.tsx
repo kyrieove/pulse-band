@@ -1,23 +1,6 @@
-import React from 'react';
-import type { AgentKind, MinibarState } from '../../../common/types';
-import { SUPPORTED_AGENTS } from './AgentSection';
-import { toRemainingPercent } from './agent-quota-utils';
+import React, { useEffect, useState } from 'react';
+import { normalizeWatchfaceColor } from './watchface-utils';
 import bandProduct from '../../assets/band-product.webp';
-
-/** 手环端 applyCards 定义的配色（band-app/src/pages/index/index.ux） */
-const AGENT_FILL: Record<AgentKind, string> = {
-  claude: '#ff9f0a',
-  codex: '#30d158',
-  antigravity: '#9d4edd',
-};
-const SEVEN_BAR = '#0a84ff';
-const NO_DATA_FILL = '#48484a'; // 手环端缺数条色
-const EST_TEXT = '#8e8e93'; // 手环端估算数字色
-const AGENT_NAME: Record<AgentKind, string> = {
-  claude: 'Claude',
-  codex: 'Codex',
-  antigravity: 'Antigravity',
-};
 
 export type BandIllustrationMode = 'live' | 'connecting' | 'off';
 
@@ -25,8 +8,8 @@ export interface BandIllustrationProps {
   mode: BandIllustrationMode;
   /** 未配置时整图置灰降透明（熄屏 + 灰阶） */
   dimmed?: boolean;
-  /** App 层唯一一份 useQuotaState 数据，不在本组件新开订阅 */
-  quota: MinibarState | null;
+  /** 手环图渲染高度（px）；屏幕叠加层按图片百分比定位，随高度自动缩放 */
+  height?: number;
 }
 
 /** band-product.json 标定的屏幕区（占图片宽高百分比）与椭圆圆角 */
@@ -38,30 +21,54 @@ const SCREEN = {
   borderRadius: '50% / 23.1%',
 };
 
+interface CurrentWatchface {
+  name: string;
+  color: string | null;
+}
+
 /**
  * 设备卡左侧插画：小米官方产品图 + 屏幕区叠加层。
  * 官方图屏幕里是小米自家表盘，叠加层必须常驻盖住它。
- * 数据取 5h 剩余最低的 agent；全部无数据时显示第一个（与手环端轮播的第一屏一致）。
+ *
+ * 屏幕内容是「当前表盘」：已连接时拉一次 device.watchface.list 取 is_current 项，
+ * 不轮询；背景铺表盘 background_color（normalizeWatchfaceColor 校验），
+ * 背景色为空或拉取失败保持黑底只显名字，连名字都没有就纯黑。
  */
-export const BandIllustration: React.FC<BandIllustrationProps> = ({ mode, dimmed = false, quota }) => {
-  const quotas = quota?.quotas;
-  const perAgent = SUPPORTED_AGENTS.map((key) => ({
-    key,
-    five: toRemainingPercent(quotas?.[key]?.pct5h),
-    seven: toRemainingPercent(quotas?.[key]?.pct7d),
-    estimated: quotas?.[key]?.authoritative === false,
-  }));
-  const withData = perAgent.filter((x) => x.five != null);
-  const chosen = withData.length
-    ? withData.reduce((a, b) => ((b.five as number) < (a.five as number) ? b : a))
-    : perAgent[0];
-  // 顶部状态点：该 agent 有活跃会话（思考/执行）时亮绿，与手环端 Thinking 圆点同义
-  const busy = quota?.sessions?.some(
-    (s) => s.agent === chosen.key && (s.status === 'thinking' || s.status === 'running_tool')
-  );
+export const BandIllustration: React.FC<BandIllustrationProps> = ({
+  mode,
+  dimmed = false,
+  height = 160,
+}) => {
+  const [watchface, setWatchface] = useState<CurrentWatchface | null>(null);
 
-  const fiveLabel = chosen.five != null ? `${chosen.estimated ? '~' : ''}${chosen.five}%` : '--';
-  const sevenLabel = chosen.seven != null ? `${chosen.estimated ? '~' : ''}${chosen.seven}%` : '--';
+  useEffect(() => {
+    if (mode !== 'live') return;
+    let alive = true;
+    window.pulse
+      ?.watchface?.list?.()
+      .then((res) => {
+        if (!alive) return;
+        if (res?.ok) {
+          const cur = res.data?.watchfaces?.find((w) => w.is_current);
+          setWatchface(
+            cur
+              ? { name: cur.name ?? '', color: normalizeWatchfaceColor(cur.background_color) }
+              : null
+          );
+        } else {
+          setWatchface(null);
+        }
+      })
+      .catch(() => {
+        if (alive) setWatchface(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [mode]);
+
+  // 非连接态强制熄屏，不留上一次的表盘底色
+  const bg = mode === 'live' ? watchface?.color ?? '#060807' : '#060807';
 
   return (
     <div
@@ -70,88 +77,29 @@ export const BandIllustration: React.FC<BandIllustrationProps> = ({ mode, dimmed
       } dark:drop-shadow-[0_0_1px_rgba(255,255,255,0.18)]`}
       aria-hidden
     >
-      <img src={bandProduct} alt="" className="block h-[160px] w-auto object-contain" />
-      {/* 屏幕区：官方图里是小米表盘，这层常驻黑底盖住它 */}
-      <div
-        className="absolute overflow-hidden"
-        style={{ ...SCREEN, background: '#060807' }}
-      >
-        {mode === 'live' ? (
-          <div className="w-full h-full flex flex-col justify-between" style={{ padding: '7px 6px' }}>
-            {/* 顶部：agent 名 + 状态点（这个尺寸下工具名等小字全部省略） */}
-            <div className="flex items-center justify-between gap-0.5 min-w-0">
-              <span
-                className="text-white font-semibold truncate"
-                style={{ fontSize: 6.5, lineHeight: 1 }}
-              >
-                {AGENT_NAME[chosen.key]}
-              </span>
-              <span
-                className="rounded-full shrink-0"
-                style={{
-                  width: 3.5,
-                  height: 3.5,
-                  background: busy ? '#30d158' : '#8e8e93',
-                }}
-              />
-            </div>
-
-            {/* 5h 剩余 */}
-            <div>
-              <div className="flex items-baseline justify-between">
-                <span style={{ fontSize: 5.5, lineHeight: 1.2, color: 'rgba(255,255,255,0.55)' }}>
-                  5h 剩余
-                </span>
-                <span
-                  className="font-bold text-white tabular-nums"
-                  style={{ fontSize: 10, lineHeight: 1, color: chosen.estimated ? EST_TEXT : '#ffffff' }}
-                >
-                  {fiveLabel}
-                </span>
-              </div>
-              <div
-                className="mt-[2px] rounded-full overflow-hidden"
-                style={{ height: 2.5, background: 'rgba(255,255,255,0.12)' }}
-              >
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${chosen.five ?? 0}%`,
-                    background: chosen.five != null ? AGENT_FILL[chosen.key] : NO_DATA_FILL,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* 7d 剩余 */}
-            <div>
-              <div className="flex items-baseline justify-between">
-                <span style={{ fontSize: 5.5, lineHeight: 1.2, color: 'rgba(255,255,255,0.55)' }}>
-                  7d 剩余
-                </span>
-                <span
-                  className="font-bold tabular-nums"
-                  style={{ fontSize: 10, lineHeight: 1, color: chosen.estimated ? EST_TEXT : '#ffffff' }}
-                >
-                  {sevenLabel}
-                </span>
-              </div>
-              <div
-                className="mt-[2px] rounded-full overflow-hidden"
-                style={{ height: 2.5, background: 'rgba(255,255,255,0.12)' }}
-              >
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${chosen.seven ?? 0}%`,
-                    background: chosen.seven != null ? SEVEN_BAR : NO_DATA_FILL,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* 底部占位：让布局贴近手环端三段式，不放读不出的小字 */}
-            <div />
+      <img src={bandProduct} alt="" style={{ height }} className="block w-auto object-contain" />
+      {/* 屏幕区：官方图里是小米表盘，这层常驻盖住它 */}
+      <div className="absolute overflow-hidden" style={{ ...SCREEN, background: bg }}>
+        {mode === 'live' && watchface?.name ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-[3px] px-[3px]">
+            <span
+              className="text-center"
+              style={{
+                fontSize: 5,
+                lineHeight: 1,
+                color: 'rgba(255,255,255,0.55)',
+                textShadow: '0 0 3px rgba(0,0,0,0.6)',
+              }}
+            >
+              当前表盘
+            </span>
+            <span
+              className="text-white font-semibold text-center truncate w-full"
+              style={{ fontSize: 7.5, lineHeight: 1.15, textShadow: '0 0 3px rgba(0,0,0,0.6)' }}
+            >
+              {watchface.name}
+            </span>
+            {/* 表盘预览图接在这里：workbuddy 的预览图缓存落地后，按表盘 id 取预览图铺满屏幕区 */}
           </div>
         ) : mode === 'connecting' ? (
           /* 连接中：黑底 + 简单呼吸点（动画已被全局 prefers-reduced-motion 规则压掉） */
@@ -161,10 +109,7 @@ export const BandIllustration: React.FC<BandIllustrationProps> = ({ mode, dimmed
               style={{ width: 4, height: 4, background: 'rgba(255,255,255,0.45)' }}
             />
           </div>
-        ) : (
-          /* 未连接 / 连接失败 / 未配置：纯黑熄屏 */
-          <div className="w-full h-full" />
-        )}
+        ) : null}
       </div>
     </div>
   );

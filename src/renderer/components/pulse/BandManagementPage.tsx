@@ -4,7 +4,15 @@ import { useBandConnection } from '../../hooks/useBandConnection';
 import { OtherAppInstall } from './OtherAppInstall';
 import { ConnectionProgress, type ProgressStep } from './ConnectionProgress';
 import { BandIllustration } from './BandIllustration';
+import { SUPPORTED_AGENTS } from './AgentSection';
+import { toRemainingPercent } from './agent-quota-utils';
 import type { MinibarState } from '../../../common/types';
+
+const QUOTA_AGENT_NAME: Record<(typeof SUPPORTED_AGENTS)[number], string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  antigravity: 'Antigravity',
+};
 
 export interface BandManagementPageProps {
   /** App 层唯一一份 useQuotaState 数据，供设备卡屏幕叠加层显示实时额度 */
@@ -123,6 +131,19 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
   // 脱敏地址由主进程 maskMacAddress 给出，渲染层不再自己截断一份
   const addressLabel = config?.maskedAddr ?? null;
 
+  // 屏幕不再显示额度后，额度以文字挪到右栏：取 5h 剩余最紧张的 agent
+  const tightQuota = (() => {
+    const rows = SUPPORTED_AGENTS.map((key) => ({
+      key,
+      five: toRemainingPercent(quota?.quotas?.[key]?.pct5h),
+      seven: toRemainingPercent(quota?.quotas?.[key]?.pct7d),
+      estimated: quota?.quotas?.[key]?.authoritative === false,
+    }));
+    const withData = rows.filter((r) => r.five != null);
+    if (withData.length === 0) return null;
+    return withData.reduce((a, b) => ((b.five as number) < (a.five as number) ? b : a));
+  })();
+
   const cardTitle = !configKnown
     ? '手环'
     : isConfigured
@@ -174,13 +195,13 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
         断开手环不会退回未配置，配置入口也只在未配置时出现在卡内。
       */}
       <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col gap-3">
-        <div className="flex gap-4 min-w-0 items-center">
-          {/* 左：官方产品图 + 屏幕区实时叠加层（小米表盘必须被盖住） */}
-          <div className="shrink-0">
+        <div className="grid grid-cols-[260px_1fr] gap-4 items-center min-w-0">
+          {/* 左：官方产品图 + 屏幕区显示当前表盘（小米表盘必须被盖住） */}
+          <div className="shrink-0 justify-self-center">
             <BandIllustration
               mode={isConnected ? 'live' : isConnecting ? 'connecting' : 'off'}
               dimmed={!isConfigured}
-              quota={quota}
+              height={210}
             />
           </div>
 
@@ -196,6 +217,17 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
                 ? config?.error ?? '完成配对与日志导入后即可连接手环'
                 : addressLabel ?? '已配置手环'}
             </p>
+
+            {/* 额度以文字呈现：5h 最紧张的 agent（屏幕区已让位给当前表盘） */}
+            {tightQuota && (
+              <p className="text-[12px] text-[var(--text-muted)] mt-1 truncate">
+                {QUOTA_AGENT_NAME[tightQuota.key]} · 5h {tightQuota.estimated ? '~' : ''}
+                {tightQuota.five}%
+                {tightQuota.seven != null
+                  ? ` · 7d ${tightQuota.estimated ? '~' : ''}${tightQuota.seven}%`
+                  : ''}
+              </p>
+            )}
 
             {/* 连接 / 断开常驻成对（与概览页同一模式）：
                 主按钮随状态变脸（读取配置中…/配置手环/连接中…/已连接/连接手环），
