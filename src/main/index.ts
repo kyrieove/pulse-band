@@ -190,8 +190,24 @@ function createWindow() {
       }
     },
     () => {
-      // 彻底退出：先断开手环（让它回去找手机）、再让 daemon 自行退出，最后退 Pulse
-      oronbox.stopDaemonIfRunning().finally(() => app.quit());
+      // 彻底退出：视觉反馈要快——窗口和托盘图标立刻消失；
+      // 礼让序列（断开手环归还给手机 → 停 daemon）放后台走完，
+      // 总预算 5s，到点强制退出。手环断开最坏 3s（等真蓝牙断链），
+      // daemon 是按设计常驻的，停不掉就留给下次启动复用，不拿它卡用户。
+      isQuitting = true;
+      win?.hide();
+      const budget = setTimeout(() => {
+        runAppCleanup();
+        app.exit(0);
+      }, 5_000);
+      oronbox
+        .stopDaemonIfRunning()
+        .catch(() => {})
+        .finally(() => {
+          clearTimeout(budget);
+          runAppCleanup();
+          app.exit(0);
+        });
     },
     toggleMiniBar,
     isMiniBarVisible
@@ -282,8 +298,12 @@ app.on('window-all-closed', () => {
   // Keep app running in tray
 });
 
-app.on('before-quit', () => {
-  isQuitting = true;
+// 退出清理（幂等）：托盘「彻底退出」的预算强制路径走 app.exit（不触发
+// before-quit），所以两边的收尾都汇到这里，谁先到谁执行。
+let appCleanupDone = false;
+function runAppCleanup(): void {
+  if (appCleanupDone) return;
+  appCleanupDone = true;
   disposeMiniBar();
   if (tray) {
     tray.destroy();
@@ -296,4 +316,9 @@ app.on('before-quit', () => {
   sessionManager.dispose();
   oronboxBridge.detach();
   oronbox.dispose();
+}
+
+app.on('before-quit', () => {
+  isQuitting = true;
+  runAppCleanup();
 });
