@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decodeWatchfacePreview,
+  inspectWatchfaceHeader,
 } from '../src/main/services/watchface-preview-decoder.ts';
 
 const MAIN_HEADER_SIZE = 0xa8;
@@ -250,4 +251,24 @@ test('decodeWatchfacePreview: truncated payload throws range/length error', () =
   // Cut off last 4 bytes of pixels
   const truncated = fixture.subarray(0, fixture.length - 4);
   assert.throws(() => decodeWatchfacePreview(truncated), /range|truncated|length/i);
+});
+
+test('inspectWatchfaceHeader: extracts metadata without decoding image pixels', () => {
+  const fixture = makeRawBgraFixture();
+  const meta = inspectWatchfaceHeader(fixture);
+  assert.equal(meta.id, '123456789');
+  assert.equal(meta.name, 'Fixture');
+  assert.equal(meta.previewOffset, MAIN_HEADER_SIZE);
+});
+
+test('inspectWatchfaceHeader: validates header bounds and magic', () => {
+  assert.throws(() => inspectWatchfaceHeader(Buffer.alloc(MAIN_HEADER_SIZE - 1)), /size/i);
+  assert.throws(
+    () => inspectWatchfaceHeader(Buffer.alloc(MAIN_HEADER_SIZE)),
+    /magic/i,
+  );
+  assert.throws(
+    () => inspectWatchfaceHeader(fixtureWithOutOfRangePreviewOffset()),
+    /outside binary range/i,
+  );
 });

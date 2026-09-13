@@ -12,13 +12,15 @@
  * 所以 UI 侧也只接受这两种后缀，不做"看起来支持其实解不开"的承诺。
  */
 
-import { nativeImage } from 'electron';
+import * as electron from 'electron';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   decodeWatchfacePreview,
+  inspectWatchfaceHeader,
   shouldPrepareAutoPreview,
+  type DecodedWatchfacePreview,
 } from './watchface-preview-decoder.ts';
 import {
   WatchfacePreviewStore,
@@ -26,7 +28,7 @@ import {
   type WatchfacePreviewSource,
 } from './watchface-preview-store.ts';
 
-export { shouldPrepareAutoPreview } from './watchface-preview-decoder.ts';
+export { shouldPrepareAutoPreview, inspectWatchfaceHeader } from './watchface-preview-decoder.ts';
 
 /** 归一化目标宽度 = 手环屏宽度；卡片最宽约 100 DIP，192 已够 2x */
 export const WATCHFACE_PREVIEW_TARGET_WIDTH = 192;
@@ -46,16 +48,47 @@ export type WatchfacePreviewResult<T> =
   | { ok: true; data: T }
   | { ok: false; code: string; message: string };
 
+export type WatchfaceDecoderFn = (file: Uint8Array) => DecodedWatchfacePreview;
+export type WatchfacePngEncoderFn = (bgra: Uint8Array, width: number, height: number) => Buffer;
+
+export interface WatchfacePreviewServiceOptions {
+  decoder?: WatchfaceDecoderFn;
+  pngEncoder?: WatchfacePngEncoderFn;
+}
+
+function defaultPngEncoder(bgra: Uint8Array, width: number, height: number): Buffer {
+  const nImage = (electron as any)?.nativeImage ?? (electron as any)?.default?.nativeImage;
+  if (!nImage?.createFromBitmap) {
+    throw new Error('Electron nativeImage is not available in this environment');
+  }
+  const image = nImage.createFromBitmap(Buffer.isBuffer(bgra) ? bgra : Buffer.from(bgra), {
+    width,
+    height,
+  });
+  if (image.isEmpty()) {
+    throw new Error('nativeImage.createFromBitmap produced empty image');
+  }
+  const png = image.toPNG();
+  if (!png || png.length === 0) {
+    throw new Error('toPNG produced empty buffer');
+  }
+  return png;
+}
+
 export class WatchfacePreviewService {
   /** data URL 缓存，按文件 mtime 失效；避免每次进表盘页都重新 base64 编码 */
   private dataUrlCache = new Map<string, { mtimeMs: number; dataUrl: string }>();
 
   private readonly store: WatchfacePreviewStore;
+  private readonly decoder: WatchfaceDecoderFn;
+  private readonly pngEncoder: WatchfacePngEncoderFn;
   private preparationPromise: Promise<void> | null = null;
 
   // 不用 TS 参数属性：与 store 保持一致的写法，方便将来单独测这个类
-  constructor(store: WatchfacePreviewStore) {
+  constructor(store: WatchfacePreviewStore, options?: WatchfacePreviewServiceOptions) {
     this.store = store;
+    this.decoder = options?.decoder ?? decodeWatchfacePreview;
+    this.pngEncoder = options?.pngEncoder ?? defaultPngEncoder;
   }
 
   private async toView(id: string): Promise<WatchfacePreviewView | null> {
@@ -156,7 +189,11 @@ export class WatchfacePreviewService {
       return { ok: false, code: 'file_read_failed', message: '读取图片文件失败' };
     }
 
-    const decoded = nativeImage.createFromBuffer(bytes);
+    const nImage = (electron as any)?.nativeImage ?? (electron as any)?.default?.nativeImage;
+    if (!nImage?.createFromBuffer) {
+      return { ok: false, code: 'image_decode_failed', message: 'Electron nativeImage is not available in this environment' };
+    }
+    const decoded = nImage.createFromBuffer(bytes);
     if (decoded.isEmpty()) {
       return { ok: false, code: 'image_decode_failed', message: '这个文件不是能识别的图片（支持 PNG / JPEG）' };
     }
@@ -222,7 +259,7 @@ export class WatchfacePreviewService {
       }
 
       for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.bin')) continue;
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.bin')) continue;
         const fullPath = path.join(dir, entry.name);
         try {
           const info = await stat(fullPath);
@@ -231,38 +268,35 @@ export class WatchfacePreviewService {
           }
 
           const fileBytes = await readFile(fullPath);
-          const sha256 = createHash('sha256').update(fileBytes).digest('hex');
+          const md5 = createHash('md5').update(fileBytes).digest('hex');
 
-          const decoded = decodeWatchfacePreview(fileBytes);
-          const embeddedId = decoded.id ? decoded.id.trim() : '';
+          // 只解析主头取得 embeddedId，不执行完整图像解码
+          const { id: rawId } = inspectWatchfaceHeader(fileBytes);
+          const embeddedId = rawId ? rawId.trim() : '';
           if (!embeddedId || /^0+$/.test(embeddedId) || !isValidWatchfacePreviewId(embeddedId)) {
             continue;
           }
 
+          // 检查 manual 或相同 sourceHash 的现有缓存，命中则完全跳过图像解码
           const existing = this.store.getEntry(embeddedId);
-          if (!shouldPrepareAutoPreview(existing, sha256)) {
+          if (!shouldPrepareAutoPreview(existing, md5)) {
             continue;
           }
 
-          const image = nativeImage.createFromBitmap(decoded.bgra, {
-            width: decoded.width,
-            height: decoded.height,
-          });
-          if (image.isEmpty()) {
-            console.warn(`[WatchfacePreview] 自动预览为空图像: ${entry.name}`);
-            continue;
-          }
-
-          const png = image.toPNG();
-          if (!png || png.length === 0) {
-            console.warn(`[WatchfacePreview] 自动预览转 PNG 失败: ${entry.name}`);
+          // 仅在缺失或内容变化时才调用 decodeWatchfacePreview
+          const decoded = this.decoder(fileBytes);
+          let png: Buffer;
+          try {
+            png = this.pngEncoder(decoded.bgra, decoded.width, decoded.height);
+          } catch (encodeErr) {
+            console.warn(`[WatchfacePreview] 自动预览转 PNG 失败: ${entry.name}`, encodeErr);
             continue;
           }
 
           this.store.set(embeddedId, {
             bytes: png,
             source: 'auto',
-            sourceHash: sha256,
+            sourceHash: md5,
             width: decoded.width,
             height: decoded.height,
           });
@@ -314,24 +348,19 @@ export class WatchfacePreviewService {
     }
 
     const fileBytes = await readFile(filePath);
-    const hash = sourceHash || createHash('sha256').update(fileBytes).digest('hex');
+    const hash = sourceHash || createHash('md5').update(fileBytes).digest('hex');
 
     if (existing && !shouldPrepareAutoPreview(existing, hash)) {
       return { status: 'cached', id };
     }
 
-    const decoded = decodeWatchfacePreview(fileBytes);
-    const image = nativeImage.createFromBitmap(decoded.bgra, {
-      width: decoded.width,
-      height: decoded.height,
-    });
-    if (image.isEmpty()) {
-      throw new Error('nativeImage.createFromBitmap produced empty image');
-    }
-
-    const png = image.toPNG();
-    if (!png || png.length === 0) {
-      throw new Error('toPNG produced empty buffer');
+    const decoded = this.decoder(fileBytes);
+    let png: Buffer;
+    try {
+      png = this.pngEncoder(decoded.bgra, decoded.width, decoded.height);
+    } catch (encodeErr) {
+      console.warn(`[WatchfacePreview] prepareFromBin 转 PNG 失败 [${id}]:`, encodeErr);
+      return { status: 'skipped', id };
     }
 
     this.store.set(id, {

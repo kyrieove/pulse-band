@@ -219,4 +219,3 @@ test('sourceHash: set 保存并读回 sourceHash，旧版无 hash 索引仍可�
 test.after(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
-

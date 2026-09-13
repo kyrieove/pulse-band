@@ -190,7 +190,13 @@ function hasCompressedMagic(buffer: Uint8Array, offset: number): boolean {
   return true;
 }
 
-export function decodeWatchfacePreview(file: Uint8Array): DecodedWatchfacePreview {
+export interface WatchfaceHeaderMetadata {
+  id: string;
+  name: string;
+  previewOffset: number;
+}
+
+export function inspectWatchfaceHeader(file: Uint8Array): WatchfaceHeaderMetadata {
   if (file.length < MAIN_HEADER_SIZE) {
     throw new RangeError(
       `Invalid header: file size ${file.length} is less than main header size ${MAIN_HEADER_SIZE}`,
@@ -215,6 +221,12 @@ export function decodeWatchfacePreview(file: Uint8Array): DecodedWatchfacePrevie
       `previewOffset ${previewOffset} is outside binary range (file size: ${file.length})`,
     );
   }
+
+  return { id, name, previewOffset };
+}
+
+export function decodeWatchfacePreview(file: Uint8Array): DecodedWatchfacePreview {
+  const { id, name, previewOffset } = inspectWatchfaceHeader(file);
 
   const sign = file[previewOffset] ?? 0;
   const width = readU16LE(file, previewOffset + 4);
