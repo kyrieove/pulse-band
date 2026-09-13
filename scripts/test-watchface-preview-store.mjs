@@ -171,6 +171,52 @@ test('isValidWatchfacePreviewId: 长度与空值边界', () => {
   assert.equal(isValidWatchfacePreviewId('a\0b'), false);
 });
 
+test('sourceHash: set 保存并读回 sourceHash，旧版无 hash 索引仍可读取，非法 hash 被安全丢弃', () => {
+  const { store, dir } = freshStore();
+  const auto = store.set('face-a', {
+    bytes: PNG_A,
+    source: 'auto',
+    sourceHash: 'abc123',
+    width: 212,
+    height: 520,
+  });
+  assert.equal(auto.sourceHash, 'abc123');
+  assert.equal(store.readIndex().entries['face-a'].sourceHash, 'abc123');
+
+  // 旧版无 sourceHash 的条目仍可读取
+  fs.writeFileSync(path.join(dir, 'legacy.png'), PNG_A);
+  const index = store.readIndex();
+  index.entries['legacy'] = {
+    file: 'legacy.png',
+    source: 'auto',
+    addedAt: new Date().toISOString(),
+    width: 212,
+    height: 520,
+    bytes: PNG_A.length,
+  };
+  fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(index));
+
+  const loadedLegacy = store.getEntry('legacy');
+  assert.ok(loadedLegacy);
+  assert.equal(loadedLegacy.sourceHash, undefined);
+
+  // 非法或非字符串 hash 被丢弃，但条目本身依然有效
+  index.entries['bad-hash'] = {
+    file: 'legacy.png',
+    source: 'auto',
+    sourceHash: 12345, // invalid type
+    addedAt: new Date().toISOString(),
+    width: 212,
+    height: 520,
+    bytes: PNG_A.length,
+  };
+  fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(index));
+  const loadedBadHash = store.getEntry('bad-hash');
+  assert.ok(loadedBadHash);
+  assert.equal(loadedBadHash.sourceHash, undefined);
+});
+
 test.after(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
+

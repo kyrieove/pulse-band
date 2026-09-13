@@ -22,6 +22,7 @@ export interface WatchfacePreviewEntry {
   /** store 目录内的文件名，保证不含任何路径分隔符 */
   file: string;
   source: WatchfacePreviewSource;
+  sourceHash?: string;
   /** ISO 时间戳 */
   addedAt: string;
   width: number;
@@ -38,6 +39,7 @@ export const WATCHFACE_PREVIEW_DIR_NAME = 'watchface-previews';
 
 const INDEX_FILE = 'index.json';
 const MAX_ID_LENGTH = 128;
+const MAX_HASH_LENGTH = 128;
 
 /** id 只用来做 hash 与索引键，但仍限制长度，避免异常输入撑爆索引 */
 export function isValidWatchfacePreviewId(id: unknown): id is string {
@@ -59,9 +61,17 @@ function sanitizeEntry(raw: unknown): WatchfacePreviewEntry | null {
   if (typeof entry.addedAt !== 'string') return null;
   if (typeof entry.width !== 'number' || typeof entry.height !== 'number') return null;
   if (typeof entry.bytes !== 'number') return null;
+  let sourceHash: string | undefined;
+  if (typeof entry.sourceHash === 'string') {
+    const trimmed = entry.sourceHash.trim();
+    if (trimmed.length > 0 && trimmed.length <= MAX_HASH_LENGTH) {
+      sourceHash = trimmed;
+    }
+  }
   return {
     file: entry.file,
     source: entry.source,
+    ...(sourceHash ? { sourceHash } : {}),
     addedAt: entry.addedAt,
     width: entry.width,
     height: entry.height,
@@ -149,7 +159,13 @@ export class WatchfacePreviewStore {
    */
   set(
     id: string,
-    input: { bytes: Buffer; source: WatchfacePreviewSource; width: number; height: number },
+    input: {
+      bytes: Buffer;
+      source: WatchfacePreviewSource;
+      sourceHash?: string;
+      width: number;
+      height: number;
+    },
   ): WatchfacePreviewEntry {
     if (!isValidWatchfacePreviewId(id)) throw new Error('非法表盘 id');
     if (!input.bytes || input.bytes.length === 0) throw new Error('预览图内容为空');
@@ -160,9 +176,18 @@ export class WatchfacePreviewStore {
     fs.writeFileSync(tmp, input.bytes);
     fs.renameSync(tmp, target);
 
+    let sourceHash: string | undefined;
+    if (typeof input.sourceHash === 'string') {
+      const trimmed = input.sourceHash.trim();
+      if (trimmed.length > 0 && trimmed.length <= MAX_HASH_LENGTH) {
+        sourceHash = trimmed;
+      }
+    }
+
     const entry: WatchfacePreviewEntry = {
       file,
       source: input.source,
+      ...(sourceHash ? { sourceHash } : {}),
       addedAt: new Date().toISOString(),
       width: input.width,
       height: input.height,
