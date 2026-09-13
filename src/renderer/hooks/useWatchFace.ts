@@ -98,9 +98,7 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
     if (connected) refresh();
   }, [connected, refresh]);
 
-  // 本地预览图与设备无关，但只在表盘页真正可用（已连接）时读一次
-  useEffect(() => {
-    if (!connected) return;
+  const loadPreviews = useCallback(() => {
     window.pulse
       ?.watchface?.preview?.list?.()
       .then((res) => {
@@ -109,7 +107,12 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
       .catch(() => {
         // 读不到本地预览图只表现为"卡片没有图"，不阻断列表本身
       });
-  }, [connected]);
+  }, []);
+
+  // 本地预览图与设备无关，但只在表盘页真正可用（已连接）时读一次
+  useEffect(() => {
+    if (connected) loadPreviews();
+  }, [connected, loadPreviews]);
 
   const setPreview = useCallback(async (id: string, filePath: string): Promise<WatchfaceOpResult> => {
     if (!id) return { ok: false, message: '缺少表盘 id' };
@@ -212,6 +215,7 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
           fileName,
           watchfaceId: res.data?.watchface_id ?? '',
         });
+        loadPreviews();
         // 安装结论已经落地，列表刷新失败不打断成功提示
         void window.pulse
           ?.watchface?.list?.()
@@ -228,7 +232,7 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
       busyRef.current = false;
       if (aliveRef.current) setInstalling(false);
     }
-  }, []);
+  }, [loadPreviews]);
 
   const retryInstall = useCallback(async () => {
     const last = lastInstallRef.current;

@@ -19,14 +19,14 @@ import path from 'node:path';
 import {
   decodeWatchfacePreview,
   shouldPrepareAutoPreview,
-} from './watchface-preview-decoder';
+} from './watchface-preview-decoder.ts';
 import {
   WatchfacePreviewStore,
   isValidWatchfacePreviewId,
   type WatchfacePreviewSource,
-} from './watchface-preview-store';
+} from './watchface-preview-store.ts';
 
-export { shouldPrepareAutoPreview } from './watchface-preview-decoder';
+export { shouldPrepareAutoPreview } from './watchface-preview-decoder.ts';
 
 /** 归一化目标宽度 = 手环屏宽度；卡片最宽约 100 DIP，192 已够 2x */
 export const WATCHFACE_PREVIEW_TARGET_WIDTH = 192;

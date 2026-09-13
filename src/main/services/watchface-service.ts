@@ -63,11 +63,17 @@ function computeFileMd5(filePath: string): Promise<string> {
   });
 }
 
+export interface WatchfacePreviewPreparer {
+  prepareFromBin(id: string, filePath: string, sourceHash?: string): Promise<unknown>;
+}
+
 export class WatchfaceService {
   private client: CoreRpcClient;
+  private previewPreparer?: WatchfacePreviewPreparer;
 
-  constructor(client: CoreRpcClient) {
+  constructor(client: CoreRpcClient, previewPreparer?: WatchfacePreviewPreparer) {
     this.client = client;
+    this.previewPreparer = previewPreparer;
   }
 
   private toError(err: unknown, fallbackCode: string, fallbackMessage: string): WatchfaceResult<never> {
@@ -144,6 +150,13 @@ export class WatchfaceService {
         { path: filePath, md5 },
         WATCHFACE_INSTALL_TIMEOUT_MS,
       );
+      if (this.previewPreparer) {
+        try {
+          await this.previewPreparer.prepareFromBin(data.watchface_id, filePath, md5);
+        } catch (error) {
+          console.warn('[WatchfacePreview] 自动生成失败:', error instanceof Error ? error.message : String(error));
+        }
+      }
       return { ok: true, data };
     } catch (err) {
       return this.toError(err, 'watchface_install_failed', '表盘安装失败');
