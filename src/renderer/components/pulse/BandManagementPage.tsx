@@ -3,9 +3,12 @@ import { Upload, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useBandConnection } from '../../hooks/useBandConnection';
 import { OtherAppInstall } from './OtherAppInstall';
 import { ConnectionProgress, type ProgressStep } from './ConnectionProgress';
-import bandScreen from '../../assets/band-screen.png';
+import { BandIllustration } from './BandIllustration';
+import type { MinibarState } from '../../../common/types';
 
 export interface BandManagementPageProps {
+  /** App 层唯一一份 useQuotaState 数据，供设备卡屏幕叠加层显示实时额度 */
+  quota: MinibarState | null;
   onStartSetup?: () => void;
 }
 
@@ -52,7 +55,7 @@ interface DeviceConfigStatus {
   error?: string;
 }
 
-export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartSetup }) => {
+export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, onStartSetup }) => {
   // 手环设备信息（名称 / 地址 / 连接状态）来自 useBandConnection 的真实快照
   const conn = useBandConnection();
 
@@ -171,30 +174,14 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
         断开手环不会退回未配置，配置入口也只在未配置时出现在卡内。
       */}
       <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col gap-3">
-        <div className="flex gap-4 min-w-0">
-          {/* 左：手环形态——真实屏幕素材（promo 实拍切片）+ 机身/表带绘制 */}
-          <div className="w-[118px] shrink-0 flex flex-col items-center select-none" aria-hidden>
-            <div
-              className="w-[62px] h-[36px] rounded-t-[14px] border border-b-0 border-[var(--border-strong)]"
-              style={{ background: 'linear-gradient(180deg, var(--bg-surface), var(--accent-wash))' }}
+        <div className="flex gap-4 min-w-0 items-center">
+          {/* 左：官方产品图 + 屏幕区实时叠加层（小米表盘必须被盖住） */}
+          <div className="shrink-0">
+            <BandIllustration
+              mode={isConnected ? 'live' : isConnecting ? 'connecting' : 'off'}
+              dimmed={!isConfigured}
+              quota={quota}
             />
-            <div
-              className="relative -my-[2px] rounded-[24px] p-[3px]"
-              style={{
-                background: 'linear-gradient(160deg, rgba(255,255,255,0.85), rgba(0,0,0,0.3))',
-                boxShadow: '0 8px 18px rgba(0,0,0,0.2)',
-              }}
-            >
-              <div className="rounded-[21px] overflow-hidden bg-black">
-                <img src={bandScreen} alt="" className="w-[70px] h-[115px] object-cover block" />
-              </div>
-            </div>
-            <div
-              className="w-[62px] h-[40px] rounded-b-[14px] border border-t-0 border-[var(--border-strong)] relative"
-              style={{ background: 'linear-gradient(180deg, var(--accent-wash), var(--bg-surface))' }}
-            >
-              <div className="absolute left-1/2 -translate-x-1/2 top-[6px] w-[38px] h-[4px] rounded-full bg-[var(--border-strong)]" />
-            </div>
           </div>
 
           {/* 右：设备身份 + 连接管理 */}

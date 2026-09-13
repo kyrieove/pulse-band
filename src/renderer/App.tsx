@@ -160,6 +160,7 @@ export const App: React.FC = () => {
 
           {page === 'band' && (
             <BandManagementPage
+              quota={quota}
               onStartSetup={() => {
                 setSetupStartIndex(0);
                 setShowSetup(true);
