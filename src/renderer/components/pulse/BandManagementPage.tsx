@@ -14,6 +14,12 @@ const QUOTA_AGENT_NAME: Record<(typeof SUPPORTED_AGENTS)[number], string> = {
   antigravity: 'Antigravity',
 };
 
+/** 卡内单按钮：尺寸与标题行「配置手环」一致，宽度自适应左对齐（评审 P1-B） */
+const SOLID_BTN =
+  'btn-primary rounded-full px-[15px] py-2 text-[12px] font-semibold select-none min-w-[104px] flex items-center justify-center gap-1.5 bg-[var(--accent-primary)] text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
+const OUTLINE_BTN =
+  'rounded-full px-[15px] py-2 text-[12px] font-semibold select-none min-w-[104px] bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
+
 export interface BandManagementPageProps {
   /** App 层唯一一份 useQuotaState 数据，供设备卡屏幕叠加层显示实时额度 */
   quota: MinibarState | null;
@@ -205,11 +211,29 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
             />
           </div>
 
-          {/* 右：设备身份 + 连接管理 */}
+          {/* 右：设备身份（状态点 + 状态文字照概览页写法）+ 连接管理 */}
           <div className="flex-1 min-w-0 flex flex-col">
-            <h3 className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
-              {cardTitle}
-            </h3>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  isConnected
+                    ? 'bg-[var(--status-success)]'
+                    : isConnecting
+                    ? 'bg-[var(--status-working)]'
+                    : isError
+                    ? 'bg-[var(--status-error)]'
+                    : 'bg-[var(--status-idle)]'
+                }`}
+              />
+              <h3 className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+                {cardTitle}
+              </h3>
+              {isConfigured && (
+                <span className="text-[11.5px] text-[var(--text-muted)] shrink-0">
+                  · {isConnected ? '已连接' : isConnecting ? '连接中…' : isError ? '连接失败' : '未连接'}
+                </span>
+              )}
+            </div>
             <p className="text-[11.5px] text-[var(--text-muted)] leading-relaxed mt-1">
               {!configKnown
                 ? '正在读取本机手环配置'
@@ -229,46 +253,47 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
               </p>
             )}
 
-            {/* 连接 / 断开常驻成对（与概览页同一模式）：
-                主按钮随状态变脸（读取配置中…/配置手环/连接中…/已连接/连接手环），
-                「断开连接」未连接时置灰；连接中它兼任取消——与旧的取消按钮
-                是同一个原语（device.disconnect），不存在两套断开语义。 */}
-            <div className="mt-auto pt-2 space-y-2">
+            {/* 每个状态只有一个按钮（主线推翻 626b79d 的成对常驻做法）：
+                灰掉的「已连接」是点不动的状态牌，不是操作——状态已由上面的圆点+文字表达 */}
+            <div className="mt-2 flex">
               {!configKnown ? (
                 /* 配置状态还没读回来：不给任何可点动作，避免把"未知"渲染成"未配置" */
-                <button
-                  type="button"
-                  disabled
-                  className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 opacity-50 cursor-not-allowed"
-                >
+                <button type="button" disabled className={`${SOLID_BTN} opacity-50 cursor-not-allowed`}>
                   读取配置中…
                 </button>
               ) : !isConfigured ? (
+                <button type="button" onClick={onStartSetup} className={SOLID_BTN}>
+                  配置手环
+                </button>
+              ) : isConnecting ? (
+                /* 取消 = 放弃本次连接，复用 device.disconnect，与断开同一个原语 */
                 <button
                   type="button"
-                  onClick={onStartSetup}
-                  className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5"
+                  onClick={() => void conn.disconnect()}
+                  disabled={conn.busy}
+                  className={OUTLINE_BTN}
                 >
-                  配置手环
+                  取消
+                </button>
+              ) : isConnected ? (
+                <button
+                  type="button"
+                  onClick={() => void conn.disconnect()}
+                  disabled={conn.busy}
+                  className={OUTLINE_BTN}
+                >
+                  断开连接
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={() => void conn.connect()}
-                  disabled={isConnected || conn.busy || !conn.canConnect}
-                  className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!conn.canConnect}
+                  className={SOLID_BTN}
                 >
-                  {isConnected ? '已连接' : isConnecting || conn.busy ? '连接中…' : '连接手环'}
+                  {isError ? '重试连接' : '连接手环'}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => void conn.disconnect()}
-                disabled={(!isConnected && !isConnecting) || conn.busy}
-                className="rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                断开连接
-              </button>
             </div>
           </div>
         </div>
