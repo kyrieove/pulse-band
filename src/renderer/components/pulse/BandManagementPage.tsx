@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState, useRef } from 'react';
-import { Upload, AlertCircle, ChevronDown, ChevronUp, Watch } from 'lucide-react';
+import { Upload, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useBandConnection } from '../../hooks/useBandConnection';
 import { OtherAppInstall } from './OtherAppInstall';
 import { ConnectionProgress, type ProgressStep } from './ConnectionProgress';
+import bandScreen from '../../assets/band-screen.png';
 
 export interface BandManagementPageProps {
   onStartSetup?: () => void;
@@ -170,22 +171,88 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
         断开手环不会退回未配置，配置入口也只在未配置时出现在卡内。
       */}
       <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col gap-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="w-8 h-8 rounded-[10px] bg-[var(--accent-wash)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
-            <Watch className="w-4 h-4" />
-          </span>
-          <h3 className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
-            {cardTitle}
-          </h3>
-        </div>
+        <div className="flex gap-4 min-w-0">
+          {/* 左：手环形态——真实屏幕素材（promo 实拍切片）+ 机身/表带绘制 */}
+          <div className="w-[118px] shrink-0 flex flex-col items-center select-none" aria-hidden>
+            <div
+              className="w-[62px] h-[36px] rounded-t-[14px] border border-b-0 border-[var(--border-strong)]"
+              style={{ background: 'linear-gradient(180deg, var(--bg-surface), var(--accent-wash))' }}
+            />
+            <div
+              className="relative -my-[2px] rounded-[24px] p-[3px]"
+              style={{
+                background: 'linear-gradient(160deg, rgba(255,255,255,0.85), rgba(0,0,0,0.3))',
+                boxShadow: '0 8px 18px rgba(0,0,0,0.2)',
+              }}
+            >
+              <div className="rounded-[21px] overflow-hidden bg-black">
+                <img src={bandScreen} alt="" className="w-[70px] h-[115px] object-cover block" />
+              </div>
+            </div>
+            <div
+              className="w-[62px] h-[40px] rounded-b-[14px] border border-t-0 border-[var(--border-strong)] relative"
+              style={{ background: 'linear-gradient(180deg, var(--accent-wash), var(--bg-surface))' }}
+            >
+              <div className="absolute left-1/2 -translate-x-1/2 top-[6px] w-[38px] h-[4px] rounded-full bg-[var(--border-strong)]" />
+            </div>
+          </div>
 
-        <p className="text-[11.5px] text-[var(--text-muted)] leading-relaxed">
-          {!configKnown
-            ? '正在读取本机手环配置'
-            : !isConfigured
-            ? config?.error ?? '完成配对与日志导入后即可连接手环、安装手环端快应用'
-            : addressLabel ?? '已配置手环'}
-        </p>
+          {/* 右：设备身份 + 连接管理 */}
+          <div className="flex-1 min-w-0 flex flex-col">
+            <h3 className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+              {cardTitle}
+            </h3>
+            <p className="text-[11.5px] text-[var(--text-muted)] leading-relaxed mt-1">
+              {!configKnown
+                ? '正在读取本机手环配置'
+                : !isConfigured
+                ? config?.error ?? '完成配对与日志导入后即可连接手环'
+                : addressLabel ?? '已配置手环'}
+            </p>
+
+            {/* 连接 / 断开常驻成对（与概览页同一模式）：
+                主按钮随状态变脸（读取配置中…/配置手环/连接中…/已连接/连接手环），
+                「断开连接」未连接时置灰；连接中它兼任取消——与旧的取消按钮
+                是同一个原语（device.disconnect），不存在两套断开语义。 */}
+            <div className="mt-auto pt-2 space-y-2">
+              {!configKnown ? (
+                /* 配置状态还没读回来：不给任何可点动作，避免把"未知"渲染成"未配置" */
+                <button
+                  type="button"
+                  disabled
+                  className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 opacity-50 cursor-not-allowed"
+                >
+                  读取配置中…
+                </button>
+              ) : !isConfigured ? (
+                <button
+                  type="button"
+                  onClick={onStartSetup}
+                  className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5"
+                >
+                  配置手环
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void conn.connect()}
+                  disabled={isConnected || conn.busy || !conn.canConnect}
+                  className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isConnected ? '已连接' : isConnecting || conn.busy ? '连接中…' : '连接手环'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void conn.disconnect()}
+                disabled={(!isConnected && !isConnecting) || conn.busy}
+                className="rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                断开连接
+              </button>
+            </div>
+          </div>
+        </div>
 
         {/* 五步进度条只在"连接中"和"连接失败"时出现，其余状态一行都不占 */}
         {(isConnecting || isError) && <ConnectionProgress currentStep={step} failedStep={failedStep} />}
@@ -204,48 +271,6 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
             </div>
           </div>
         )}
-
-        {/* 连接 / 断开常驻成对（与概览页同一模式）：
-            主按钮随状态变脸（读取配置中…/配置手环/连接中…/已连接/连接手环），
-            「断开连接」未连接时置灰；连接中它兼任取消——与旧的取消按钮
-            是同一个原语（device.disconnect），不存在两套断开语义。 */}
-        <div className="pt-1 space-y-2">
-          {!configKnown ? (
-            /* 配置状态还没读回来：不给任何可点动作，避免把"未知"渲染成"未配置" */
-            <button
-              type="button"
-              disabled
-              className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 opacity-50 cursor-not-allowed"
-            >
-              读取配置中…
-            </button>
-          ) : !isConfigured ? (
-            <button
-              type="button"
-              onClick={onStartSetup}
-              className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5"
-            >
-              配置手环
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void conn.connect()}
-              disabled={isConnected || conn.busy || !conn.canConnect}
-              className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isConnected ? '已连接' : isConnecting || conn.busy ? '连接中…' : '连接手环'}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => void conn.disconnect()}
-            disabled={(!isConnected && !isConnecting) || conn.busy}
-            className="rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            断开连接
-          </button>
-        </div>
       </section>
 
       {/*
