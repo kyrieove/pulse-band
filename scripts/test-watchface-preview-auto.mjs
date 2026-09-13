@@ -10,7 +10,9 @@ import {
 } from '../src/main/services/watchface-preview-decoder.ts';
 import {
   WatchfacePreviewService,
+  normalizeWatchfaceName,
 } from '../src/main/services/watchface-preview-service.ts';
+import { WatchfaceService } from '../src/main/services/watchface-service.ts';
 import {
   WatchfacePreviewStore,
   WATCHFACE_PREVIEW_DIR_NAME,
@@ -369,6 +371,346 @@ test('seed scanning: case-insensitive .bin extension matching (.BIN)', async () 
 
   const entry = store.getEntry('666666666');
   assert.ok(entry, '大写 .BIN 后缀的文件也必须被识别并处理');
+});
+
+test('normalizeWatchfaceName: strict trim and NFC only', () => {
+  assert.equal(normalizeWatchfaceName('  Hello  '), 'Hello');
+  assert.equal(normalizeWatchfaceName('Cafe\u0301'), 'Caf\u00e9');
+  assert.equal(normalizeWatchfaceName('  Caf\u00e9  '), 'Caf\u00e9');
+  assert.equal(normalizeWatchfaceName('ABC'), 'ABC'); // 不改变大小写
+  assert.equal(normalizeWatchfaceName(null), '');
+  assert.equal(normalizeWatchfaceName(undefined), '');
+  assert.equal(normalizeWatchfaceName(123), '');
+});
+
+test('reconciliation test 1: exact ID already hit -> no copy, no decode', async () => {
+  const { store } = freshStore();
+  store.set('976603977', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '丝柯克',
+    width: 2,
+    height: 1,
+  });
+
+  let decodeCalls = 0;
+  const service = new WatchfacePreviewService(store, {
+    decoder: (bytes) => {
+      decodeCalls++;
+      return decodeWatchfacePreview(bytes);
+    },
+    pngEncoder: mockPngEncoder,
+  });
+
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: '976603977', name: '丝柯克' },
+  ]);
+
+  assert.equal(decodeCalls, 0, 'decoder 调用次数必须为 0');
+  assert.equal(res.reconciled.length, 0, '完全相同的 ID 不需要对齐拷贝');
+  assert.ok(res.skipped.includes('976603977'));
+  assert.equal(Object.keys(store.list()).length, 1);
+});
+
+test('reconciliation test 2: unique strict name match with different ID -> copies to real device ID', async () => {
+  const { store } = freshStore();
+  store.set('120917361', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    sourceHash: 'hash-wf-design',
+    name: '简约1+',
+    width: 2,
+    height: 1,
+  });
+
+  let decodeCalls = 0;
+  const service = new WatchfacePreviewService(store, {
+    decoder: (bytes) => {
+      decodeCalls++;
+      return decodeWatchfacePreview(bytes);
+    },
+    pngEncoder: mockPngEncoder,
+  });
+
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: 'pulswf2', name: '简约1+' },
+  ]);
+
+  assert.equal(decodeCalls, 0, '对齐时 decoder 调用次数必须为 0');
+  assert.ok(res.reconciled.includes('pulswf2'));
+
+  const entry = store.getEntry('pulswf2');
+  assert.ok(entry, '必须在 store 中为 pulswf2 建立条目');
+  assert.equal(entry.source, 'auto');
+  assert.equal(entry.name, '简约1+');
+  assert.equal(entry.sourceHash, 'hash-wf-design');
+  assert.equal(entry.width, 2);
+  assert.equal(entry.height, 1);
+
+  const pngPath = store.resolve('pulswf2');
+  assert.ok(pngPath && fs.existsSync(pngPath));
+  assert.deepEqual(fs.readFileSync(pngPath), DUMMY_PNG);
+  // 原有 120917361 保持完好
+  assert.ok(store.getEntry('120917361'));
+});
+
+test('reconciliation test 3: manual target exists -> not overwritten', async () => {
+  const { store } = freshStore();
+  const MANUAL_PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x99, 0x88, 0x77]);
+  store.set('120917361', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '简约1+',
+    width: 2,
+    height: 1,
+  });
+  store.set('pulswf2', {
+    bytes: MANUAL_PNG,
+    source: 'manual',
+    name: '用户自选',
+    width: 10,
+    height: 20,
+  });
+
+  const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: 'pulswf2', name: '简约1+' },
+  ]);
+
+  assert.ok(res.skipped.includes('pulswf2'), '已有 manual 必须跳过');
+  const entry = store.getEntry('pulswf2');
+  assert.equal(entry.source, 'manual', 'manual 属性不能被 auto 覆盖');
+  assert.deepEqual(fs.readFileSync(store.resolve('pulswf2')), MANUAL_PNG, '用户手动设置的图片内容必须保留');
+});
+
+test('reconciliation test 4: multiple local candidates with same name -> skipped', async () => {
+  const { store } = freshStore();
+  store.set('cand-1', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '重名表盘',
+    width: 2,
+    height: 1,
+  });
+  store.set('cand-2', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '重名表盘',
+    width: 4,
+    height: 2,
+  });
+
+  const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: 'dev-target', name: '重名表盘' },
+  ]);
+
+  assert.ok(res.skipped.includes('dev-target'));
+  assert.equal(store.getEntry('dev-target'), null, '本地有歧义时不得猜测关联');
+});
+
+test('reconciliation test 5: multiple device targets with same name -> skipped', async () => {
+  const { store } = freshStore();
+  store.set('cand-1', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '多目标表盘',
+    width: 2,
+    height: 1,
+  });
+
+  const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: 'dev-1', name: '多目标表盘' },
+    { id: 'dev-2', name: '多目标表盘' },
+  ]);
+
+  assert.ok(res.skipped.includes('dev-1'));
+  assert.ok(res.skipped.includes('dev-2'));
+  assert.equal(store.getEntry('dev-1'), null);
+  assert.equal(store.getEntry('dev-2'), null);
+});
+
+test('reconciliation test 6: trim / NFC differences -> match allowed', async () => {
+  const { store } = freshStore();
+  // NFD 分解格式 'e' + combining acute accent
+  const decomposed = 'Cafe\u0301';
+  // NFC 组合格式
+  const composed = 'Caf\u00e9';
+
+  store.set('cand-accent', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: `  ${decomposed}  `,
+    width: 2,
+    height: 1,
+  });
+
+  const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: 'dev-cafe', name: `\t${composed}\n` },
+  ]);
+
+  assert.ok(res.reconciled.includes('dev-cafe'), 'trim 与 NFC 归一化后必须能够匹配');
+  assert.ok(store.getEntry('dev-cafe'));
+});
+
+test('reconciliation test 7: fuzzy/substring match -> rejected', async () => {
+  const { store } = freshStore();
+  store.set('cand-1', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '简约1',
+    width: 2,
+    height: 1,
+  });
+  store.set('cand-2', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: 'CyberPulse',
+    width: 2,
+    height: 1,
+  });
+
+  const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: 'dev-1', name: '简约1+' },
+    { id: 'dev-2', name: 'cyberpulse' }, // 大小写不同，禁止模糊匹配
+  ]);
+
+  assert.ok(res.skipped.includes('dev-1'));
+  assert.ok(res.skipped.includes('dev-2'));
+  assert.equal(store.getEntry('dev-1'), null, '子串匹配必须拒绝');
+  assert.equal(store.getEntry('dev-2'), null, '大小写模糊匹配必须拒绝');
+});
+
+test('reconciliation test 8: all-zero embedded ID without unique real target -> skipped', async () => {
+  const { store } = freshStore();
+  store.set('000000000', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: 'BetaUI-黑塔',
+    width: 2,
+    height: 1,
+  });
+
+  const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: 'random-dev-id', name: '无关表盘' },
+  ]);
+
+  assert.ok(res.skipped.includes('random-dev-id'));
+  assert.equal(store.getEntry('random-dev-id'), null, '全零 ID 无唯一目标时不得乱对齐');
+  assert.ok(store.getEntry('000000000'), '原始全零条目保持不变');
+});
+
+test('reconciliation test 9: second reconciliation call -> cache hit, no rewrite', async () => {
+  const { store } = freshStore();
+  store.set('120917361', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '简约1+',
+    width: 2,
+    height: 1,
+  });
+
+  const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  const res1 = await service.reconcileInstalledWatchfaces([
+    { id: 'pulswf2', name: '简约1+' },
+  ]);
+  assert.ok(res1.reconciled.includes('pulswf2'));
+
+  let copyCalls = 0;
+  const originalCopy = store.copyEntry.bind(store);
+  store.copyEntry = (...args) => {
+    copyCalls++;
+    return originalCopy(...args);
+  };
+
+  const res2 = await service.reconcileInstalledWatchfaces([
+    { id: 'pulswf2', name: '简约1+' },
+  ]);
+  assert.equal(copyCalls, 0, '第二次调用必须命中缓存，不执行重写');
+  assert.ok(res2.skipped.includes('pulswf2'));
+});
+
+test('reconciliation test 10: loading order -> previews visible on initial page load', async () => {
+  const { store } = freshStore();
+  const seedDir = path.join(tmpRoot, `seed-reg10-${caseIndex++}`);
+  fs.mkdirSync(seedDir, { recursive: true });
+
+  const binContent = buildTestBin({ id: '120917361', name: '简约1+' });
+  fs.writeFileSync(path.join(seedDir, 'wf_design.bin'), binContent);
+
+  const previewService = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  previewService.startBackgroundPreparation([seedDir]);
+
+  const mockCoreClient = {
+    call: async (method) => {
+      assert.equal(method, 'device.watchface.list');
+      return {
+        watchfaces: [{ id: 'pulswf2', name: '简约1+', is_current: false }],
+      };
+    },
+  };
+
+  const watchfaceService = new WatchfaceService(mockCoreClient, previewService);
+
+  // 模拟并发/首屏加载：watchfaceService.list 与 previewService.list
+  const [wfRes, previewRes] = await Promise.all([
+    watchfaceService.list(),
+    (async () => {
+      return await previewService.list();
+    })(),
+  ]);
+
+  assert.equal(wfRes.ok, true);
+  assert.equal(previewRes.ok, true);
+
+  // 再次读取（模拟 useWatchFace 在 watchface.list 成功后调用 loadPreviews）
+  const finalPreviews = await previewService.list();
+  assert.ok(finalPreviews.data.previews['pulswf2'], '首屏加载后必须可查到 pulswf2 预览图');
+  assert.equal(finalPreviews.data.previews['pulswf2'].source, 'auto');
+});
+
+test('reconciliation test 11: decoder calls remain 0 during reconciliation', async () => {
+  const { store } = freshStore();
+  store.set('cand-1', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '表盘1',
+    width: 2,
+    height: 1,
+  });
+  store.set('cand-2', {
+    bytes: DUMMY_PNG,
+    source: 'auto',
+    name: '表盘2',
+    width: 2,
+    height: 1,
+  });
+
+  let decodeCalls = 0;
+  const decoder = (bytes) => {
+    decodeCalls++;
+    return decodeWatchfacePreview(bytes);
+  };
+
+  const service = new WatchfacePreviewService(store, {
+    decoder,
+    pngEncoder: mockPngEncoder,
+  });
+
+  const res = await service.reconcileInstalledWatchfaces([
+    { id: 'target-1', name: '表盘1' },
+    { id: 'target-2', name: '表盘2' },
+    { id: 'target-3', name: '不存在的表盘' },
+  ]);
+
+  assert.equal(decodeCalls, 0, '对齐全流程 decoder 调用次数必须严格保持为 0');
+  assert.equal(res.reconciled.length, 2);
+  assert.ok(store.getEntry('target-1'));
+  assert.ok(store.getEntry('target-2'));
 });
 
 test.after(() => {

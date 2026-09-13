@@ -65,6 +65,7 @@ function computeFileMd5(filePath: string): Promise<string> {
 
 export interface WatchfacePreviewPreparer {
   prepareFromBin(id: string, filePath: string, sourceHash?: string): Promise<unknown>;
+  reconcileInstalledWatchfaces?(items: Array<{ id: string; name: string }>): Promise<unknown>;
 }
 
 export class WatchfaceService {
@@ -100,6 +101,16 @@ export class WatchfaceService {
         {},
         WATCHFACE_LIST_TIMEOUT_MS,
       );
+      if (this.previewPreparer?.reconcileInstalledWatchfaces && Array.isArray(data?.watchfaces)) {
+        try {
+          await this.previewPreparer.reconcileInstalledWatchfaces(data.watchfaces);
+        } catch (err) {
+          console.warn(
+            '[WatchfaceService] 表盘预览对齐跳过:',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
       return { ok: true, data };
     } catch (err) {
       return this.toError(err, 'watchface_list_failed', '读取表盘列表失败');

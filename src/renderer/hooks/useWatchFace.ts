@@ -69,35 +69,6 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
     };
   }, []);
 
-  const refresh = useCallback(() => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setLoading(true);
-    setLoadError(null);
-    window.pulse
-      ?.watchface?.list?.()
-      .then((res) => {
-        if (!aliveRef.current) return;
-        if (res?.ok) {
-          setItems(res.data?.watchfaces ?? []);
-        } else {
-          setLoadError(res?.message ?? '读取表盘列表失败');
-        }
-      })
-      .catch(() => {
-        if (aliveRef.current) setLoadError('读取表盘列表失败');
-      })
-      .finally(() => {
-        busyRef.current = false;
-        if (aliveRef.current) setLoading(false);
-      });
-  }, []);
-
-  // 手环连上（或重连）后自动加载一次列表
-  useEffect(() => {
-    if (connected) refresh();
-  }, [connected, refresh]);
-
   const loadPreviews = useCallback(() => {
     window.pulse
       ?.watchface?.preview?.list?.()
@@ -109,10 +80,38 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
       });
   }, []);
 
-  // 本地预览图与设备无关，但只在表盘页真正可用（已连接）时读一次
+  const refresh = useCallback(() => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setLoading(true);
+    setLoadError(null);
+    window.pulse
+      ?.watchface?.list?.()
+      .then((res) => {
+        if (!aliveRef.current) return;
+        if (res?.ok) {
+          setItems(res.data?.watchfaces ?? []);
+          loadPreviews();
+        } else {
+          setLoadError(res?.message ?? '读取表盘列表失败');
+        }
+      })
+      .catch(() => {
+        if (aliveRef.current) setLoadError('读取表盘列表失败');
+      })
+      .finally(() => {
+        busyRef.current = false;
+        if (aliveRef.current) setLoading(false);
+      });
+  }, [loadPreviews]);
+
+  // 手环连上（或重连）后自动加载一次列表与本地预览
   useEffect(() => {
-    if (connected) loadPreviews();
-  }, [connected, loadPreviews]);
+    if (connected) {
+      loadPreviews();
+      refresh();
+    }
+  }, [connected, loadPreviews, refresh]);
 
   const setPreview = useCallback(async (id: string, filePath: string): Promise<WatchfaceOpResult> => {
     if (!id) return { ok: false, message: '缺少表盘 id' };

@@ -26,9 +26,16 @@ import {
   WatchfacePreviewStore,
   isValidWatchfacePreviewId,
   type WatchfacePreviewSource,
+  type WatchfacePreviewEntry,
 } from './watchface-preview-store.ts';
 
 export { shouldPrepareAutoPreview, inspectWatchfaceHeader } from './watchface-preview-decoder.ts';
+
+/** 严格表盘名称归一化：仅 trim() + normalize('NFC')，禁止模糊/子串/大小写变换 */
+export function normalizeWatchfaceName(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  return name.trim().normalize('NFC');
+}
 
 /** 归一化目标宽度 = 手环屏宽度；卡片最宽约 100 DIP，192 已够 2x */
 export const WATCHFACE_PREVIEW_TARGET_WIDTH = 192;
@@ -83,6 +90,7 @@ export class WatchfacePreviewService {
   private readonly decoder: WatchfaceDecoderFn;
   private readonly pngEncoder: WatchfacePngEncoderFn;
   private preparationPromise: Promise<void> | null = null;
+  private reconciliationPromise: Promise<unknown> | null = null;
 
   // 不用 TS 参数属性：与 store 保持一致的写法，方便将来单独测这个类
   constructor(store: WatchfacePreviewStore, options?: WatchfacePreviewServiceOptions) {
@@ -132,6 +140,16 @@ export class WatchfacePreviewService {
       } catch (err) {
         console.warn(
           '[WatchfacePreview] 启动准备未正常完成:',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    if (this.reconciliationPromise) {
+      try {
+        await this.reconciliationPromise;
+      } catch (err) {
+        console.warn(
+          '[WatchfacePreview] 设备表盘关联未正常完成:',
           err instanceof Error ? err.message : String(err),
         );
       }
@@ -270,16 +288,20 @@ export class WatchfacePreviewService {
           const fileBytes = await readFile(fullPath);
           const md5 = createHash('md5').update(fileBytes).digest('hex');
 
-          // 只解析主头取得 embeddedId，不执行完整图像解码
-          const { id: rawId } = inspectWatchfaceHeader(fileBytes);
+          // 只解析主头取得 embeddedId 与 embeddedName，不执行完整图像解码
+          const { id: rawId, name: rawName } = inspectWatchfaceHeader(fileBytes);
           const embeddedId = rawId ? rawId.trim() : '';
-          if (!embeddedId || /^0+$/.test(embeddedId) || !isValidWatchfacePreviewId(embeddedId)) {
+          if (!embeddedId || !isValidWatchfacePreviewId(embeddedId)) {
             continue;
           }
 
           // 检查 manual 或相同 sourceHash 的现有缓存，命中则完全跳过图像解码
           const existing = this.store.getEntry(embeddedId);
           if (!shouldPrepareAutoPreview(existing, md5)) {
+            // 若缓存已有效但索引缺少 name 字段，补充持久化 name（无需重新解码图像）
+            if (existing && !existing.name && rawName?.trim()) {
+              this.store.updateName(embeddedId, rawName.trim());
+            }
             continue;
           }
 
@@ -297,6 +319,7 @@ export class WatchfacePreviewService {
             bytes: png,
             source: 'auto',
             sourceHash: md5,
+            name: (rawName || decoded.name)?.trim() || undefined,
             width: decoded.width,
             height: decoded.height,
           });
@@ -367,11 +390,139 @@ export class WatchfacePreviewService {
       bytes: png,
       source: 'auto',
       sourceHash: hash,
+      name: decoded.name ? decoded.name.trim() : undefined,
       width: decoded.width,
       height: decoded.height,
     });
     this.dataUrlCache.delete(id);
     return { status: 'written', id };
+  }
+
+  /**
+   * 将手环实际已安装表盘 ID 与本地解码的表盘预览图对齐（条件 B：名称严格且唯一匹配）。
+   *
+   * 规则：
+   * 1. 只处理 source='auto' 的本地候选预览；
+   * 2. 目标 device ID 已有任何预览（manual 或 auto）时不覆盖；
+   * 3. 严格归一化：仅 trim() + normalize('NFC')，禁止模糊/子串匹配；
+   * 4. 本地候选或设备列表中出现同名歧义时一律跳过；
+   * 5. 文件复用/拷贝，decoder 调用次数为 0；
+   * 6. 持久化到 store 中；
+   * 7. 幂等：多次调用无副作用。
+   */
+  async reconcileInstalledWatchfaces(
+    deviceItems: Array<{ id: string; name: string }>,
+  ): Promise<{ reconciled: string[]; skipped: string[] }> {
+    if (!Array.isArray(deviceItems) || deviceItems.length === 0) {
+      return { reconciled: [], skipped: [] };
+    }
+
+    const task = async () => {
+      // 1. 确保启动准备已就绪（如果有正在进行的启动扫描）
+      if (this.preparationPromise) {
+        try {
+          await this.preparationPromise;
+        } catch {
+          // 忽略启动扫描单个错误，继续对齐
+        }
+      }
+
+      const allEntries = this.store.list();
+      const reconciled: string[] = [];
+      const skipped: string[] = [];
+
+      // 2. 收集设备端条目并按规范化名称分组，检测设备端歧义
+      const deviceByName = new Map<string, Array<{ id: string; name: string }>>();
+      for (const item of deviceItems) {
+        if (!item || !isValidWatchfacePreviewId(item.id)) continue;
+        const norm = normalizeWatchfaceName(item.name);
+        if (!norm) continue;
+        const list = deviceByName.get(norm) ?? [];
+        list.push(item);
+        deviceByName.set(norm, list);
+      }
+
+      // 3. 收集本地可用的 auto 候选并按规范化名称分组，检测本地候选歧义
+      const localByName = new Map<string, Array<{ id: string; entry: WatchfacePreviewEntry }>>();
+      for (const [id, entry] of Object.entries(allEntries)) {
+        if (entry.source !== 'auto' || !entry.name) continue;
+        const norm = normalizeWatchfaceName(entry.name);
+        if (!norm) continue;
+        const list = localByName.get(norm) ?? [];
+        list.push({ id, entry });
+        localByName.set(norm, list);
+      }
+
+      // 4. 遍历设备条目进行 1-对-1 严格匹配与安全关联
+      for (const item of deviceItems) {
+        if (!item || !isValidWatchfacePreviewId(item.id)) continue;
+
+        // 如果设备 ID 已经在 store 中存在（无论是 manual 还是已生成的 auto），绝不覆盖
+        if (this.store.getEntry(item.id)) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        const norm = normalizeWatchfaceName(item.name);
+        if (!norm) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        // 设备端同名歧义检测：多个设备表盘叫同一个名字，跳过
+        const deviceMatches = deviceByName.get(norm);
+        if (!deviceMatches || deviceMatches.length !== 1) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        // 本地候选同名歧义检测：多个本地 .bin 叫同一个名字，跳过
+        const localMatches = localByName.get(norm);
+        if (!localMatches || localMatches.length !== 1) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        const candidate = localMatches[0];
+
+        // 若 ID 已经完全相同，无需复制（已经在前面 getEntry 判定过，此处作为防御）
+        if (candidate.id === item.id) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        // 仅处理 source === 'auto'
+        if (candidate.entry.source !== 'auto') {
+          skipped.push(item.id);
+          continue;
+        }
+
+        // 执行文件安全拷贝与索引关联，decoder 调用 0 次
+        try {
+          this.store.copyEntry(candidate.id, item.id, {
+            name: item.name,
+            source: 'auto',
+          });
+          this.dataUrlCache.delete(item.id);
+          reconciled.push(item.id);
+        } catch (copyErr) {
+          console.warn(`[WatchfacePreview] 对齐拷贝失败 [${candidate.id} -> ${item.id}]:`, copyErr);
+          skipped.push(item.id);
+        }
+      }
+
+      return { reconciled, skipped };
+    };
+
+    const currentPromise = task();
+    this.reconciliationPromise = currentPromise;
+    try {
+      return await currentPromise;
+    } finally {
+      if (this.reconciliationPromise === currentPromise) {
+        this.reconciliationPromise = null;
+      }
+    }
   }
 }
 

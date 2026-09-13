@@ -23,6 +23,7 @@ export interface WatchfacePreviewEntry {
   file: string;
   source: WatchfacePreviewSource;
   sourceHash?: string;
+  name?: string;
   /** ISO 时间戳 */
   addedAt: string;
   width: number;
@@ -40,6 +41,7 @@ export const WATCHFACE_PREVIEW_DIR_NAME = 'watchface-previews';
 const INDEX_FILE = 'index.json';
 const MAX_ID_LENGTH = 128;
 const MAX_HASH_LENGTH = 128;
+const MAX_NAME_LENGTH = 128;
 
 /** id 只用来做 hash 与索引键，但仍限制长度，避免异常输入撑爆索引 */
 export function isValidWatchfacePreviewId(id: unknown): id is string {
@@ -68,10 +70,18 @@ function sanitizeEntry(raw: unknown): WatchfacePreviewEntry | null {
       sourceHash = trimmed;
     }
   }
+  let name: string | undefined;
+  if (typeof entry.name === 'string') {
+    const trimmed = entry.name.trim();
+    if (trimmed.length > 0 && trimmed.length <= MAX_NAME_LENGTH) {
+      name = trimmed;
+    }
+  }
   return {
     file: entry.file,
     source: entry.source,
     ...(sourceHash ? { sourceHash } : {}),
+    ...(name ? { name } : {}),
     addedAt: entry.addedAt,
     width: entry.width,
     height: entry.height,
@@ -163,6 +173,7 @@ export class WatchfacePreviewStore {
       bytes: Buffer;
       source: WatchfacePreviewSource;
       sourceHash?: string;
+      name?: string;
       width: number;
       height: number;
     },
@@ -184,10 +195,19 @@ export class WatchfacePreviewStore {
       }
     }
 
+    let name: string | undefined;
+    if (typeof input.name === 'string') {
+      const trimmed = input.name.trim();
+      if (trimmed.length > 0 && trimmed.length <= MAX_NAME_LENGTH) {
+        name = trimmed;
+      }
+    }
+
     const entry: WatchfacePreviewEntry = {
       file,
       source: input.source,
       ...(sourceHash ? { sourceHash } : {}),
+      ...(name ? { name } : {}),
       addedAt: new Date().toISOString(),
       width: input.width,
       height: input.height,
@@ -195,6 +215,73 @@ export class WatchfacePreviewStore {
     };
     const index = this.readIndex();
     index.entries[id] = entry;
+    this.writeIndex(index);
+    return entry;
+  }
+
+  /**
+   * 仅在条目已存在但缺少 name 时更新 name 索引字段（不改动图片与 mtime）
+   */
+  updateName(id: string, name: string): boolean {
+    if (!isValidWatchfacePreviewId(id)) return false;
+    const trimmed = name.trim();
+    if (!trimmed || trimmed.length > MAX_NAME_LENGTH) return false;
+    const index = this.readIndex();
+    const entry = index.entries[id];
+    if (!entry) return false;
+    if (entry.name === trimmed) return true;
+    entry.name = trimmed;
+    this.writeIndex(index);
+    return true;
+  }
+
+  /**
+   * 将一个已有的本地预览图条目及文件安全复制到新的 id（用于将 .bin 内嵌预览关联到手环实际 id）。
+   * 仅在目标 id 不存在或满足特定条件时调用，不执行图像重新解码。
+   */
+  copyEntry(
+    fromId: string,
+    toId: string,
+    overrides?: {
+      name?: string;
+      source?: WatchfacePreviewSource;
+    },
+  ): WatchfacePreviewEntry {
+    if (!isValidWatchfacePreviewId(fromId) || !isValidWatchfacePreviewId(toId)) {
+      throw new Error('非法表盘 id');
+    }
+    const sourceEntry = this.getEntry(fromId);
+    const sourceFilePath = this.resolve(fromId);
+    if (!sourceEntry || !sourceFilePath) {
+      throw new Error(`源表盘预览不存在 [${fromId}]`);
+    }
+
+    this.ensureDir();
+    const file = previewFileName(toId);
+    const target = path.join(this.dir, file);
+    const tmp = `${target}.tmp`;
+    fs.copyFileSync(sourceFilePath, tmp);
+    fs.renameSync(tmp, target);
+
+    let name = overrides?.name ?? sourceEntry.name;
+    if (typeof name === 'string') {
+      const trimmed = name.trim();
+      name = trimmed.length > 0 && trimmed.length <= MAX_NAME_LENGTH ? trimmed : undefined;
+    }
+
+    const entry: WatchfacePreviewEntry = {
+      file,
+      source: overrides?.source ?? sourceEntry.source,
+      ...(sourceEntry.sourceHash ? { sourceHash: sourceEntry.sourceHash } : {}),
+      ...(name ? { name } : {}),
+      addedAt: new Date().toISOString(),
+      width: sourceEntry.width,
+      height: sourceEntry.height,
+      bytes: sourceEntry.bytes,
+    };
+
+    const index = this.readIndex();
+    index.entries[toId] = entry;
     this.writeIndex(index);
     return entry;
   }

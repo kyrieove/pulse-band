@@ -216,6 +216,55 @@ test('sourceHash: set 保存并读回 sourceHash，旧版无 hash 索引仍可�
   assert.equal(loadedBadHash.sourceHash, undefined);
 });
 
+test('copyEntry: safely copies existing preview to new ID with overrides', () => {
+  const { store, dir } = freshStore();
+  store.set('source-1', {
+    bytes: PNG_A,
+    source: 'auto',
+    sourceHash: 'hash-abc',
+    name: 'OriginalName',
+    width: 212,
+    height: 520,
+  });
+
+  const copied = store.copyEntry('source-1', 'target-1', { name: 'DeviceName' });
+  assert.equal(copied.source, 'auto');
+  assert.equal(copied.sourceHash, 'hash-abc');
+  assert.equal(copied.name, 'DeviceName');
+  assert.equal(copied.width, 212);
+  assert.equal(copied.height, 520);
+  assert.equal(copied.bytes, PNG_A.length);
+
+  const targetPath = store.resolve('target-1');
+  assert.ok(targetPath);
+  assert.ok(fs.existsSync(targetPath));
+  assert.deepEqual(fs.readFileSync(targetPath), PNG_A);
+
+  // 校验不存在的源 ID 会抛出异常
+  assert.throws(() => store.copyEntry('non-existent', 'target-2'), /源表盘预览不存在/);
+  // 非法 ID 会抛出异常
+  assert.throws(() => store.copyEntry('', 'target-2'), /非法表盘 id/);
+});
+
+test('updateName: updates name in index without touching image file', () => {
+  const { store } = freshStore();
+  store.set('wf-1', {
+    bytes: PNG_A,
+    source: 'auto',
+    sourceHash: 'hash-abc',
+    width: 212,
+    height: 520,
+  });
+  assert.equal(store.getEntry('wf-1')?.name, undefined);
+
+  const updated = store.updateName('wf-1', '新名称');
+  assert.equal(updated, true);
+  assert.equal(store.getEntry('wf-1')?.name, '新名称');
+
+  // 对不存在的 id 返回 false
+  assert.equal(store.updateName('non-existent', '新名称'), false);
+});
+
 test.after(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
