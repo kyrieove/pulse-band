@@ -11,6 +11,7 @@ import {
 import {
   WatchfacePreviewService,
   normalizeWatchfaceName,
+  isAllZerosId,
 } from '../src/main/services/watchface-preview-service.ts';
 import { WatchfaceService } from '../src/main/services/watchface-service.ts';
 import {
@@ -584,24 +585,158 @@ test('reconciliation test 7: fuzzy/substring match -> rejected', async () => {
   assert.equal(store.getEntry('dev-2'), null, '大小写模糊匹配必须拒绝');
 });
 
-test('reconciliation test 8: all-zero embedded ID without unique real target -> skipped', async () => {
+test('reconciliation test 8: all-zero embedded ID startup scan and real target reconciliation', async () => {
   const { store } = freshStore();
-  store.set('000000000', {
-    bytes: DUMMY_PNG,
-    source: 'auto',
-    name: 'BetaUI-黑塔',
-    width: 2,
-    height: 1,
-  });
+  const seedDir = path.join(tmpRoot, `seed-zero-${caseIndex++}`);
+  fs.mkdirSync(seedDir, { recursive: true });
+
+  const binContent = buildTestBin({ id: '000000000', name: 'BetaUI-黑塔' });
+  fs.writeFileSync(path.join(seedDir, 'BetaUI-黑塔.bin'), binContent);
 
   const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
-  const res = await service.reconcileInstalledWatchfaces([
+  service.startBackgroundPreparation([seedDir]);
+
+  // 1. 扫描全零 ID 的 bin 后，preview.list 中不存在 000000000，且 store 中不产生 000000000
+  const initialList = await service.list();
+  assert.ok(initialList.ok);
+  assert.equal(initialList.data.previews['000000000'], undefined, '全零 ID 不得出现在公开 preview.list 中');
+  assert.equal(store.getEntry('000000000'), null, '全零 ID 不得作为条目写入 store');
+
+  // 2. 没有唯一真实目标时不生成任何目标 ID
+  const unrelatedRes = await service.reconcileInstalledWatchfaces([
     { id: 'random-dev-id', name: '无关表盘' },
   ]);
+  assert.ok(unrelatedRes.skipped.includes('random-dev-id'));
+  assert.equal(store.getEntry('random-dev-id'), null, '无关设备目标不生成预览');
+  assert.equal(store.getEntry('000000000000'), null, '未匹配时不生成真实设备目标');
 
-  assert.ok(res.skipped.includes('random-dev-id'));
-  assert.equal(store.getEntry('random-dev-id'), null, '全零 ID 无唯一目标时不得乱对齐');
-  assert.ok(store.getEntry('000000000'), '原始全零条目保持不变');
+  // 3. 唯一匹配 BetaUI 后，只出现 000000000000，不出现 000000000
+  const matchRes = await service.reconcileInstalledWatchfaces([
+    { id: '000000000000', name: 'BetaUI-黑塔' },
+  ]);
+  assert.ok(matchRes.reconciled.includes('000000000000'));
+  assert.ok(store.getEntry('000000000000'), '匹配成功后必须写入 000000000000');
+  assert.equal(store.getEntry('000000000'), null, '全零 ID 000000000 仍不得存在于 store');
+
+  const afterList = await service.list();
+  assert.ok(afterList.data.previews['000000000000'], '公开映射中必须出现 000000000000');
+  assert.equal(afterList.data.previews['000000000'], undefined, '公开映射中不得出现 000000000');
+});
+
+test('reconciliation test 8a: all-zero embedded ID second run -> no duplicate decode or rewrite', async () => {
+  const { store } = freshStore();
+  const seedDir = path.join(tmpRoot, `seed-zero-cache-${caseIndex++}`);
+  fs.mkdirSync(seedDir, { recursive: true });
+
+  const binContent = buildTestBin({ id: '000000000', name: 'BetaUI-黑塔' });
+  fs.writeFileSync(path.join(seedDir, 'BetaUI-黑塔.bin'), binContent);
+
+  // 第一次启动并完成对齐
+  const service1 = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+  service1.startBackgroundPreparation([seedDir]);
+  await service1.reconcileInstalledWatchfaces([
+    { id: '000000000000', name: 'BetaUI-黑塔' },
+  ]);
+  assert.ok(store.getEntry('000000000000'));
+
+  // 模拟应用重启：第二次启动同一个 seedDir 和 store
+  let decodeCalls = 0;
+  const countingDecoder = (bytes) => {
+    decodeCalls++;
+    return decodeWatchfacePreview(bytes);
+  };
+
+  const service2 = new WatchfacePreviewService(store, {
+    decoder: countingDecoder,
+    pngEncoder: mockPngEncoder,
+  });
+
+  service2.startBackgroundPreparation([seedDir]);
+  const listRes = await service2.list();
+  assert.ok(listRes.ok);
+  assert.equal(decodeCalls, 0, '第二次启动扫描已有缓存不得重新解码');
+
+  let setCalls = 0;
+  const originalSet = store.set.bind(store);
+  store.set = (...args) => {
+    setCalls++;
+    return originalSet(...args);
+  };
+
+  const matchRes2 = await service2.reconcileInstalledWatchfaces([
+    { id: '000000000000', name: 'BetaUI-黑塔' },
+  ]);
+  assert.equal(decodeCalls, 0, '第二次对齐不得调用解码');
+  assert.equal(setCalls, 0, '第二次对齐不得重写 store');
+  assert.ok(matchRes2.skipped.includes('000000000000'), '已存在的目标 ID 必须跳过重写');
+});
+
+test('reconciliation test 8b: all-zero embedded ID bilateral ambiguity and manual target skipped', async () => {
+  // A. 设备端同名歧义：手环上有两款叫 BetaUI-黑塔
+  {
+    const { store } = freshStore();
+    const seedDir = path.join(tmpRoot, `seed-zero-amb1-${caseIndex++}`);
+    fs.mkdirSync(seedDir, { recursive: true });
+    fs.writeFileSync(path.join(seedDir, 'test.bin'), buildTestBin({ id: '000000000', name: 'BetaUI-黑塔' }));
+
+    const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+    service.startBackgroundPreparation([seedDir]);
+    await service.list();
+
+    const res = await service.reconcileInstalledWatchfaces([
+      { id: 'dev-1', name: 'BetaUI-黑塔' },
+      { id: 'dev-2', name: 'BetaUI-黑塔' },
+    ]);
+    assert.ok(res.skipped.includes('dev-1'));
+    assert.ok(res.skipped.includes('dev-2'));
+    assert.equal(store.getEntry('dev-1'), null, '设备端同名歧义不得写入');
+    assert.equal(store.getEntry('dev-2'), null, '设备端同名歧义不得写入');
+  }
+
+  // B. 本地候选同名歧义：本地有两个全零 bin 都叫 BetaUI-黑塔
+  {
+    const { store } = freshStore();
+    const seedDir = path.join(tmpRoot, `seed-zero-amb2-${caseIndex++}`);
+    fs.mkdirSync(seedDir, { recursive: true });
+    fs.writeFileSync(path.join(seedDir, 'bin1.bin'), buildTestBin({ id: '000000000', name: 'BetaUI-黑塔', width: 2, height: 1, payload: Buffer.alloc(8) }));
+    fs.writeFileSync(path.join(seedDir, 'bin2.bin'), buildTestBin({ id: '000000000', name: 'BetaUI-黑塔', width: 4, height: 1, payload: Buffer.alloc(16) }));
+
+    const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+    service.startBackgroundPreparation([seedDir]);
+    await service.list();
+
+    const res = await service.reconcileInstalledWatchfaces([
+      { id: '000000000000', name: 'BetaUI-黑塔' },
+    ]);
+    assert.ok(res.skipped.includes('000000000000'), '本地候选同名歧义必须跳过');
+    assert.equal(store.getEntry('000000000000'), null, '本地歧义不得写入');
+  }
+
+  // C. manual 目标不得覆盖
+  {
+    const { store } = freshStore();
+    store.set('000000000000', {
+      bytes: DUMMY_PNG,
+      source: 'manual',
+      name: '用户自选',
+      width: 2,
+      height: 1,
+    });
+
+    const seedDir = path.join(tmpRoot, `seed-zero-manual-${caseIndex++}`);
+    fs.mkdirSync(seedDir, { recursive: true });
+    fs.writeFileSync(path.join(seedDir, 'test.bin'), buildTestBin({ id: '000000000', name: 'BetaUI-黑塔' }));
+
+    const service = new WatchfacePreviewService(store, { pngEncoder: mockPngEncoder });
+    service.startBackgroundPreparation([seedDir]);
+    await service.list();
+
+    const res = await service.reconcileInstalledWatchfaces([
+      { id: '000000000000', name: 'BetaUI-黑塔' },
+    ]);
+    assert.ok(res.skipped.includes('000000000000'), '已存在 manual 目标必须跳过');
+    assert.equal(store.getEntry('000000000000')?.source, 'manual', 'manual 目标必须保持未修改');
+  }
 });
 
 test('reconciliation test 9: second reconciliation call -> cache hit, no rewrite', async () => {

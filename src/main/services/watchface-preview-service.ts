@@ -26,7 +26,6 @@ import {
   WatchfacePreviewStore,
   isValidWatchfacePreviewId,
   type WatchfacePreviewSource,
-  type WatchfacePreviewEntry,
 } from './watchface-preview-store.ts';
 
 export { shouldPrepareAutoPreview, inspectWatchfaceHeader } from './watchface-preview-decoder.ts';
@@ -35,6 +34,13 @@ export { shouldPrepareAutoPreview, inspectWatchfaceHeader } from './watchface-pr
 export function normalizeWatchfaceName(name: unknown): string {
   if (typeof name !== 'string') return '';
   return name.trim().normalize('NFC');
+}
+
+/** 检查 embeddedId 是否为全零占位 ID（如 000000000） */
+export function isAllZerosId(id: unknown): boolean {
+  if (typeof id !== 'string') return false;
+  const trimmed = id.trim();
+  return trimmed.length > 0 && /^0+$/.test(trimmed);
 }
 
 /** 归一化目标宽度 = 手环屏宽度；卡片最宽约 100 DIP，192 已够 2x */
@@ -91,6 +97,15 @@ export class WatchfacePreviewService {
   private readonly pngEncoder: WatchfacePngEncoderFn;
   private preparationPromise: Promise<void> | null = null;
   private reconciliationPromise: Promise<unknown> | null = null;
+  /** 全零 embeddedId 待关联内存候选（不直接落盘为公开条目） */
+  private pendingZeroCandidates: Array<{
+    embeddedId: string;
+    name: string;
+    sourceHash: string;
+    png: Buffer;
+    width: number;
+    height: number;
+  }> = [];
 
   // 不用 TS 参数属性：与 store 保持一致的写法，方便将来单独测这个类
   constructor(store: WatchfacePreviewStore, options?: WatchfacePreviewServiceOptions) {
@@ -295,7 +310,45 @@ export class WatchfacePreviewService {
             continue;
           }
 
-          // 检查 manual 或相同 sourceHash 的现有缓存，命中则完全跳过图像解码
+          // 全零 embedded ID 只能作为内部待关联候选，不能出现在 preview.list() 或公开 store 索引中
+          if (isAllZerosId(embeddedId)) {
+            // 防御：若旧版本曾将全零条目写入 store，主动清理
+            if (this.store.getEntry(embeddedId)) {
+              this.store.clear(embeddedId);
+            }
+
+            // 检查 store 中是否已存在由此 bin 关联出的有效设备预览
+            const allStoreEntries = this.store.list();
+            const alreadyCached = Object.values(allStoreEntries).some(
+              (e) => e.source === 'auto' && e.sourceHash === md5,
+            );
+            if (alreadyCached) {
+              // 目标设备 ID 已有有效缓存，启动不重复解码
+              continue;
+            }
+
+            // 尚未关联到目标设备 ID：作为内部待关联候选解码并保存在内存中
+            const decoded = this.decoder(fileBytes);
+            let png: Buffer;
+            try {
+              png = this.pngEncoder(decoded.bgra, decoded.width, decoded.height);
+            } catch (encodeErr) {
+              console.warn(`[WatchfacePreview] 候选表盘转 PNG 失败: ${entry.name}`, encodeErr);
+              continue;
+            }
+
+            this.pendingZeroCandidates.push({
+              embeddedId,
+              name: (rawName || decoded.name)?.trim() || '',
+              sourceHash: md5,
+              png,
+              width: decoded.width,
+              height: decoded.height,
+            });
+            continue;
+          }
+
+          // 常规非全零 embeddedId：检查 manual 或相同 sourceHash 的现有缓存，命中则完全跳过图像解码
           const existing = this.store.getEntry(embeddedId);
           if (!shouldPrepareAutoPreview(existing, md5)) {
             // 若缓存已有效但索引缺少 name 字段，补充持久化 name（无需重新解码图像）
@@ -443,13 +496,47 @@ export class WatchfacePreviewService {
       }
 
       // 3. 收集本地可用的 auto 候选并按规范化名称分组，检测本地候选歧义
-      const localByName = new Map<string, Array<{ id: string; entry: WatchfacePreviewEntry }>>();
+      interface ReconcileCandidate {
+        id: string;
+        name: string;
+        sourceHash?: string;
+        isPendingZero: boolean;
+        pendingData?: { png: Buffer; width: number; height: number };
+      }
+
+      const localByName = new Map<string, ReconcileCandidate[]>();
+
+      // (A) Store 中的非全零 auto 条目（排除全零条目，因为全零不作为公共条目）
       for (const [id, entry] of Object.entries(allEntries)) {
-        if (entry.source !== 'auto' || !entry.name) continue;
+        if (entry.source !== 'auto' || !entry.name || isAllZerosId(id)) continue;
         const norm = normalizeWatchfaceName(entry.name);
         if (!norm) continue;
         const list = localByName.get(norm) ?? [];
-        list.push({ id, entry });
+        list.push({
+          id,
+          name: entry.name,
+          sourceHash: entry.sourceHash,
+          isPendingZero: false,
+        });
+        localByName.set(norm, list);
+      }
+
+      // (B) 内存中的全零待关联候选（若已有关联条目存在于 store，则不再作为待关联候选）
+      for (const cand of this.pendingZeroCandidates) {
+        if (!cand.name) continue;
+        if (Object.values(allEntries).some((e) => e.source === 'auto' && e.sourceHash === cand.sourceHash)) {
+          continue;
+        }
+        const norm = normalizeWatchfaceName(cand.name);
+        if (!norm) continue;
+        const list = localByName.get(norm) ?? [];
+        list.push({
+          id: cand.embeddedId,
+          name: cand.name,
+          sourceHash: cand.sourceHash,
+          isPendingZero: true,
+          pendingData: { png: cand.png, width: cand.width, height: cand.height },
+        });
         localByName.set(norm, list);
       }
 
@@ -476,7 +563,7 @@ export class WatchfacePreviewService {
           continue;
         }
 
-        // 本地候选同名歧义检测：多个本地 .bin 叫同一个名字，跳过
+        // 本地候选同名歧义检测：多个本地候选叫同一个名字，跳过
         const localMatches = localByName.get(norm);
         if (!localMatches || localMatches.length !== 1) {
           skipped.push(item.id);
@@ -485,29 +572,42 @@ export class WatchfacePreviewService {
 
         const candidate = localMatches[0];
 
-        // 若 ID 已经完全相同，无需复制（已经在前面 getEntry 判定过，此处作为防御）
-        if (candidate.id === item.id) {
-          skipped.push(item.id);
-          continue;
-        }
+        if (candidate.isPendingZero && candidate.pendingData) {
+          // 全零候选匹配唯一真实设备 ID：直接将 PNG 写入目标设备 ID（decoder 调用 0 次）
+          try {
+            this.store.set(item.id, {
+              bytes: candidate.pendingData.png,
+              source: 'auto',
+              sourceHash: candidate.sourceHash,
+              name: item.name,
+              width: candidate.pendingData.width,
+              height: candidate.pendingData.height,
+            });
+            this.dataUrlCache.delete(item.id);
+            reconciled.push(item.id);
+          } catch (writeErr) {
+            console.warn(`[WatchfacePreview] 全零候选关联写入失败 [${item.id}]:`, writeErr);
+            skipped.push(item.id);
+          }
+        } else {
+          // 若 ID 已经完全相同，无需复制
+          if (candidate.id === item.id) {
+            skipped.push(item.id);
+            continue;
+          }
 
-        // 仅处理 source === 'auto'
-        if (candidate.entry.source !== 'auto') {
-          skipped.push(item.id);
-          continue;
-        }
-
-        // 执行文件安全拷贝与索引关联，decoder 调用 0 次
-        try {
-          this.store.copyEntry(candidate.id, item.id, {
-            name: item.name,
-            source: 'auto',
-          });
-          this.dataUrlCache.delete(item.id);
-          reconciled.push(item.id);
-        } catch (copyErr) {
-          console.warn(`[WatchfacePreview] 对齐拷贝失败 [${candidate.id} -> ${item.id}]:`, copyErr);
-          skipped.push(item.id);
+          // 执行文件安全拷贝与索引关联，decoder 调用 0 次
+          try {
+            this.store.copyEntry(candidate.id, item.id, {
+              name: item.name,
+              source: 'auto',
+            });
+            this.dataUrlCache.delete(item.id);
+            reconciled.push(item.id);
+          } catch (copyErr) {
+            console.warn(`[WatchfacePreview] 对齐拷贝失败 [${candidate.id} -> ${item.id}]:`, copyErr);
+            skipped.push(item.id);
+          }
         }
       }
 
