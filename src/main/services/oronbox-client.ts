@@ -15,7 +15,7 @@
  * node 24 可直接运行本文件（erasable TS），
  * Electron 主进程则经 vite 打包进 dist-electron。
  */
-import { spawn } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -71,14 +71,46 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
-function pidAlive(pid: number): boolean {
+const DAEMON_IMAGE = 'pulse-core.exe';
+
+/**
+ * pid 是否对应指定映像名的进程（tasklist 异步查，不在主进程同步等）。
+ *
+ * Windows 会复用 pid：core.json 里的 pid 死掉后，同号可能被无关进程领走
+ * （实测 2026-09-13：被 ChatGPT 桌面版占用），光用 kill(pid,0) 判活会把
+ * 别人的进程当成 daemon，端点陈旧也不重新拉起 → ECONNREFUSED 旧端口。
+ */
+export function isNamedPid(pid: number, imageNames: string[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(pid) || pid <= 0) {
+      resolve(false);
+      return;
+    }
+    exec(
+      `tasklist /FI "PID eq ${pid}" /FO CSV /NH`,
+      { windowsHide: true, timeout: 3_000 },
+      (err, stdout) => {
+        if (err) {
+          resolve(false);
+          return;
+        }
+        const line = String(stdout ?? '').toLowerCase();
+        resolve(imageNames.some((n) => line.includes(`"${n.toLowerCase()}"`)));
+      }
+    );
+  });
+}
+
+/** daemon pid 判活：pid 存在且映像名是 pulse-core */
+async function pidAlive(pid: number): Promise<boolean> {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
-    return true;
   } catch (e: any) {
-    return e?.code === 'EPERM';
+    if (e?.code === 'EPERM') return isNamedPid(pid, [DAEMON_IMAGE]);
+    return false; // ESRCH：pid 不存在
   }
+  return isNamedPid(pid, [DAEMON_IMAGE]);
 }
 
 export function readEndpoint(file = getDaemonEndpointFile()): DaemonEndpoint | null {
@@ -97,6 +129,8 @@ export interface OronBoxClientOptions {
   mode?: 'live' | 'fake';
   endpointFile?: string;
   deviceConfigFile?: string;
+  /** daemon pid 判活注入（测试用）：默认按映像名核对 pulse-core 进程 */
+  pidAlive?: (pid: number) => Promise<boolean>;
 }
 
 export class OronBoxClient extends EventEmitter {
@@ -112,12 +146,14 @@ export class OronBoxClient extends EventEmitter {
   private disposed = false;
   private degradedInfo: Degradation | null = null;
   private options: OronBoxClientOptions;
+  private pidAliveImpl: (pid: number) => Promise<boolean>;
   private _bandConnectionDesired = false;
   private lastConnectedPid: number | null = null;
 
   constructor(options: OronBoxClientOptions = {}) {
     super();
     this.options = options;
+    this.pidAliveImpl = options.pidAlive ?? pidAlive;
   }
 
   get bandConnectionDesired(): boolean {
@@ -154,7 +190,7 @@ export class OronBoxClient extends EventEmitter {
 
   private async doEnsureDaemon(): Promise<DaemonEndpoint> {
     const ep = readEndpoint(this.endpointFile);
-    if (ep && pidAlive(ep.pid)) {
+    if (ep && (await this.pidAliveImpl(ep.pid))) {
       this.endpoint = ep;
       return ep;
     }
@@ -206,7 +242,7 @@ export class OronBoxClient extends EventEmitter {
   /** 仅连接已经在运行的 daemon；不存在时绝不拉起新进程。 */
   async connectIfRunning(): Promise<boolean> {
     const ep = readEndpoint(this.endpointFile);
-    if (!ep || !pidAlive(ep.pid)) return false;
+    if (!ep || !(await this.pidAliveImpl(ep.pid))) return false;
     this.disposed = false;
     this.endpoint = ep;
     await this.ensureConnected();
@@ -233,7 +269,7 @@ export class OronBoxClient extends EventEmitter {
       if (this.disposed) throw new Error('客户端已销毁');
       // daemon 可能刚写完端点文件或已重启；每次尝试前读取最新端点
       const fresh = readEndpoint(this.endpointFile);
-      if (fresh && pidAlive(fresh.pid)) this.endpoint = fresh;
+      if (fresh && (await this.pidAliveImpl(fresh.pid))) this.endpoint = fresh;
       const currentEp = this.endpoint;
       try {
         await this.openSocket(currentEp);
