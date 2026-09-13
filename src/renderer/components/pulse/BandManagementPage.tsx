@@ -74,6 +74,7 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
   const conn = useBandConnection();
 
   const [showOtherApps, setShowOtherApps] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   // 磁盘上的配置状态 —— 「已配置」的权威来源，与"当前是否连着"无关
   const [config, setConfig] = useState<DeviceConfigStatus | null>(null);
@@ -128,6 +129,16 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
   const isConnected = conn.state === 'connected';
   const isConnecting = conn.state === 'connecting';
   const isError = conn.state === 'error';
+
+  const handleDisconnect = useCallback(async () => {
+    if (disconnecting) return;
+    setDisconnecting(true);
+    try {
+      await conn.disconnect();
+    } finally {
+      setDisconnecting(false);
+    }
+  }, [conn.disconnect, disconnecting]);
 
   // 「已配置」看磁盘，不看连接状态 —— 断开手环不会取消配置
   const configKnown = config !== null;
@@ -269,8 +280,8 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
                 /* 取消 = 放弃本次连接，复用 device.disconnect，与断开同一个原语 */
                 <button
                   type="button"
-                  onClick={() => void conn.disconnect()}
-                  disabled={conn.busy}
+                  onClick={() => void handleDisconnect()}
+                  disabled={disconnecting}
                   className={OUTLINE_BTN}
                 >
                   取消
@@ -278,8 +289,8 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
               ) : isConnected ? (
                 <button
                   type="button"
-                  onClick={() => void conn.disconnect()}
-                  disabled={conn.busy}
+                  onClick={() => void handleDisconnect()}
+                  disabled={disconnecting}
                   className={OUTLINE_BTN}
                 >
                   断开连接

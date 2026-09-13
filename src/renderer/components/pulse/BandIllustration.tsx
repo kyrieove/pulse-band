@@ -42,6 +42,7 @@ export const BandIllustration: React.FC<BandIllustrationProps> = ({
   const [watchface, setWatchface] = useState<CurrentWatchface | null>(null);
 
   useEffect(() => {
+    setWatchface(null);
     if (mode !== 'live') return;
     let alive = true;
     window.pulse
