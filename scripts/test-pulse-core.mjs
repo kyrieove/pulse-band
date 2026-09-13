@@ -1,5 +1,5 @@
 // 冒烟测试:直接对 pulse-core --fake 走一遍 RPC 往返(不经过 Electron)。
-// 客户端行为按 oronbox-client.ts 的线协议手工模拟。
+// 客户端行为按 pulse-core-client.ts 的线协议手工模拟。
 import net from 'node:net';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -82,7 +82,7 @@ ok(states.some((e) => e.state.protocolState === 'connecting'), '发了 connectin
 const ready = states.find((e) => e.state.protocolState === 'ready');
 ok(!!ready, '发了 ready 事件');
 ok(ready?.state.currentDevice?.name === 'PulseDev Fake Band' && ready.state.currentDevice.disconnected === false, 'ready 事件带 currentDevice 且 disconnected=false');
-ok(!JSON.stringify(ready).toLowerCase().includes('authkey'), 'device.state 事件不含 authkey(不复刻 OronBox 缺陷)');
+ok(!JSON.stringify(ready).toLowerCase().includes('authkey'), 'device.state 事件不含 authkey(不复刻 Pulse Core 缺陷)');
 const hs = events.find((e) => e.event === 'device.interconnect');
 ok(!!hs && hs.packageName === 'com.codeisland.band', '发了 device.interconnect 事件,packageName 正确');
 const hsPacket = hs ? JSON.parse(Buffer.from(hs.payload).toString('utf-8')) : null;
@@ -124,13 +124,9 @@ await sleep(300);
 const rec2 = JSON.parse(fs.readFileSync(REC, 'utf-8'));
 ok(rec2.passed === false, '坏响应(id 不匹配/ok=false/body 非 JSON)被断言拦下');
 
-// 7. settings.set / plugin.list 降级
+// 7. settings.set 与时间同步降级
 const ss = await call('settings.set', { key: 'auto_reconnect', value: false });
 ok(ss.ok === true, 'settings.set 返回 ok(它在 ensureReady 里没有 try/catch)');
-const pl = await call('plugin.list', { includeIcons: false });
-ok(pl.ok === true && Array.isArray(pl.result) && pl.result.length === 0, 'plugin.list 返回空列表');
-const po = await call('plugin.open', { id: 'x' });
-ok(po.ok === false && po.error?.code === 'method_not_found', 'plugin.open 报 method_not_found');
 const sync = await call('device.sync.time');
 ok(sync.ok === false && sync.error?.code === 'method_not_found', 'device.sync.time 报 method_not_found(禁止实现)');
 

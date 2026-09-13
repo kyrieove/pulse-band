@@ -32,7 +32,7 @@ impl FakeDevice {
     }
 }
 
-/// safeDevice（oronbox-bridge.ts）要求 name/addr 是字符串才认；disconnected 必须
+/// safeDevice（pulse-core-bridge.ts）要求 name/addr 是字符串才认；disconnected 必须
 /// 显式 false，否则 `raw.disconnected !== false` 会把它当成已断开。
 fn fake_device() -> serde_json::Value {
     serde_json::json!({

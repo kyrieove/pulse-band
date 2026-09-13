@@ -41,9 +41,6 @@ export interface DiagnosticObservation {
   hookService: ProbeResult;
   daemonConnected: boolean;
   daemonDegraded: boolean;
-  bridgeMode: 'plugin' | 'direct';
-  bridgeInstalled: boolean;
-  bridgeRunning: boolean;
   bandConnected: boolean;
   bundledRpkExists: boolean;
   usableQuotaCount: number;
@@ -133,26 +130,8 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
       summary: 'daemon 未连接，暂时无法确认桥接状态。',
       nextStep: '请先恢复设备守护进程连接。',
     });
-  } else if (input.bridgeMode === 'direct') {
-    checks.push(pass('bridge', '手环联网桥接', 'Pulse 直连模式已启用。'));
-  } else if (!input.bridgeInstalled) {
-    checks.push({
-      id: 'bridge',
-      label: '手环联网桥接',
-      status: 'fail',
-      summary: '没有找到 FetchBridge 插件。',
-      nextStep: '请切换到 Pulse 直连模式，或确认 FetchBridge 插件已在本机安装并运行。',
-    });
-  } else if (!input.bridgeRunning) {
-    checks.push({
-      id: 'bridge',
-      label: '手环联网桥接',
-      status: 'fail',
-      summary: 'FetchBridge 插件未运行。',
-      nextStep: '请启动 FetchBridge，或在 Pulse 中重新开启桥接。',
-    });
   } else {
-    checks.push(pass('bridge', '手环联网桥接', 'FetchBridge 插件正在运行。'));
+    checks.push(pass('bridge', '手环联网桥接', 'Pulse 直连服务已启用。'));
   }
 
   checks.push(

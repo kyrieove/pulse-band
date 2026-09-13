@@ -12,7 +12,7 @@ import { DiagnosticsScreen } from './components/pulse/DiagnosticsScreen';
 import { MiniBar } from './components/minibar/MiniBar';
 import { useBandConnection } from './hooks/useBandConnection';
 import { useQuotaState } from './hooks/useQuotaState';
-import type { PulseOronboxState } from '../main/services/oronbox-bridge';
+import type { PulseCoreState } from '../main/services/pulse-core-bridge';
 import type { PulseErrorEntry } from '../main/services/error-log';
 
 type AppScreen = PulsePage | 'minibar';
@@ -42,7 +42,7 @@ export const App: React.FC = () => {
   /** 向导打开时落在第几步（0-based）：稍后验证后可回到第 4 步继续 */
   const [setupStartIndex, setSetupStartIndex] = useState<number>(0);
   const [errors, setErrors] = useState<PulseErrorEntry[]>([]);
-  const [state, setState] = useState<PulseOronboxState | null>(null);
+  const [state, setState] = useState<PulseCoreState | null>(null);
   // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
   const band = useBandConnection();
   // 额度/会话数据唯一来源：概览页与 TopBar 共用这一份，不再起第二个订阅
@@ -92,8 +92,8 @@ export const App: React.FC = () => {
     if (screen === 'minibar') return;
     if (!window.pulse) return;
     let alive = true;
-    window.pulse.getOronboxState().then((s) => alive && setState(s));
-    const unsubState = window.pulse.onOronboxState((s) => setState(s));
+    window.pulse.getCoreState().then((s) => alive && setState(s));
+    const unsubState = window.pulse.onCoreState((s) => setState(s));
     return () => {
       alive = false;
       unsubState();

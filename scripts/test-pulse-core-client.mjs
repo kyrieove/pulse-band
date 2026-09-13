@@ -5,14 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { OronBoxClient } from '../src/main/services/oronbox-client.ts';
+import { PulseCoreClient } from '../src/main/services/pulse-core-client.ts';
 import {
   canConnectBand,
   shouldConnectBand,
   resolveCoreExePath,
   resolveDaemonArgs,
   shouldRetryLiveConnect,
-} from '../src/main/services/oronbox-policy.ts';
+} from '../src/main/services/pulse-core-policy.ts';
 import { nextIdleGrace } from '../src/main/services/antigravity-policy.ts';
 import {
   formatDiagnosticReport,
@@ -74,14 +74,14 @@ test('diagnostic report is readable and redacts every field', () => {
     checks: [
       {
         id: 'daemon',
-        label: 'OronBox 后台',
+        label: 'Pulse Core 后台',
         status: 'fail',
         summary: 'token=private-value',
         nextStep: '查看 C:\\Users\\ASUS\\daemon.log',
       },
     ],
   });
-  assert.match(output, /OronBox 后台/);
+  assert.match(output, /Pulse Core 后台/);
   assert.match(output, /下一步/);
   assert.doesNotMatch(output, /private-value|ASUS/);
 });
@@ -177,7 +177,7 @@ test('package.json extraResources configures pulse-core.exe packaging', () => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test('OronBoxClient: connectOnce switches to new port and token when fresh endpoint appears during retries', async () => {
+test('PulseCoreClient: connectOnce switches to new port and token when fresh endpoint appears during retries', async () => {
   let receivedToken = null;
   const server = net.createServer((socket) => {
     socket.on('data', (data) => {
@@ -232,7 +232,7 @@ test('OronBoxClient: connectOnce switches to new port and token when fresh endpo
       }),
     );
 
-    const client = new OronBoxClient({ endpointFile: epFile, pidAlive: async () => true });
+    const client = new PulseCoreClient({ endpointFile: epFile, pidAlive: async () => true });
 
     // 延迟 400ms 后（处于重试等待期间）将 core.json 刷新为有效 newPort 和新 token
     const timer = setTimeout(() => {
@@ -263,7 +263,7 @@ test('OronBoxClient: connectOnce switches to new port and token when fresh endpo
   }
 });
 
-test('OronBoxClient: recovers band connection intent after daemon restart and respects explicit disconnect', async () => {
+test('PulseCoreClient: recovers band connection intent after daemon restart and respects explicit disconnect', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-intent-test-'));
   const epDir = path.join(tempDir, 'PulseDev', 'run');
   fs.mkdirSync(epDir, { recursive: true });
@@ -362,7 +362,7 @@ test('OronBoxClient: recovers band connection intent after daemon restart and re
       }),
     );
 
-    client = new OronBoxClient({ endpointFile: epFile, pidAlive: async () => true });
+    client = new PulseCoreClient({ endpointFile: epFile, pidAlive: async () => true });
     const connected1 = await client.connectIfRunning();
     assert.equal(connected1, true, '连上旧 daemon');
     assert.equal(client.bandConnectionDesired, false, '初始连接意图为 false');
@@ -450,7 +450,7 @@ test('OronBoxClient: recovers band connection intent after daemon restart and re
   }
 });
 
-test('OronBoxClient: when same daemon survives transient RPC drop, checks device.status before reconnecting', async () => {
+test('PulseCoreClient: when same daemon survives transient RPC drop, checks device.status before reconnecting', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-same-daemon-test-'));
   const epDir = path.join(tempDir, 'PulseDev', 'run');
   fs.mkdirSync(epDir, { recursive: true });
@@ -523,7 +523,7 @@ test('OronBoxClient: when same daemon survives transient RPC drop, checks device
       }),
     );
 
-    client = new OronBoxClient({ endpointFile: epFile, pidAlive: async () => true });
+    client = new PulseCoreClient({ endpointFile: epFile, pidAlive: async () => true });
     await client.connectIfRunning();
     await client.call('device.connect');
     assert.equal(client.bandConnectionDesired, true);

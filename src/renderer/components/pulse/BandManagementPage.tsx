@@ -83,7 +83,7 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
    *
    * 「是否已配置」不能用 conn.device 判断：core 的 device.status 在未连接时把 device
    * 直接置为 null（core/src/live.rs:1056 `if connected { live_device_json() } else { Null }`），
-   * oronbox-bridge 的 safeDevice(null) 同样返回 null。于是拿 conn.device 当"已配置"
+   * pulse-core-bridge 的 safeDevice(null) 同样返回 null。于是拿 conn.device 当"已配置"
    * 会把「断开」误判成「尚未配置」—— 已配对的用户一断开就被推回配置向导，
    * 而向导第 1 步是「导入手机日志」、第 2 步才是「连接手环」，
    * 表现成"想连手环必须先点配置手环"。

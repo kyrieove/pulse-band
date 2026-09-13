@@ -84,7 +84,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
       })
       .catch(() => {});
 
-    window.pulse?.getOronboxState?.()
+    window.pulse?.getCoreState?.()
       .then((s) => {
         if (alive && s?.connection?.state === 'connected') {
           setStepExecution((prev) => ({

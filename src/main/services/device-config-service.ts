@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { extractFromPath } from './band-key-extract.ts';
-import { getDeviceConfigFile } from './oronbox-client.ts';
+import { getDeviceConfigFile } from './pulse-core-client.ts';
 
 /**
  * 异步执行 PowerShell 并取回 stdout。

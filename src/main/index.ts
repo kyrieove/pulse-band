@@ -10,8 +10,8 @@ import { ClaudeHookServer } from './services/claude-hook-server';
 import { registerClaudeHookInstall, getHookStatus } from './services/claude-hook-install';
 import { registerBandKeyExtract } from './services/band-key-extract';
 import { StatusServer } from './services/status-server';
-import { OronBoxClient, CORE_EXE } from './services/oronbox-client';
-import { OronBoxBridge } from './services/oronbox-bridge';
+import { PulseCoreClient } from './services/pulse-core-client';
+import { PulseCoreBridge } from './services/pulse-core-bridge';
 import { createTray } from './tray';
 import { createMiniBarWindow, disposeMiniBar, toggleMiniBar, isMiniBarVisible } from './minibar-window';
 import { isVersionNewer } from './services/version-check';
@@ -73,24 +73,21 @@ const statusServer = new StatusServer(sessionManager, 8765);
 statusServer.start();
 
 // pulse-core 只在显式手环操作时按需启动；打开 Pulse 本身不碰蓝牙。
-const oronbox = new OronBoxClient();
-const oronboxBridge = new OronBoxBridge(
-  oronbox,
-  path.join(app.getPath('userData'), 'pulse-bridge-mode.json'),
-);
-const coreAppInstallBridge = new CoreAppInstallBridge(oronbox);
+const coreClient = new PulseCoreClient();
+const coreBridge = new PulseCoreBridge(coreClient);
+const coreAppInstallBridge = new CoreAppInstallBridge(coreClient);
 const appInstallService = new AppInstallService(coreAppInstallBridge);
 // 用户自己关联的表盘预览图缓存：只落本机 userData，不进仓库、不上传、不碰协议
 const watchfacePreviewService = new WatchfacePreviewService(
   new WatchfacePreviewStore(path.join(app.getPath('userData'), WATCHFACE_PREVIEW_DIR_NAME)),
 );
-const watchfaceService = new WatchfaceService(oronbox, watchfacePreviewService);
-oronbox.on('daemon-spawned', (pid) => console.log('[OronBox] daemon 已拉起 pid=' + pid));
-oronbox.on('degraded', (info) =>
-  console.warn('[OronBox] protocolVersion 不匹配，进入降级（继续用旧链路）:', JSON.stringify(info))
+const watchfaceService = new WatchfaceService(coreClient, watchfacePreviewService);
+coreClient.on('daemon-spawned', (pid) => console.log('[PulseCore] daemon 已拉起 pid=' + pid));
+coreClient.on('degraded', (info) =>
+  console.warn('[PulseCore] protocolVersion 不匹配，进入降级（继续用旧链路）:', JSON.stringify(info))
 );
-oronbox.on('connected', () => console.log('[OronBox] RPC 已连接'));
-oronbox.on('disconnected', () => console.warn('[OronBox] RPC 断开，等待重连'));
+coreClient.on('connected', () => console.log('[PulseCore] RPC 已连接'));
+coreClient.on('disconnected', () => console.warn('[PulseCore] RPC 断开，等待重连'));
 
 // 初始屏（截图/调试用）：PULSE_SCREEN=diagnostics 时直接打开次屏
 const INITIAL_SCREEN =
@@ -178,7 +175,7 @@ function createWindow() {
     }
   });
 
-  oronboxBridge.attach(win);
+  coreBridge.attach(win);
   appInstallService.attach(win);
 
   tray = createTray(
@@ -202,7 +199,7 @@ function createWindow() {
         runAppCleanup();
         app.exit(0);
       }, 5_000);
-      oronbox
+      coreClient
         .stopDaemonIfRunning()
         .catch(() => {})
         .finally(() => {
@@ -226,7 +223,6 @@ ipcMain.handle('get-initial-sessions', () => {
 });
 
 ipcMain.handle('pulse:get-app-version', () => app.getVersion());
-ipcMain.handle('pulse:is-oronbox-installed', () => fs.existsSync(CORE_EXE));
 ipcMain.handle('pulse:check-update', async () => {
   const currentVersion = app.getVersion();
   try {
@@ -319,8 +315,8 @@ function runAppCleanup(): void {
   antigravityPoller.stop();
   claudeServer.stop();
   sessionManager.dispose();
-  oronboxBridge.detach();
-  oronbox.dispose();
+  coreBridge.detach();
+  coreClient.dispose();
 }
 
 app.on('before-quit', () => {

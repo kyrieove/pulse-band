@@ -3,11 +3,11 @@
  *
  * 数据：
  * - 检查项来自主进程 diagnostics.ts 的 pass()/warn()/fail() 返回体（9 项）
- * - daemon 健康：oronbox-bridge 快照；错误日志：主进程 error-log 环形缓冲
+ * - daemon 健康：pulse-core-bridge 快照；错误日志：主进程 error-log 环形缓冲
  */
 import React, { useCallback, useState } from 'react';
 import { Check, X, AlertTriangle, Activity, Copy, LoaderCircle } from 'lucide-react';
-import type { PulseOronboxState, PulseErrorEntry } from '../../../main/services/oronbox-bridge';
+import type { PulseCoreState, PulseErrorEntry } from '../../../main/services/pulse-core-bridge';
 import type { DiagnosticReport, DiagnosticStatus } from '../../../main/services/diagnostics';
 import { fmtUptime, fmtTime } from './ui';
 
@@ -20,8 +20,8 @@ const STATUS_ICON: Record<DiagnosticStatus, string> = {
 };
 
 export interface DiagnosticsScreenProps {
-  daemon: PulseOronboxState['daemon'] | null;
-  connection: PulseOronboxState['connection'];
+  daemon: PulseCoreState['daemon'] | null;
+  connection: PulseCoreState['connection'];
   errors: PulseErrorEntry[];
   onClearErrors: () => void;
   /** 来自 useQuotaState 的真正取数时刻，用于「HH:MM 检测」 */

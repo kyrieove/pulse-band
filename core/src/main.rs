@@ -33,7 +33,7 @@ pub mod session;
 use fake::FakeDevice;
 use rpc::ClientHandle;
 
-/// 客户端严格校验 daemon.info 返回值里的 protocolVersion（oronbox-client.ts 的
+/// 客户端严格校验 daemon.info 返回值里的 protocolVersion（pulse-core-client.ts 的
 /// checkProtocolVersion），不是端点文件里这个。两处都写 6，但只有返回值才算数。
 pub const PROTOCOL_VERSION: u64 = 6;
 

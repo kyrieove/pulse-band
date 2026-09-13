@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { PulseOronboxState } from '../../main/services/oronbox-bridge';
-import { canConnectBand, type BandConnectionState } from '../../main/services/oronbox-policy';
+import type { PulseCoreState } from '../../main/services/pulse-core-bridge';
+import { canConnectBand, type BandConnectionState } from '../../main/services/pulse-core-policy';
 
 export interface UseBandConnectionResult {
   /** 归一化后的连接状态（含"刚点了连接"的本地过渡态） */
   state: BandConnectionState;
   error?: string;
-  device: PulseOronboxState['device'];
+  device: PulseCoreState['device'];
   busy: boolean;
   canConnect: boolean;
   connect: () => Promise<void>;
@@ -16,24 +16,24 @@ export interface UseBandConnectionResult {
 /**
  * 手环连接 / 断开的唯一前端入口。
  *
- * 复用 preload 已有的 `connectBand` / `disconnectBand` 与 `oronbox:get-state` 订阅，
+ * 复用 preload 已有的 `connectBand` / `disconnectBand` 与 Core 状态订阅，
  * 不新增 IPC 通道，也不维护第二套连接状态：
  * 真实状态只有一个来源，即 main 进程从 pulse-core 收到的 device.state 快照。
  *
- * 注意：可连接判定复用 `canConnectBand`（oronbox-policy），与 main 侧同一套规则。
+ * 注意：可连接判定复用 `canConnectBand`（pulse-core-policy），与 main 侧同一套规则。
  */
 export function useBandConnection(): UseBandConnectionResult {
-  const [snapshot, setSnapshot] = useState<PulseOronboxState | null>(null);
+  const [snapshot, setSnapshot] = useState<PulseCoreState | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingConnect, setPendingConnect] = useState(false);
 
   useEffect(() => {
     if (!window.pulse) return;
     let alive = true;
-    window.pulse.getOronboxState().then((s) => {
+    window.pulse.getCoreState().then((s) => {
       if (alive) setSnapshot(s);
     });
-    const unsubscribe = window.pulse.onOronboxState((s) => setSnapshot(s));
+    const unsubscribe = window.pulse.onCoreState((s) => setSnapshot(s));
     return () => {
       alive = false;
       unsubscribe();

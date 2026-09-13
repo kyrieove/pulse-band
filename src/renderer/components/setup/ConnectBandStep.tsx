@@ -8,19 +8,19 @@ import {
   RefreshCw,
   HelpCircle,
 } from 'lucide-react';
-import type { PulseOronboxState } from '../../../main/services/oronbox-bridge';
+import type { PulseCoreState } from '../../../main/services/pulse-core-bridge';
 
 export interface ConnectBandStepProps {
   onSuccess?: () => void;
 }
 
 export const ConnectBandStep: React.FC<ConnectBandStepProps> = ({ onSuccess }) => {
-  const [state, setState] = useState<PulseOronboxState | null>(null);
+  const [state, setState] = useState<PulseCoreState | null>(null);
   const [deviceInfo, setDeviceInfo] = useState<{ deviceName?: string; maskedAddr?: string } | null>(null);
   const [connecting, setConnecting] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // 1. 读取当前配置与订阅 Oronbox / Core 状态
+  // 1. 读取当前配置与订阅 PulseCore / Core 状态
   useEffect(() => {
     let alive = true;
 
@@ -30,12 +30,12 @@ export const ConnectBandStep: React.FC<ConnectBandStepProps> = ({ onSuccess }) =
       }
     });
 
-    window.pulse?.getOronboxState?.().then((s) => {
+    window.pulse?.getCoreState?.().then((s) => {
       if (alive && s) setState(s);
     });
 
-    const unsub = window.pulse?.onOronboxState?.((s) => {
-      if (alive && s) setState(s as PulseOronboxState);
+    const unsub = window.pulse?.onCoreState?.((s) => {
+      if (alive && s) setState(s as PulseCoreState);
     });
 
     return () => {

@@ -20,7 +20,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { resolveCoreExePath, resolveDaemonArgs } from './oronbox-policy.ts';
+import { resolveCoreExePath, resolveDaemonArgs } from './pulse-core-policy.ts';
 
 const DEV_CORE_EXE = path.join(import.meta.dirname, '../../core/target/release/pulse-core.exe');
 export const CORE_EXE = resolveCoreExePath(
@@ -80,6 +80,11 @@ const DAEMON_IMAGE = 'pulse-core.exe';
  * （实测 2026-09-13：被 ChatGPT 桌面版占用），光用 kill(pid,0) 判活会把
  * 别人的进程当成 daemon，端点陈旧也不重新拉起 → ECONNREFUSED 旧端口。
  */
+export function tasklistHasImage(output: string, imageNames: string[]): boolean {
+  const line = output.toLowerCase();
+  return imageNames.some((name) => line.includes(`"${name.toLowerCase()}"`));
+}
+
 export function isNamedPid(pid: number, imageNames: string[]): Promise<boolean> {
   return new Promise((resolve) => {
     if (!Number.isInteger(pid) || pid <= 0) {
@@ -94,8 +99,7 @@ export function isNamedPid(pid: number, imageNames: string[]): Promise<boolean> 
           resolve(false);
           return;
         }
-        const line = String(stdout ?? '').toLowerCase();
-        resolve(imageNames.some((n) => line.includes(`"${n.toLowerCase()}"`)));
+        resolve(tasklistHasImage(String(stdout ?? ''), imageNames));
       }
     );
   });
@@ -125,7 +129,7 @@ export function readEndpoint(file = getDaemonEndpointFile()): DaemonEndpoint | n
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const TRANSIENT_CODES = new Set(['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED', 'EHOSTUNREACH', 'ENOTFOUND']);
 
-export interface OronBoxClientOptions {
+export interface PulseCoreClientOptions {
   mode?: 'live' | 'fake';
   endpointFile?: string;
   deviceConfigFile?: string;
@@ -133,7 +137,7 @@ export interface OronBoxClientOptions {
   pidAlive?: (pid: number) => Promise<boolean>;
 }
 
-export class OronBoxClient extends EventEmitter {
+export class PulseCoreClient extends EventEmitter {
   private endpoint: DaemonEndpoint | null = null;
   private socket: net.Socket | null = null;
   private buf = '';
@@ -145,12 +149,12 @@ export class OronBoxClient extends EventEmitter {
   private reconnectAttempt = 0;
   private disposed = false;
   private degradedInfo: Degradation | null = null;
-  private options: OronBoxClientOptions;
+  private options: PulseCoreClientOptions;
   private pidAliveImpl: (pid: number) => Promise<boolean>;
   private _bandConnectionDesired = false;
   private lastConnectedPid: number | null = null;
 
-  constructor(options: OronBoxClientOptions = {}) {
+  constructor(options: PulseCoreClientOptions = {}) {
     super();
     this.options = options;
     this.pidAliveImpl = options.pidAlive ?? pidAlive;

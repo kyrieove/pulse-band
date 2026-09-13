@@ -35,36 +35,25 @@ contextBridge.exposeInMainWorld('codeisland', {
   resetMiniBarDock: () => ipcRenderer.invoke('minibar:reset-dock'),
 });
 
-// Pulse 2.0 新界面 API（阶段 4）。OronBox 状态由主进程消毒后推送，authkey 永不出主进程。
+// Pulse 2.0 新界面 API（阶段 4）。Pulse Core 状态由主进程消毒后推送，authkey 永不出主进程。
 contextBridge.exposeInMainWorld('pulse', {
   getAppVersion: () => ipcRenderer.invoke('pulse:get-app-version'),
-  isOronboxInstalled: () => ipcRenderer.invoke('pulse:is-oronbox-installed'),
   checkUpdate: () => ipcRenderer.invoke('pulse:check-update'),
   openRelease: (url: string) => ipcRenderer.invoke('pulse:open-release', url),
-  getOronboxState: () => ipcRenderer.invoke('oronbox:get-state'),
-  onOronboxState: (callback: (state: unknown) => void) => {
+  getCoreState: () => ipcRenderer.invoke('pulse:core:get-state'),
+  onCoreState: (callback: (state: unknown) => void) => {
     const subscription = (_: any, state: unknown) => callback(state);
-    ipcRenderer.on('oronbox-state', subscription);
-    return () => ipcRenderer.removeListener('oronbox-state', subscription);
+    ipcRenderer.on('pulse:core:state', subscription);
+    return () => ipcRenderer.removeListener('pulse:core:state', subscription);
   },
-  connectBand: () => ipcRenderer.invoke('oronbox:connect'),
-  disconnectBand: () => ipcRenderer.invoke('oronbox:disconnect'),
-  toggleBridge: (running: boolean) => ipcRenderer.invoke('oronbox:bridge-toggle', running),
-  setBridgeMode: (mode: 'plugin' | 'direct') => ipcRenderer.invoke('oronbox:set-bridge-mode', mode),
-  installRpk: (filePath: string, fileName: string) =>
-    ipcRenderer.invoke('oronbox:install-rpk', { path: filePath, fileName }),
-  onInstallProgress: (callback: (p: { fileName: string; progress: number; done: boolean }) => void) => {
-    const subscription = (_: any, p: { fileName: string; progress: number; done: boolean }) => callback(p);
-    ipcRenderer.on('oronbox-install-progress', subscription);
-    return () => ipcRenderer.removeListener('oronbox-install-progress', subscription);
-  },
+  connectBand: () => ipcRenderer.invoke('pulse:band:connect'),
+  disconnectBand: () => ipcRenderer.invoke('pulse:band:disconnect'),
   getDiagnostics: () => ipcRenderer.invoke('pulse:get-diagnostics'),
   runDiagnostics: () => ipcRenderer.invoke('pulse:run-diagnostics'),
   getErrorLog: () => ipcRenderer.invoke('pulse:get-error-log'),
   clearErrorLog: () => ipcRenderer.invoke('pulse:clear-error-log'),
   formatErrorLog: () => ipcRenderer.invoke('pulse:format-error-log'),
   formatDiagnosticReport: (report: unknown) => ipcRenderer.invoke('pulse:format-diagnostic-report', report),
-  syncBandTime: () => ipcRenderer.invoke('oronbox:sync-time'),
   onErrorLog: (callback: (entries: unknown[]) => void) => {
     const subscription = (_: any, entries: unknown[]) => callback(entries);
     ipcRenderer.on('pulse-error-log', subscription);
@@ -86,8 +75,7 @@ contextBridge.exposeInMainWorld('pulse', {
   getMiniBarDockPreference: () => ipcRenderer.invoke('minibar:get-dock-preference'),
   setMiniBarDockPreference: (pref: 'remember' | 'left' | 'right') =>
     ipcRenderer.invoke('minibar:set-dock-preference', pref),
-  installBundledRpk: () => ipcRenderer.invoke('oronbox:install-bundled-rpk'),
-  // 拖入 Mi Fitness / 小米健康研究的日志，解析出 authkey（只显示，不代替 OronBox 配对）
+  // 拖入 Mi Fitness / 小米健康研究的日志，解析出 authkey
   extractBandKey: (filePath: string) => ipcRenderer.invoke('band:extract-key', { path: filePath }),
   // 设备配置与已配对手环管理
   getDeviceConfigStatus: () => ipcRenderer.invoke('pulse:device-config:status'),

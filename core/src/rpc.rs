@@ -1,6 +1,6 @@
 //! RPC 连接处理：行分隔 JSON 请求 → 分发 → 行响应；事件经 ClientHandle 广播。
 //!
-//! 线协议按 §1.3（从 oronbox-client.ts 的 onData/call 逐行核对）：
+//! 线协议按 §1.3（从 pulse-core-client.ts 的 onData/call 逐行核对）：
 //! 请求 {"id":"r1","method":"…","params":{…},"token":"…"}
 //! 响应 {"id":"r1","ok":true,"result":…} / {"id":"r1","ok":false,"error":{"code","message"}}
 //! 事件 {"messageType":"event","event":"…",…其余字段平铺}
@@ -216,19 +216,12 @@ fn dispatch(core: &Arc<Core>, line: &str) -> (String, bool) {
                 false,
             )
         }
-        // 降级决策见 docs/protocol/rpc-contract.md：客户端对 plugin.* 的调用全部包着
-        // try/catch，报 method_not_found 只会让「FetchBridge 插件」显示为未安装/未运行，
-        // 这是 core 无插件系统的诚实表达。
-        "plugin.list" => (
-            serde_json::json!({ "id": id, "ok": true, "result": [] }).to_string(),
-            false,
-        ),
-        "plugin.open" | "plugin.close" | "device.sync.time" | "install.local" => {
+        "device.sync.time" | "install.local" => {
             let msg = match method {
                 "device.sync.time" => {
-                    "禁止实现：OronBox 的 syncTime 有 +4h 硬编码 bug（fetch-bridge-direct.ts 文件头）"
+                    "禁止实现：Pulse Core 的 syncTime 有 +4h 硬编码 bug（fetch-bridge-direct.ts 文件头）"
                 }
-                _ => "pulse-core 没有插件系统",
+                _ => "旧版安装通道已停用",
             };
             (error_resp(&id, "method_not_found", msg).to_string(), false)
         }
