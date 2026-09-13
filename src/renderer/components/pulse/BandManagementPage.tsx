@@ -4,15 +4,6 @@ import { useBandConnection } from '../../hooks/useBandConnection';
 import { OtherAppInstall } from './OtherAppInstall';
 import { ConnectionProgress, type ProgressStep } from './ConnectionProgress';
 import { BandIllustration } from './BandIllustration';
-import { SUPPORTED_AGENTS } from './AgentSection';
-import { toRemainingPercent } from './agent-quota-utils';
-import type { MinibarState } from '../../../common/types';
-
-const QUOTA_AGENT_NAME: Record<(typeof SUPPORTED_AGENTS)[number], string> = {
-  claude: 'Claude',
-  codex: 'Codex',
-  antigravity: 'Antigravity',
-};
 
 /** 卡内单按钮：尺寸与标题行「配置手环」一致，宽度自适应左对齐（评审 P1-B） */
 const SOLID_BTN =
@@ -21,8 +12,6 @@ const OUTLINE_BTN =
   'rounded-full px-[15px] py-2 text-[12px] font-semibold select-none min-w-[104px] bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
 
 export interface BandManagementPageProps {
-  /** App 层唯一一份 useQuotaState 数据，供设备卡屏幕叠加层显示实时额度 */
-  quota: MinibarState | null;
   onStartSetup?: () => void;
 }
 
@@ -69,7 +58,7 @@ interface DeviceConfigStatus {
   error?: string;
 }
 
-export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, onStartSetup }) => {
+export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartSetup }) => {
   // 手环设备信息（名称 / 地址 / 连接状态）来自 useBandConnection 的真实快照
   const conn = useBandConnection();
 
@@ -148,19 +137,6 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
   // 脱敏地址由主进程 maskMacAddress 给出，渲染层不再自己截断一份
   const addressLabel = config?.maskedAddr ?? null;
 
-  // 屏幕不再显示额度后，额度以文字挪到右栏：取 5h 剩余最紧张的 agent
-  const tightQuota = (() => {
-    const rows = SUPPORTED_AGENTS.map((key) => ({
-      key,
-      five: toRemainingPercent(quota?.quotas?.[key]?.pct5h),
-      seven: toRemainingPercent(quota?.quotas?.[key]?.pct7d),
-      estimated: quota?.quotas?.[key]?.authoritative === false,
-    }));
-    const withData = rows.filter((r) => r.five != null);
-    if (withData.length === 0) return null;
-    return withData.reduce((a, b) => ((b.five as number) < (a.five as number) ? b : a));
-  })();
-
   const cardTitle = !configKnown
     ? '手环'
     : isConfigured
@@ -169,21 +145,15 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
     ? '手环配置无效'
     : '尚未配置手环';
 
-  // 标题行只讲页面状态，设备身份交给设备卡，避免两处重复同一份信息。
-  // 未配置时用简写「未配置」，不与设备卡标题「尚未配置手环」重复同一句话。
-  const statusLine = !configKnown
-    ? '读取中…'
-    : !isConfigured
-    ? config?.exists
-      ? '配置无效'
-      : '未配置'
-    : isConnected
+  const connectionLabel = isConnected
     ? '已连接'
     : isConnecting
-    ? '正在连接…'
+    ? '正在连接'
     : isError
     ? '连接失败'
-    : '未连接';
+    : isConfigured
+    ? '未连接'
+    : '未配置';
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-y-auto custom-scrollbar">
@@ -191,7 +161,7 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
       <div className="shrink-0 flex items-end justify-between">
         <div>
           <h2 className="text-[23px] font-bold tracking-[-0.025em] text-[var(--text-primary)]">手环</h2>
-          <p className="text-[11.5px] text-[var(--text-muted)] mt-0.5">{statusLine}</p>
+          <p className="text-[11.5px] text-[var(--text-muted)] mt-0.5">查看设备信息并管理连接</p>
         </div>
         {/* 配置入口全页只有一个：未配置时在设备卡里，已配置后降级为这里的次级入口 */}
         {isConfigured && (
@@ -211,62 +181,63 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ quota, o
         「已配置」来自磁盘 device.json，与当前连接状态无关：
         断开手环不会退回未配置，配置入口也只在未配置时出现在卡内。
       */}
-      <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col gap-3">
-        <div className="grid grid-cols-[260px_1fr] gap-4 items-center min-w-0">
-          {/* 左：官方产品图 + 屏幕区显示当前表盘（小米表盘必须被盖住） */}
-          <div className="shrink-0 justify-self-center">
-            <BandIllustration
-              mode={isConnected ? 'live' : isConnecting ? 'connecting' : 'off'}
-              dimmed={!isConfigured}
-              height={210}
-            />
+      <section className="rounded-[12px] bg-[var(--bg-subtle)] p-5 flex flex-col gap-4">
+        <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-7 items-center min-w-0">
+          {/* 左：静态产品图。屏幕内容属于示意，不表达当前真实表盘或连接状态。 */}
+          <div className="min-w-0">
+            <BandIllustration dimmed={!isConfigured} />
           </div>
 
-          {/* 右：设备身份（状态点 + 状态文字照概览页写法）+ 连接管理 */}
-          <div className="flex-1 min-w-0 flex flex-col">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  isConnected
-                    ? 'bg-[var(--status-success)]'
-                    : isConnecting
-                    ? 'bg-[var(--status-working)]'
-                    : isError
-                    ? 'bg-[var(--status-error)]'
-                    : 'bg-[var(--status-idle)]'
-                }`}
-              />
-              <h3 className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+          {/* 右：设备身份、硬件标识、连接状态与唯一主操作。 */}
+          <div className="min-w-0 flex flex-col justify-center">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <h3 className="text-[16px] leading-tight font-semibold text-[var(--text-primary)] truncate">
                 {cardTitle}
               </h3>
-              {isConfigured && (
-                <span className="text-[11.5px] text-[var(--text-muted)] shrink-0">
-                  · {isConnected ? '已连接' : isConnecting ? '连接中…' : isError ? '连接失败' : '未连接'}
-                </span>
-              )}
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--bg-surface)] px-2 py-1 text-[10.5px] font-medium text-[var(--text-secondary)] shrink-0">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    isConnected
+                      ? 'bg-[var(--status-success)]'
+                      : isConnecting
+                      ? 'bg-[var(--status-working)]'
+                      : isError
+                      ? 'bg-[var(--status-error)]'
+                      : 'bg-[var(--status-idle)]'
+                  }`}
+                />
+                {connectionLabel}
+              </span>
             </div>
-            <p className="text-[11.5px] text-[var(--text-muted)] leading-relaxed mt-1">
-              {!configKnown
-                ? '正在读取本机手环配置'
-                : !isConfigured
-                ? config?.error ?? '完成配对与日志导入后即可连接手环'
-                : addressLabel ?? '已配置手环'}
-            </p>
 
-            {/* 额度以文字呈现：5h 最紧张的 agent（屏幕区已让位给当前表盘） */}
-            {tightQuota && (
-              <p className="text-[12px] text-[var(--text-muted)] mt-1 truncate">
-                {QUOTA_AGENT_NAME[tightQuota.key]} · 5h {tightQuota.estimated ? '~' : ''}
-                {tightQuota.five}%
-                {tightQuota.seven != null
-                  ? ` · 7d ${tightQuota.estimated ? '~' : ''}${tightQuota.seven}%`
-                  : ''}
+            {isConfigured ? (
+              <dl className="mt-5 grid grid-cols-2 gap-x-8 gap-y-3 border-y border-[var(--border-default)] py-4">
+                <div className="min-w-0">
+                  <dt className="text-[10.5px] text-[var(--text-muted)]">蓝牙地址</dt>
+                  <dd className="mt-1 text-[12px] font-medium text-[var(--text-primary)] tabular-nums truncate">
+                    {addressLabel ?? '暂未读取'}
+                  </dd>
+                </div>
+                {config?.codename && (
+                  <div className="min-w-0">
+                    <dt className="text-[10.5px] text-[var(--text-muted)]">设备代号</dt>
+                    <dd className="mt-1 text-[12px] font-medium text-[var(--text-primary)] truncate">
+                      {config.codename}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            ) : (
+              <p className="mt-3 max-w-[340px] text-[11.5px] text-[var(--text-muted)] leading-relaxed">
+                {!configKnown
+                  ? '正在读取本机手环配置…'
+                  : config?.error ?? '完成配对与日志导入后，即可连接并查看设备信息。'}
               </p>
             )}
 
             {/* 每个状态只有一个按钮（主线推翻 626b79d 的成对常驻做法）：
                 灰掉的「已连接」是点不动的状态牌，不是操作——状态已由上面的圆点+文字表达 */}
-            <div className="mt-2 flex">
+            <div className="mt-5 flex">
               {!configKnown ? (
                 /* 配置状态还没读回来：不给任何可点动作，避免把"未知"渲染成"未配置" */
                 <button type="button" disabled className={`${SOLID_BTN} opacity-50 cursor-not-allowed`}>
