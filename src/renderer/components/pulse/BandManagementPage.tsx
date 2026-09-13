@@ -1,20 +1,11 @@
 import React, { useCallback, useEffect, useState, useRef } from 'react';
-import { Package, Upload, Loader2, AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Watch } from 'lucide-react';
+import { Upload, AlertCircle, ChevronDown, ChevronUp, Watch } from 'lucide-react';
 import { useBandConnection } from '../../hooks/useBandConnection';
 import { OtherAppInstall } from './OtherAppInstall';
 import { ConnectionProgress, type ProgressStep } from './ConnectionProgress';
 
 export interface BandManagementPageProps {
   onStartSetup?: () => void;
-}
-
-interface BundledInfo {
-  exists: boolean;
-  packageId?: string;
-  versionName?: string;
-  versionCode?: number;
-  fileSize?: number;
-  manifestValid?: boolean;
 }
 
 /** 连接状态 → 五步进度条中的位置；未开始 / 失败 → null */
@@ -64,10 +55,6 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
   // 手环设备信息（名称 / 地址 / 连接状态）来自 useBandConnection 的真实快照
   const conn = useBandConnection();
 
-  // 内置手环端快应用的版本信息来自真实 manifest
-  const [bundled, setBundled] = useState<BundledInfo | null>(null);
-  const [installing, setInstalling] = useState(false);
-  const [installResult, setInstallResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [showOtherApps, setShowOtherApps] = useState(false);
 
   // 磁盘上的配置状态 —— 「已配置」的权威来源，与"当前是否连着"无关
@@ -82,21 +69,6 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
   const lastStep = lastActiveStepRef.current;
   const failedStep =
     conn.state === 'error' && lastStep && FAILABLE_STEPS.includes(lastStep) ? lastStep : null;
-
-  useEffect(() => {
-    let alive = true;
-    window.pulse?.appInstall
-      ?.getBundledInfo?.()
-      .then((info) => {
-        if (alive && info) setBundled(info as BundledInfo);
-      })
-      .catch(() => {
-        if (alive) setBundled({ exists: false });
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   /**
    * 读磁盘上的配置状态。
@@ -134,33 +106,6 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
     window.addEventListener('focus', readConfig);
     return () => window.removeEventListener('focus', readConfig);
   }, [readConfig]);
-
-  const reinstall = async () => {
-    if (!window.pulse?.appInstall?.installBundled) return;
-    setInstalling(true);
-    setInstallResult(null);
-    try {
-      const res = await window.pulse.appInstall.installBundled();
-      if (res?.coreStatus === 'completed') {
-        setInstallResult({
-          ok: true,
-          message: `手环端快应用安装成功 (v${res?.versionName ?? bundled?.versionName ?? '1.0.0'})`,
-        });
-      } else {
-        setInstallResult({
-          ok: false,
-          message: `安装未确认完成 (core: ${res?.coreStatus ?? '未知'})`,
-        });
-      }
-    } catch (err: any) {
-      setInstallResult({
-        ok: false,
-        message: err?.message ?? '安装失败，请重试',
-      });
-    } finally {
-      setInstalling(false);
-    }
-  };
 
   const isConnected = conn.state === 'connected';
   const isConnecting = conn.state === 'connecting';
@@ -213,7 +158,7 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
             onClick={onStartSetup}
             className="rounded-full px-[15px] py-2 text-[12px] font-semibold select-none cursor-pointer transition-colors bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)]"
           >
-            重新配置
+            配置手环
           </button>
         )}
       </div>
@@ -260,8 +205,11 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
           </div>
         )}
 
-        {/* 主操作：每个状态有且只有一个 */}
-        <div className="pt-1">
+        {/* 连接 / 断开常驻成对（与概览页同一模式）：
+            主按钮随状态变脸（读取配置中…/配置手环/连接中…/已连接/连接手环），
+            「断开连接」未连接时置灰；连接中它兼任取消——与旧的取消按钮
+            是同一个原语（device.disconnect），不存在两套断开语义。 */}
+        <div className="pt-1 space-y-2">
           {!configKnown ? (
             /* 配置状态还没读回来：不给任何可点动作，避免把"未知"渲染成"未配置" */
             <button
@@ -279,109 +227,33 @@ export const BandManagementPage: React.FC<BandManagementPageProps> = ({ onStartS
             >
               配置手环
             </button>
-          ) : isConnecting ? (
-            /* 取消 = 放弃本次连接。core 没有独立的 cancel RPC，
-               复用的是 device.disconnect（把 desired_connected 置回 false 并释放链路），
-               与「断开连接」是同一个原语，不存在两套断开语义。 */
-            <button
-              type="button"
-              onClick={() => void conn.disconnect()}
-              disabled={conn.busy}
-              className="rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              取消
-            </button>
-          ) : isConnected ? (
-            /* 断开是已连接状态的日常主操作，与概览页断开入口同一个动作 */
-            <button
-              type="button"
-              onClick={() => void conn.disconnect()}
-              disabled={conn.busy}
-              className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
-            >
-              断开连接
-            </button>
           ) : (
             <button
               type="button"
               onClick={() => void conn.connect()}
-              disabled={!conn.canConnect}
+              disabled={isConnected || conn.busy || !conn.canConnect}
               className="btn-primary rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--accent-primary)] text-white flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isError ? '重试连接' : '连接'}
+              {isConnected ? '已连接' : isConnecting || conn.busy ? '连接中…' : '连接手环'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => void conn.disconnect()}
+            disabled={(!isConnected && !isConnecting) || conn.busy}
+            className="rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            断开连接
+          </button>
         </div>
       </section>
 
       {/*
-        ↓ 将来插卡位置：运动 / 睡眠数据卡放在这里（设备卡之下、手环端应用卡之上）。
+        ↓ 将来插卡位置：运动 / 睡眠数据卡放在这里（设备卡之下、推送其他快应用之上）。
         本轮不实现，也不放「即将支持」占位 —— docs/design/pulse-2.0-design-system.md:34
         「严禁展示不可用功能入口」。位置留在这里，将来直接插一张 <section> 即可，
         不需要再动页面骨架。
       */}
-
-      {/* 手环端应用卡：已配置后才出现，只讲快应用，不混设备信息 */}
-      {isConfigured && (
-        <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <Package className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-              <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">
-                Pulse 手环端快应用
-              </h3>
-            </div>
-            {/*
-              这里标的是「内置包」版本，即 Pulse 自带的那份 .rpk 的版本，
-              不是手环上已安装的版本 —— 协议侧没有任何 RPC 能读出手环已装版本
-              （device.app.* 只有 install.prepare/chunk/commit/cancel/mode），
-              所以不写「已装版本」，避免把本地包版本冒充成设备状态。
-            */}
-            <span className="shrink-0 text-[11px] font-mono text-[var(--text-muted)]">
-              {bundled === null
-                ? '读取中…'
-                : !bundled.exists
-                ? '内置包缺失'
-                : `内置包 v${bundled.versionName ?? '?'} (${bundled.versionCode ?? '?'})`}
-            </span>
-          </div>
-
-          <p className="text-[11.5px] text-[var(--text-muted)] leading-relaxed">
-            配套快应用在手环屏幕实时渲染 Claude、Codex、Antigravity 的运行状态与 5h/7d 剩余额度。
-          </p>
-
-          {/* 安装反馈文案：成功用 success，失败用 error */}
-          {installResult && (
-            <div
-              className={`flex items-center gap-2 text-[11.5px] font-medium ${
-                installResult.ok ? 'text-[var(--status-success)]' : 'text-[var(--status-error)]'
-              }`}
-            >
-              {installResult.ok ? (
-                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-              ) : (
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-              )}
-              <span>{installResult.message}</span>
-            </div>
-          )}
-
-          <div className="pt-1">
-            {/* 次级操作：页面唯一的主操作在设备卡，这里保持描边样式不抢权重。
-                安装要走蓝牙通道，未连接时禁用并说明原因。 */}
-            <button
-              type="button"
-              onClick={reinstall}
-              disabled={!isConnected || installing}
-              title={!isConnected ? '需要先连接手环' : undefined}
-              className="rounded-full w-full py-2.5 text-[12px] font-semibold select-none cursor-pointer bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {installing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {installing ? '安装中…' : installResult?.ok ? '重装 Pulse 手环端' : '安装 Pulse 手环端'}
-            </button>
-          </div>
-        </section>
-      )}
 
       {/* 次级入口：第三方或自建快应用 RPK 推送 */}
       <section className="rounded-[10px] bg-[var(--bg-subtle)] p-3.5 flex flex-col">
