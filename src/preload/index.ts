@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('pulse', {
   // 设备配置与已配对手环管理
   getDeviceConfigStatus: () => ipcRenderer.invoke('pulse:device-config:status'),
   getPairedBandDevices: () => ipcRenderer.invoke('pulse:device-config:paired-devices'),
+  scanBandDevices: () => ipcRenderer.invoke('pulse:device-config:scan-devices'),
   saveDeviceConfig: (payload: any) => ipcRenderer.invoke('pulse:device-config:save', payload),
   // Claude Code hook 一键安装（写 ~/.claude/settings.json）
   getHookStatus: () => ipcRenderer.invoke('hook:status'),
