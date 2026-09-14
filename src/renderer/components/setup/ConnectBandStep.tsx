@@ -184,9 +184,9 @@ export const ConnectBandStep: React.FC<ConnectBandStepProps> = ({ onSuccess }) =
       <div className="p-3 rounded-[var(--radius-md)] bg-[var(--bg-app)] border border-[var(--border-default)] text-[11px] text-[var(--text-muted)] space-y-1">
         <div className="font-medium text-[var(--text-secondary)]">连接排查建议：</div>
         <ul className="list-disc pl-4 space-y-0.5 leading-relaxed">
-          <li>确认 Windows 蓝牙已打开，手环已在系统设置中完成配对。</li>
+          <li>确认电脑蓝牙已打开，手环在身边且屏幕亮着；手环弹出配对确认时，在手环上点同意（不需要在 Windows 设置里配对）。</li>
           <li>若手机小米运动健康 App 正在同步，蓝牙连接可能会被占用，可暂时在手机上关闭蓝牙或退出后台。</li>
-          <li>若连续 3 次重试失败，可在 Windows 蓝牙设置中将手环重新开关一次。</li>
+          <li>若连续 3 次重试失败，可把电脑蓝牙关掉再打开一次。</li>
         </ul>
       </div>
     </div>

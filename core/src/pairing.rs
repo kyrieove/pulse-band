@@ -55,20 +55,20 @@ struct SystemTime {
 /// BLUETOOTH_DEVICE_INFO（x64 下 sizeof == 560，测试里钉死）
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct BluetoothDeviceInfo {
-    dw_size: u32,
-    address: u64,
+pub(crate) struct BluetoothDeviceInfo {
+    pub(crate) dw_size: u32,
+    pub(crate) address: u64,
     ul_class_of_device: u32,
     f_connected: i32,
     f_remembered: i32,
     f_authenticated: i32,
     st_last_seen: SystemTime,
     st_last_used: SystemTime,
-    sz_name: [u16; BLUETOOTH_MAX_NAME_SIZE],
+    pub(crate) sz_name: [u16; BLUETOOTH_MAX_NAME_SIZE],
 }
 
 impl BluetoothDeviceInfo {
-    fn for_address(mac_u64: u64) -> Self {
+    pub(crate) fn for_address(mac_u64: u64) -> Self {
         let mut info: Self = unsafe { std::mem::zeroed() };
         info.dw_size = std::mem::size_of::<Self>() as u32;
         info.address = mac_u64;

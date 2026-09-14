@@ -18,6 +18,12 @@ export type ExtractedKeys = {
   /** deviceKey 原始整串，用于在界面上说明「去掉了开头这段」 */
   deviceKeyRaw: string | null;
   encryptKey: string | null;
+  /**
+   * 手环 MAC（12 位 hex，无分隔符）。Mi Fitness 日志里的 MAC 基本都被 App 自己脱敏成
+   * `XX:XX:XX:XX:9A:06`，只有扫手环绑定二维码时记下的 URL（`...&mac=0434C3979A06`）是完整的。
+   * 很多日志没有这一行 —— 取不到是常态，调用方要有扫描 / 手动输入兜底。
+   */
+  mac: string | null;
 };
 
 /** 每次重新绑定手环都会换 key，日志里会有多组 —— 取最后一次出现的那组 */
@@ -29,9 +35,11 @@ function lastHexRun(text: string, keyword: string): string | null {
 export function extractKeys(text: string): ExtractedKeys {
   const deviceKeyRaw = lastHexRun(text, 'devicekey');
   const encryptRaw = lastHexRun(text, 'encryptkey');
+  const macs = [...text.matchAll(/[?&]mac=([0-9a-fA-F]{12})(?![0-9a-fA-F])/g)];
   return {
     deviceKey: deviceKeyRaw ? deviceKeyRaw.slice(-32) : null,
     deviceKeyRaw,
     encryptKey: encryptRaw ? encryptRaw.slice(-32) : null,
+    mac: macs.length ? macs[macs.length - 1][1].toUpperCase() : null,
   };
 }

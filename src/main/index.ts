@@ -282,6 +282,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('pulse:device-config:paired-devices', () => {
     return deviceConfigService.getPairedBandDevices();
   });
+  ipcMain.handle('pulse:device-config:scan-devices', () => {
+    return deviceConfigService.scanBandDevices();
+  });
   ipcMain.handle('pulse:device-config:save', async (_e, payload) => {
     return deviceConfigService.saveDeviceConfig(payload);
   });

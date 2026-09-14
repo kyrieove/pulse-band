@@ -193,9 +193,19 @@ export interface PulseBridge {
       isXiaomiBand: boolean;
     }>
   >;
+  /** 扫描附近小米手环（不要求 Windows 已配对），约 8 秒 */
+  scanBandDevices: () => Promise<
+    Array<{
+      id: string;
+      name: string;
+      maskedMac: string;
+      isXiaomiBand: boolean;
+    }>
+  >;
   saveDeviceConfig: (payload: {
     logPath?: string;
     selectedDeviceId?: string;
+    manualMac?: string;
     useExisting?: boolean;
   }) => Promise<{
     ok: boolean;
