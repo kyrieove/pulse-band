@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, Tray } from 'electron';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { AgentKind, SessionDetectionMode } from '../common/types';
@@ -14,7 +15,7 @@ import { PulseCoreClient } from './services/pulse-core-client';
 import { PulseCoreBridge } from './services/pulse-core-bridge';
 import { createTray } from './tray';
 import { createMiniBarWindow, disposeMiniBar, toggleMiniBar, isMiniBarVisible } from './minibar-window';
-import { isVersionNewer } from './services/version-check';
+import { fetchUpdateInfo, downloadInstaller } from './services/update-service';
 import { AppInstallService, registerAppInstallIpc } from './services/app-install-service';
 import { CoreAppInstallBridge } from './services/core-app-install-bridge';
 import { WatchfaceService, registerWatchfaceIpc } from './services/watchface-service';
@@ -188,26 +189,7 @@ function createWindow() {
         win.focus();
       }
     },
-    () => {
-      // 彻底退出：视觉反馈要快——窗口和托盘图标立刻消失；
-      // 礼让序列（断开手环归还给手机 → 停 daemon）放后台走完，
-      // 总预算 5s，到点强制退出。手环断开最坏 3s（等真蓝牙断链），
-      // daemon 是按设计常驻的，停不掉就留给下次启动复用，不拿它卡用户。
-      isQuitting = true;
-      win?.hide();
-      const budget = setTimeout(() => {
-        runAppCleanup();
-        app.exit(0);
-      }, 5_000);
-      coreClient
-        .stopDaemonIfRunning()
-        .catch(() => {})
-        .finally(() => {
-          clearTimeout(budget);
-          runAppCleanup();
-          app.exit(0);
-        });
-    },
+    quitPulse,
     toggleMiniBar,
     isMiniBarVisible
   );
@@ -226,19 +208,46 @@ ipcMain.handle('pulse:get-app-version', () => app.getVersion());
 ipcMain.handle('pulse:check-update', async () => {
   const currentVersion = app.getVersion();
   try {
-    const response = await fetch('https://api.github.com/repos/kyrieove/pulse-band/releases/latest', {
-      headers: { Accept: 'application/vnd.github+json' },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`GitHub 返回 ${response.status}`);
-    const release = (await response.json()) as { tag_name?: unknown; html_url?: unknown };
-    const latestVersion = typeof release.tag_name === 'string' ? release.tag_name.replace(/^v/, '') : '';
-    const releaseUrl = typeof release.html_url === 'string' ? release.html_url : '';
-    const updateAvailable = isVersionNewer(latestVersion, currentVersion);
-    return { ok: true, currentVersion, latestVersion, updateAvailable, releaseUrl };
+    const info = await fetchUpdateInfo(currentVersion);
+    return { ok: true, ...info, canDownload: !!info.installer };
   } catch (err: any) {
     return { ok: false, currentVersion, error: String(err?.message ?? err) };
   }
+});
+// 下载地址由主进程重新查 GitHub 得到，不信任 Renderer 传参；同一时间只跑一个下载
+let updateDownload: Promise<{ ok: boolean; version?: string; error?: string }> | null = null;
+let downloadedInstaller: string | null = null;
+ipcMain.handle('pulse:download-update', () => {
+  updateDownload ??= (async () => {
+    try {
+      const info = await fetchUpdateInfo(app.getVersion());
+      if (!info.updateAvailable) return { ok: false, error: '已是最新版本' };
+      if (!info.installer) return { ok: false, error: '这个版本没有可下载的安装包，请到发布页面手动下载' };
+      let lastPercent = -1;
+      downloadedInstaller = await downloadInstaller(info.installer, path.join(app.getPath('temp'), 'pulse-update'), (p) => {
+        // 每个数据块都发 IPC 太密，百分比变了才发
+        const percent = p.total ? Math.floor((p.received / p.total) * 100) : 0;
+        if (percent === lastPercent) return;
+        lastPercent = percent;
+        if (win && !win.isDestroyed()) win.webContents.send('pulse:update-progress', p);
+      });
+      return { ok: true, version: info.latestVersion };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    } finally {
+      updateDownload = null;
+    }
+  })();
+  return updateDownload;
+});
+ipcMain.handle('pulse:install-update', () => {
+  if (!downloadedInstaller || !fs.existsSync(downloadedInstaller)) {
+    return { ok: false, error: '安装包不存在，请重新下载' };
+  }
+  // 安装程序独立运行；Pulse 随后退出，免得安装时文件被占用
+  spawn(downloadedInstaller, [], { detached: true, stdio: 'ignore' }).unref();
+  quitPulse();
+  return { ok: true };
 });
 ipcMain.handle('pulse:open-release', async (_e, url: unknown) => {
   if (typeof url !== 'string' || !url.startsWith('https://github.com/kyrieove/pulse-band/releases/')) {
@@ -297,6 +306,30 @@ app.whenReady().then(async () => {
     console.error('Failed to start Claude hook server:', err);
   });
 });
+
+/**
+ * 彻底退出：视觉反馈要快——窗口和托盘图标立刻消失；
+ * 礼让序列（断开手环归还给手机 → 停 daemon）放后台走完，
+ * 总预算 5s，到点强制退出。手环断开最坏 3s（等真蓝牙断链），
+ * daemon 是按设计常驻的，停不掉就留给下次启动复用，不拿它卡用户。
+ * 托盘「彻底退出」和「安装更新」共用。
+ */
+function quitPulse(): void {
+  isQuitting = true;
+  win?.hide();
+  const budget = setTimeout(() => {
+    runAppCleanup();
+    app.exit(0);
+  }, 5_000);
+  coreClient
+    .stopDaemonIfRunning()
+    .catch(() => {})
+    .finally(() => {
+      clearTimeout(budget);
+      runAppCleanup();
+      app.exit(0);
+    });
+}
 
 app.on('window-all-closed', () => {
   // Keep app running in tray

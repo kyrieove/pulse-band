@@ -146,9 +146,14 @@ export interface PulseBridge {
     latestVersion?: string;
     updateAvailable?: boolean;
     releaseUrl?: string;
+    /** release 里有安装包和校验文件，可以在应用内下载 */
+    canDownload?: boolean;
     error?: string;
   }>;
   openRelease: (url: string) => Promise<{ ok: boolean; error?: string }>;
+  downloadUpdate: () => Promise<{ ok: boolean; version?: string; error?: string }>;
+  installUpdate: () => Promise<{ ok: boolean; error?: string }>;
+  onUpdateProgress: (callback: (p: { received: number; total: number }) => void) => () => void;
   extractBandKey: (filePath: string) => Promise<BandKeyResult>;
   getHookStatus: () => Promise<HookStatus>;
   installHook: () => Promise<HookResult>;
