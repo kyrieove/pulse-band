@@ -373,7 +373,7 @@ export const LogImportStep: React.FC<LogImportStepProps> = ({ onSuccess }) => {
             {logFileName ? `已选文件：${logFileName}` : '拖入日志文件或点击选择'}
           </p>
           <p className="text-[11px] text-[var(--text-muted)]">
-            支持 XiaomiFit.main.log、Mi Fitness 导出的 zip 压缩包或解压文件夹
+            直接拖入导出的 zip（如 1788…log.zip、research-….zip）即可，不用解压；也支持 XiaomiFit.main.log 或解压后的文件夹
           </p>
         </div>
 
