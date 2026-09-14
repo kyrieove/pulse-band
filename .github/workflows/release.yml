@@ -37,6 +37,17 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME does not match package version $packageVersion"
           }
 
+      - name: Build pulse-core
+        working-directory: core
+        run: cargo build --release --locked
+
+      - name: Verify pulse-core binary
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath core/target/release/pulse-core.exe)) {
+            throw "pulse-core.exe was not built"
+          }
+
       - name: Build Windows installer
         run: npm run dist
 

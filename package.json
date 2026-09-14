@@ -1,5 +1,5 @@
 {
-  "name": "pulse-band-v2",
+  "name": "pulse-band",
   "version": "2.0.0",
   "description": "Real-time AI Coding Agent Status Island for Windows",
   "type": "module",
@@ -13,9 +13,9 @@
     "preview": "vite preview"
   },
   "build": {
-    "appId": "com.codeisland.pulsedev",
+    "appId": "com.codeisland.windows",
     "productName": "Pulse",
-    "artifactName": "PulseDev-Setup-${version}.${ext}",
+    "artifactName": "Pulse-Setup-${version}.${ext}",
     "directories": {
       "output": "release"
     },
