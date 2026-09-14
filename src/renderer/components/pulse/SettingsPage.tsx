@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Activity, Sun, Moon } from 'lucide-react';
+import { Check, Activity, Sun, Moon, Heart, X } from 'lucide-react';
+import rewardQr from '../../assets/reward-qr.png';
 import { Toggle } from './ui';
 import { AgentLogo } from './AgentLogo';
 import { useMiniBar } from '../../hooks/useMiniBar';
@@ -128,6 +129,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [hookNotice, setHookNotice] = useState<{ ok: boolean; text: string } | null>(null);
   // 各 agent 会话检测方式（main 进程判定，随 minibar:get-state 下发）
   const [sessionDetection, setSessionDetection] = useState<MinibarState['sessionDetection'] | null>(null);
+  // 赞赏码只在点击后弹出，Esc 或点遮罩关闭
+  const [showReward, setShowReward] = useState(false);
+
+  useEffect(() => {
+    if (!showReward) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowReward(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showReward]);
 
   useEffect(() => {
     let alive = true;
@@ -367,8 +379,51 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <p className="mt-3 text-[11px] text-[var(--text-muted)] leading-relaxed">
             配置与凭据保存在本机，不会上传到任何服务器。更新由 GitHub Releases 发布。
           </p>
+
+          <div className="mt-4 pt-3 border-t border-[var(--border-default)] flex items-center gap-3">
+            <div className="w-8 h-8 rounded-[10px] bg-[var(--accent-wash)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+              <Heart className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[12px] font-medium text-[var(--text-primary)]">赞赏作者</div>
+              <div className="text-[11px] text-[var(--text-muted)]">Pulse 免费开源，觉得好用可以请作者喝杯咖啡</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowReward(true)}
+              className="rounded-full px-[13px] py-1.5 text-[11px] font-semibold select-none cursor-pointer transition-colors bg-[var(--bg-surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] shrink-0"
+            >
+              赞赏
+            </button>
+          </div>
         </section>
       </div>
+
+      {showReward && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="赞赏码"
+          onClick={() => setShowReward(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 select-none"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-[300px] bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-[var(--radius-xl)] shadow-2xl overflow-hidden"
+          >
+            <button
+              type="button"
+              aria-label="关闭"
+              onClick={() => setShowReward(false)}
+              className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center bg-black/30 text-white cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <img src={rewardQr} alt="微信赞赏码" className="block w-full" draggable={false} />
+            <p className="py-2.5 text-center text-[11px] text-[var(--text-muted)]">微信扫码赞赏 · 按 Esc 关闭</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
