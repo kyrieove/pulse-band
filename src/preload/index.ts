@@ -40,6 +40,13 @@ contextBridge.exposeInMainWorld('pulse', {
   getAppVersion: () => ipcRenderer.invoke('pulse:get-app-version'),
   checkUpdate: () => ipcRenderer.invoke('pulse:check-update'),
   openRelease: (url: string) => ipcRenderer.invoke('pulse:open-release', url),
+  downloadUpdate: () => ipcRenderer.invoke('pulse:download-update'),
+  installUpdate: () => ipcRenderer.invoke('pulse:install-update'),
+  onUpdateProgress: (callback: (p: { received: number; total: number }) => void) => {
+    const subscription = (_: any, p: { received: number; total: number }) => callback(p);
+    ipcRenderer.on('pulse:update-progress', subscription);
+    return () => ipcRenderer.removeListener('pulse:update-progress', subscription);
+  },
   getCoreState: () => ipcRenderer.invoke('pulse:core:get-state'),
   onCoreState: (callback: (state: unknown) => void) => {
     const subscription = (_: any, state: unknown) => callback(state);
