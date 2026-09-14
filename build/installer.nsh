@@ -13,7 +13,7 @@ Var pid
     CreateDirectory "$INSTDIR"
     FileOpen $R8 "$INSTDIR\.pulse-write-test" w
     ${if} ${Errors}
-      MessageBox MB_OK|MB_ICONSTOP "无法写入安装目录：$\r$\n$INSTDIR$\r$\n$\r$\n当前账户没有这个目录的写入权限。请重新运行安装程序并选择其他目录（例如默认目录），或右键安装程序选择「以管理员身份运行」。" /SD IDOK
+      MessageBox MB_OK|MB_ICONSTOP "无法写入安装目录：$\r$\n$INSTDIR$\r$\n$\r$\n「仅为我安装」没有这个目录的写入权限。请重新运行安装程序，在第一步选择「为使用这台电脑的任何人安装」（需要管理员授权），或者换一个目录。" /SD IDOK
       SetErrorLevel 2
       Quit
     ${endIf}

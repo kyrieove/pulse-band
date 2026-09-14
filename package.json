@@ -1,6 +1,6 @@
 {
   "name": "pulse-band",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Real-time AI Coding Agent Status Island for Windows",
   "type": "module",
   "main": "dist-electron/main/index.js",
@@ -40,7 +40,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "selectPerMachineByDefault": true
     }
   },
   "keywords": [
