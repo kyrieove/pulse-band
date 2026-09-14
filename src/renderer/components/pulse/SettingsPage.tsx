@@ -3,6 +3,7 @@ import { Check, Activity, Sun, Moon, Heart, X } from 'lucide-react';
 import rewardQr from '../../assets/reward-qr.png';
 import { Toggle } from './ui';
 import { AgentLogo } from './AgentLogo';
+import { UpdateSection } from './UpdateSection';
 import { useMiniBar } from '../../hooks/useMiniBar';
 import type { MiniBarDockPreference } from '../../../main/services/minibar-preference';
 import type { HookStatus } from '../../../main/services/claude-hook-install';
@@ -376,6 +377,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <div className="mt-2 space-y-1">
             <KV label="应用版本" value={appVersion} />
           </div>
+          <UpdateSection />
           <p className="mt-3 text-[11px] text-[var(--text-muted)] leading-relaxed">
             配置与凭据保存在本机，不会上传到任何服务器。更新由 GitHub Releases 发布。
           </p>
