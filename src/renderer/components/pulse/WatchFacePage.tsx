@@ -164,8 +164,8 @@ export const WatchFacePage: React.FC<WatchFacePageProps> = ({ onNavigate }) => {
 
       {/* 状态二：读取中（无任何已有列表时给骨架屏，占位比例与真实卡片一致） */}
       {wf.loading && wf.items.length === 0 && (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-2.5">
-          {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+        <div className="grid grid-cols-5 gap-2.5">
+          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
             <div key={i} className="w-full aspect-[192/490] rounded-[10px] bg-[var(--bg-subtle)] animate-pulse" />
           ))}
         </div>
@@ -262,7 +262,7 @@ export const WatchFacePage: React.FC<WatchFacePageProps> = ({ onNavigate }) => {
             - 没有本地图时用设备返回的 background_color 铺底；该字段缺失或不是合法颜色
               则回退中性底色 + 表盘图标，保证每张卡片都是一个可辨认的形状，而不是留白块
           */}
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-2.5">
+          <div className="grid grid-cols-5 gap-2.5">
             {wf.items.map((item) => {
               const isSetting = wf.settingId === item.id;
               const locked = busy && !isSetting;
