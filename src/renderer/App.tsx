@@ -66,6 +66,32 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
+  // 首次打开主窗口：本机还没有手环配置时自动弹出配置向导，只弹这一次（关掉后从「手环」→「配置手环」进）
+  useEffect(() => {
+    if (screen === 'minibar') return;
+    try {
+      if (localStorage.getItem('pulse-setup-prompted')) return;
+    } catch {
+      return;
+    }
+    let alive = true;
+    window.pulse?.getDeviceConfigStatus?.()
+      .then((status) => {
+        if (!alive) return;
+        try {
+          localStorage.setItem('pulse-setup-prompted', '1');
+        } catch {}
+        if (status?.exists && status?.valid) return;
+        setPage('band');
+        setSetupStartIndex(0);
+        setShowSetup(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [screen]);
+
   // MiniBar 独立窗口适配
   useEffect(() => {
     if (screen === 'minibar') {

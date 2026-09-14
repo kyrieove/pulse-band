@@ -3,7 +3,9 @@
  *
  * 职责：
  * 1. 检查和验证本机 %LOCALAPPDATA%\PulseDev\run\device.json 的存在性与格式合法性（脱敏返回）；
- * 2. 通过系统 PnP 设备树（PowerShell Get-PnpDevice）枚举 Windows 已配对的蓝牙手环设备；
+ * 2. 取手环 MAC：Windows 已配对列表（PowerShell Get-PnpDevice，有则作快捷方式）、
+ *    pulse-core --scan 扫描附近手环、日志里的绑定二维码 URL、用户手动输入；
+ *    **不要求**先在 Windows 设置里配对——手环每次连接都会主动发起配对，由 pulse-core 自动同意；
  * 3. 结合日志提取的 32 位 authkey 与选定手环的 MAC 地址，校验后原子写入 device.json；
  * 4. 遵守纪律：authkey 与完整物理 MAC 绝对不返回给 Renderer（通过 maskedAddr 脱敏）。
  */
@@ -11,7 +13,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { extractFromPath } from './band-key-extract.ts';
-import { getDeviceConfigFile } from './pulse-core-client.ts';
+import { CORE_EXE, getDeviceConfigFile } from './pulse-core-client.ts';
 
 /**
  * 异步执行 PowerShell 并取回 stdout。
@@ -54,6 +56,8 @@ export interface PairedBandDevice {
 export interface SaveDeviceConfigPayload {
   logPath?: string;
   selectedDeviceId?: string;
+  /** 用户手动输入的 MAC，优先级最高 */
+  manualMac?: string;
   useExisting?: boolean;
 }
 
@@ -78,8 +82,25 @@ export function maskMacAddress(formattedOrHex: string): string {
   return `${clean.slice(0, 2)}:${clean.slice(2, 4)}:**:**:${clean.slice(8, 10)}:${clean.slice(10, 12)}`;
 }
 
+const isXiaomiBandName = (name: string) => /band|手环|xiaomi/i.test(name);
+
+/** 解析 `pulse-core --scan` 的 stdout，只留小米手环（扫描结果里常混着耳机、手柄） */
+export function parseScanOutput(stdout: string): PairedBandDevice[] {
+  const items: Array<{ name?: string; addr?: string }> = JSON.parse(stdout.trim() || '[]');
+  const devices: PairedBandDevice[] = [];
+  for (const item of items) {
+    const rawMac = (item.addr ?? '').replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+    const name = (item.name ?? '').trim();
+    if (rawMac.length !== 12 || !isXiaomiBandName(name)) continue;
+    devices.push({ id: `scan_${rawMac.toLowerCase()}`, name, maskedMac: maskMacAddress(rawMac), isXiaomiBand: true, rawMac });
+  }
+  return devices;
+}
+
 export class DeviceConfigService {
   private configPath: string;
+  /** 最近一次扫描结果；保存时按 selectedDeviceId 在这里找，避免再扫一遍 */
+  private scannedDevices: PairedBandDevice[] = [];
 
   constructor(customPath?: string) {
     this.configPath = customPath || getDeviceConfigFile();
@@ -162,7 +183,7 @@ export class DeviceConfigService {
 
         const rawMac = match[1].toUpperCase();
         const name = (item.FriendlyName ?? '').trim() || 'Bluetooth Device';
-        const isXiaomiBand = /band|手环|xiaomi/i.test(name);
+        const isXiaomiBand = isXiaomiBandName(name);
 
         devices.push({
           id: `pnp_${rawMac.toLowerCase()}`,
@@ -187,7 +208,24 @@ export class DeviceConfigService {
   }
 
   /**
-   * 保存设备配置至 device.json（异步：内部需枚举已配对设备）
+   * 扫描附近的小米手环（pulse-core --scan，经典蓝牙 inquiry，约 8 秒）。
+   * 不需要手环在 Windows 里配对过。失败时返回空列表，由界面提示手动输入。
+   */
+  public scanBandDevices(): Promise<PairedBandDevice[]> {
+    return new Promise((resolve) => {
+      execFile(CORE_EXE, ['--scan'], { encoding: 'utf8', timeout: 30000, windowsHide: true }, (err, stdout) => {
+        try {
+          this.scannedDevices = err ? [] : parseScanOutput(String(stdout ?? ''));
+        } catch {
+          this.scannedDevices = [];
+        }
+        resolve(this.scannedDevices);
+      });
+    });
+  }
+
+  /**
+   * 保存设备配置至 device.json（异步：内部可能需枚举已配对设备）
    */
   public async saveDeviceConfig(
     payload: SaveDeviceConfigPayload
@@ -223,35 +261,49 @@ export class DeviceConfigService {
       };
     }
 
-    // 3. 匹配选定手环设备
-    const pairedDevices = await this.getPairedBandDevices();
+    // 3. 确定手环 MAC：手动输入 > 选中的设备（已配对 / 扫描到）> 日志里的 MAC > 唯一已配对小米手环
     let selectedDevice: PairedBandDevice | undefined;
+    let rawMac: string | undefined;
+    let paired: PairedBandDevice[] | undefined;
+    const getPaired = async () => (paired ??= await this.getPairedBandDevices());
 
-    if (payload.selectedDeviceId) {
-      selectedDevice = pairedDevices.find((d) => d.id === payload.selectedDeviceId);
-    }
-
-    // 若未显式传入 ID 或找不到，但列表中恰好有唯一小米手环，则智能自动选中
-    if (!selectedDevice) {
-      const xiaomiBands = pairedDevices.filter((d) => d.isXiaomiBand);
-      if (xiaomiBands.length === 1) {
-        selectedDevice = xiaomiBands[0];
+    if (payload.manualMac) {
+      rawMac = payload.manualMac.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+      if (rawMac.length !== 12) {
+        return { ok: false, error: 'MAC 地址格式不对：应为 12 位十六进制，例如 04:34:C3:97:9A:06' };
       }
+    } else {
+      if (payload.selectedDeviceId) {
+        selectedDevice = this.scannedDevices.find((d) => d.id === payload.selectedDeviceId);
+        if (!selectedDevice) {
+          selectedDevice = (await getPaired()).find((d) => d.id === payload.selectedDeviceId);
+        }
+      }
+      if (!selectedDevice && extractResult.mac) {
+        rawMac = extractResult.mac;
+      }
+      // 若未显式传入 ID 或找不到，但已配对列表中恰好有唯一小米手环，则智能自动选中
+      if (!selectedDevice && !rawMac) {
+        const xiaomiBands = (await getPaired()).filter((d) => d.isXiaomiBand);
+        if (xiaomiBands.length === 1) {
+          selectedDevice = xiaomiBands[0];
+        }
+      }
+      rawMac = selectedDevice?.rawMac ?? rawMac;
     }
 
-    if (!selectedDevice || !selectedDevice.rawMac) {
+    if (!rawMac) {
       return {
         ok: false,
-        error:
-          '未匹配到已配对的小米手环。请先在 Windows 设置 -> 蓝牙与设备中完成手环配对。',
+        error: '这份日志里没有手环的蓝牙地址。请点「扫描附近手环」，或手动输入 MAC 地址。',
       };
     }
 
-    const formattedAddr = formatMacAddress(selectedDevice.rawMac);
+    const formattedAddr = formatMacAddress(rawMac);
 
     // 4. 构建配置对象
     const configContent = {
-      name: selectedDevice.name || 'Xiaomi Smart Band 10',
+      name: selectedDevice?.name || `Xiaomi Smart Band 10 ${rawMac.slice(-4)}`,
       addr: formattedAddr,
       connectType: 'spp',
       authkey: authkey.toLowerCase(),
@@ -281,7 +333,7 @@ export class DeviceConfigService {
       return {
         ok: true,
         deviceName: configContent.name,
-        maskedAddr: maskMacAddress(selectedDevice.rawMac),
+        maskedAddr: maskMacAddress(rawMac),
       };
     } catch (err: any) {
       return {

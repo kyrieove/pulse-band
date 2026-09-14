@@ -43,4 +43,13 @@ const r5 = extractKeys('INFO nothing interesting here 1234');
 assert.equal(r5.deviceKey, null);
 assert.equal(r5.encryptKey, null);
 
-console.log('✅ 日志取 key 自检通过（7 项）');
+// 8. MAC：只认绑定二维码 URL 里的完整 12 位；App 自己脱敏过的 XX:XX:XX:XX:9A:06 不能当成地址
+const r6 = extractKeys(
+  `"mac": "9A:06" name: Xiaomi Smart Band 10 9A06 mac:XX:XX:XX:XX:9A:06\n` +
+    `scanResult: https://hlth.io.mi.com/download?redir=23034&name=Xiaomi%20Smart%20Band%2010&mac=0434c3979a06`
+);
+assert.equal(r6.mac, '0434C3979A06');
+assert.equal(extractKeys('name: Xiaomi Smart Band 10 9A06 mac:XX:XX:XX:XX:9A:06').mac, null, '脱敏 MAC 不能被抓成地址');
+assert.equal(r5.mac, null);
+
+console.log('✅ 日志取 key 自检通过（8 项）');

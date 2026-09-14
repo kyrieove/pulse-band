@@ -10,6 +10,7 @@ import {
   DeviceConfigService,
   formatMacAddress,
   maskMacAddress,
+  parseScanOutput,
 } from '../src/main/services/device-config-service.ts';
 
 // 1. MAC 格式化与脱敏测试
@@ -134,7 +135,56 @@ try {
   const w3 = await service.saveDeviceConfig({ logPath });
   assert.equal(w3.ok, true, '失败后应能重新写入');
 
-  console.log('✅ DeviceConfigService 单元测试全部通过（14 项断言）');
+  // ===== 未在 Windows 配对过的新用户（没有已配对列表） =====
+  service.getPairedBandDevices = async () => [];
+  const readAddr = () => JSON.parse(fs.readFileSync(testConfigPath, 'utf8')).addr;
+
+  // 14. 扫描输出：只留小米手环，地址归一化
+  const scanned = parseScanOutput(
+    JSON.stringify([
+      { name: 'Xbox Wireless Controller', addr: 'A0:5A:00:00:35:3F' },
+      { name: 'Xiaomi Smart Band 10 BEEF', addr: '11:22:33:44:BE:EF' },
+    ])
+  );
+  assert.deepEqual(scanned.map((d) => d.id), ['scan_11223344beef']);
+  assert.equal(scanned[0].maskedMac, '11:22:**:**:BE:EF');
+  assert.deepEqual(parseScanOutput(''), []);
+
+  // 15. 日志里没有 MAC、也没选设备：报错要指向扫描 / 手动输入，而不是 Windows 设置
+  const n1 = await service.saveDeviceConfig({ logPath });
+  assert.equal(n1.ok, false);
+  assert.match(n1.error, /扫描附近手环/);
+  assert.doesNotMatch(n1.error, /Windows/);
+
+  // 16. 手动输入 MAC（任意分隔符）
+  const n2 = await service.saveDeviceConfig({ logPath, manualMac: '04-34-c3-97-9a-06' });
+  assert.equal(n2.ok, true, n2.error);
+  assert.equal(readAddr(), '04:34:C3:97:9A:06');
+  assert.equal(JSON.parse(fs.readFileSync(testConfigPath, 'utf8')).name, 'Xiaomi Smart Band 10 9A06');
+
+  // 17. 手动输入格式不对
+  const n3 = await service.saveDeviceConfig({ logPath, manualMac: '04:34:C3' });
+  assert.equal(n3.ok, false);
+  assert.match(n3.error, /12 位十六进制/);
+
+  // 18. 日志里带绑定二维码 URL 的完整 MAC：不选设备也能保存
+  const logWithMac = path.join(tempDir, 'with-mac.log');
+  fs.writeFileSync(
+    logWithMac,
+    'encryptKey=a3f7c2e19b4d6058a1c3e7f2b9d40856\nscanResult:https://hlth.io.mi.com/download?name=Xiaomi&mac=AABBCCDDEEFF'
+  );
+  const n4 = await service.saveDeviceConfig({ logPath: logWithMac });
+  assert.equal(n4.ok, true, n4.error);
+  assert.equal(readAddr(), 'AA:BB:CC:DD:EE:FF');
+
+  // 19. 用户选中的扫描结果优先于日志 MAC
+  service.scannedDevices = scanned;
+  const n5 = await service.saveDeviceConfig({ logPath: logWithMac, selectedDeviceId: 'scan_11223344beef' });
+  assert.equal(n5.ok, true, n5.error);
+  assert.equal(readAddr(), '11:22:33:44:BE:EF');
+  assert.equal(n5.deviceName, 'Xiaomi Smart Band 10 BEEF');
+
+  console.log('✅ DeviceConfigService 单元测试全部通过（19 组）');
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }

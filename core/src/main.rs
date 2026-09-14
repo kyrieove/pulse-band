@@ -27,6 +27,7 @@ pub mod live;
 pub mod pairing;
 pub mod rfcomm;
 mod rpc;
+mod scan;
 #[rustfmt::skip]
 pub mod session;
 
@@ -156,6 +157,13 @@ fn main() {
     if args.iter().any(|a| a == "--probe") {
         if let Err(e) = rfcomm::run_probe() {
             eprintln!("pulse-core probe failed: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if args.iter().any(|a| a == "--scan") {
+        if let Err(e) = scan::run_scan() {
+            eprintln!("pulse-core scan failed: {e}");
             std::process::exit(1);
         }
         return;

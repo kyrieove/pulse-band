@@ -27,7 +27,7 @@ function sanitizeErrorMessage(raw?: string): string {
   if (!raw) return '连接出现异常，请确认手环处于可连接状态后重试。';
   const lower = raw.toLowerCase();
   if (lower.includes('auth') || lower.includes('hmac') || lower.includes('key')) {
-    return '设备认证信息失效或不匹配，请在手环设置中重新配对。';
+    return '设备认证失败，密钥与手环不匹配。请重新导出手机日志，在「手环」→「配置手环」里重新导入。';
   }
   if (lower.includes('rfcomm') || lower.includes('busy') || lower.includes('channel') || lower.includes('occup')) {
     return '手环蓝牙通道已被占用，请在手环上选择“连接新手机”进入可连接模式。';
