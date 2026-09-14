@@ -1,39 +1,72 @@
-/**
- * Pulse 2.0 主界面：自绘标题栏 + 左侧导航（设备管理主屏 / 运行诊断次屏）。
- * 旧悬浮看板（FloatingPill / ExpandedPanel）不再挂载，组件文件阶段 6 删除。
- *
- * README 避坑 3：全局拦截 dragover/drop，防止 Electron 把拖入的 .rpk 当导航处理；
- * 真正的接收在 DeviceScreen 的投放区。
- */
 import React, { useEffect, useState } from 'react';
-import { TriangleAlert } from 'lucide-react';
-import { TitleBar } from './components/pulse/TitleBar';
-import { Sidebar, type Screen } from './components/pulse/Sidebar';
-import { DeviceScreen } from './components/pulse/DeviceScreen';
+import { TopBar } from './components/layout/TopBar';
+import { StatusBar } from './components/layout/StatusBar';
+import { Sidebar, type PulsePage } from './components/layout/Sidebar';
+import { ContentArea } from './components/layout/ContentArea';
+import { OverviewPage } from './components/pulse/OverviewPage';
+import { BandManagementPage } from './components/pulse/BandManagementPage';
+import { WatchFacePage } from './components/pulse/WatchFacePage';
+import { SettingsPage } from './components/pulse/SettingsPage';
+import { SetupWizard } from './components/setup';
 import { DiagnosticsScreen } from './components/pulse/DiagnosticsScreen';
-import { SettingsScreen } from './components/pulse/SettingsScreen';
 import { MiniBar } from './components/minibar/MiniBar';
-import type { PulseOronboxState, PulseErrorEntry } from '../main/services/oronbox-bridge';
+import { useBandConnection } from './hooks/useBandConnection';
+import { useQuotaState } from './hooks/useQuotaState';
+import type { PulseCoreState } from '../main/services/pulse-core-bridge';
+import type { PulseErrorEntry } from '../main/services/error-log';
 
-type AppScreen = Screen | 'minibar';
+type AppScreen = PulsePage | 'minibar';
 
-const initialScreen = (): AppScreen => {
+const getInitialScreen = (): AppScreen => {
   try {
     const s = new URLSearchParams(window.location.search).get('screen');
     if (s === 'minibar') return 'minibar';
-    if (s === 'diagnostics' || s === 'settings') return s;
-    return 'main';
+    if (s === 'band' || s === 'settings' || s === 'watchface') return s;
+    return 'overview';
   } catch {
-    return 'main';
+    return 'overview';
   }
 };
 
 export const App: React.FC = () => {
-  const [screen, setScreen] = useState<AppScreen>(initialScreen);
-  const [state, setState] = useState<PulseOronboxState | null>(null);
+  const [screen] = useState<AppScreen>(getInitialScreen);
+  const [page, setPage] = useState<PulsePage>(screen === 'minibar' ? 'overview' : screen);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      return (localStorage.getItem('pulse-theme') as 'light' | 'dark') || 'light';
+    } catch {
+      return 'light';
+    }
+  });
+  const [showSetup, setShowSetup] = useState<boolean>(false);
+  /** 向导打开时落在第几步（0-based）：稍后验证后可回到第 4 步继续 */
+  const [setupStartIndex, setSetupStartIndex] = useState<number>(0);
   const [errors, setErrors] = useState<PulseErrorEntry[]>([]);
-  const [degradedDismissed, setDegradedDismissed] = useState(false);
+  const [state, setState] = useState<PulseCoreState | null>(null);
+  // 连接/断开的唯一前端入口（复用 preload 已有的 connectBand/disconnectBand）
+  const band = useBandConnection();
+  // 额度/会话数据唯一来源：概览页与 TopBar 共用这一份，不再起第二个订阅
+  const { state: quota, updatedAt, lastError, loading, refreshing, refresh } = useQuotaState();
 
+  const handleThemeChange = (newTheme: 'light' | 'dark') => {
+    setTheme(newTheme);
+    try {
+      localStorage.setItem('pulse-theme', newTheme);
+    } catch {}
+  };
+
+  // 跨窗口主题同步：主窗口状态作为唯一源，MiniBar窗口通过storage事件响应
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'pulse-theme' && (e.newValue === 'light' || e.newValue === 'dark')) {
+        setTheme(e.newValue);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  // MiniBar 独立窗口适配
   useEffect(() => {
     if (screen === 'minibar') {
       document.documentElement.classList.add('screen-minibar');
@@ -43,6 +76,7 @@ export const App: React.FC = () => {
     }
   }, [screen]);
 
+  // 全局防止文件拖拽导致 Electron 默认导航
   useEffect(() => {
     const prevent = (e: DragEvent) => e.preventDefault();
     window.addEventListener('dragover', prevent);
@@ -53,73 +87,118 @@ export const App: React.FC = () => {
     };
   }, []);
 
+  // 恢复原有 daemon/device 状态订阅
   useEffect(() => {
     if (screen === 'minibar') return;
     if (!window.pulse) return;
     let alive = true;
-    window.pulse.getOronboxState().then((s) => alive && setState(s));
-    const unsubState = window.pulse.onOronboxState((s) => setState(s));
-    window.pulse.getErrorLog().then((entries) => alive && setErrors(entries));
-    const unsubLog = window.pulse.onErrorLog((entries) => setErrors(entries));
+    window.pulse.getCoreState().then((s) => alive && setState(s));
+    const unsubState = window.pulse.onCoreState((s) => setState(s));
     return () => {
       alive = false;
       unsubState();
-      unsubLog();
     };
   }, [screen]);
 
+  // 主题切换效果生效到 html 根节点
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
+  // 如果处于 MiniBar 独立小窗
   if (screen === 'minibar') {
-    return <MiniBar />;
+    return <MiniBar theme={theme} />;
   }
 
-  const degraded = state?.daemon.degraded === true && !degradedDismissed;
-  const degradation = state?.daemon.degradation;
+  const handleNavigate = (newPage: PulsePage) => {
+    setPage(newPage);
+  };
+
+  // 运行诊断页：进入时拉取主进程错误日志，清空后同步本地态
+  useEffect(() => {
+    if (page !== 'diagnostics') return;
+    let alive = true;
+    window.pulse?.getErrorLog?.().then((d) => {
+      if (alive) setErrors((d as PulseErrorEntry[]) ?? []);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [page, showSetup]);
+
+  const clearErrors = () => {
+    void window.pulse?.clearErrorLog?.().then(() => setErrors([]));
+  };
 
   return (
-    <div className="w-full h-full flex flex-col bg-island-bg overflow-hidden">
-      <TitleBar subtitle={screen === 'main' ? '· 小米手环 10 配套助手' : screen === 'diagnostics' ? '· 运行诊断中心' : '· 设置与维护'} />
+    <div className="w-full h-full flex bg-[var(--bg-surface)] text-[var(--text-primary)] overflow-hidden transition-colors duration-200">
+      <Sidebar currentPage={page} onNavigate={handleNavigate} />
 
-      {/* 阶段 4：protocolVersion 不匹配 → 顶部明显警告条（不退出、不停 daemon，按硬约束 6 降级） */}
-      {degraded && (
-        <div className="shrink-0 p-3 bg-amber-950/40 border-b border-amber-500/40 text-amber-300 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-md bg-amber-500/20 flex items-center justify-center shrink-0">
-              <TriangleAlert className="w-4 h-4 text-amber-400" />
-            </div>
-            <div>
-              <div className="font-semibold text-amber-200 flex items-center gap-1.5">
-                <span>后台服务协议版本不匹配 · 已启用降级兼容链路</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-100 font-mono">DEGRADED</span>
-              </div>
-              <div className="text-[11px] text-amber-400/90 mt-0.5">
-                当前 OronBox Daemon 协议版本为{' '}
-                <code className="font-mono font-bold">{degradation?.actual != null ? `v${degradation.actual}` : '未知'}</code>
-                （期望版本为 <code className="font-mono font-bold">v{degradation?.expected ?? 6}</code>）。Pulse
-                已自动降级以保证通信可用，请更新 OronBox。
-              </div>
-            </div>
-          </div>
-          <button onClick={() => setDegradedDismissed(true)} className="text-amber-400/70 hover:text-amber-200 p-1 text-xs">
-            忽略
-          </button>
-        </div>
-      )}
+      {/* 右栏：状态顶栏 + 内容区 */}
+      <div className="flex-1 min-w-0 flex flex-col min-h-0">
+        <TopBar />
 
-      <div className="flex-1 flex overflow-hidden">
-        <Sidebar screen={screen} onNavigate={setScreen} />
-        {screen === 'main' ? (
-          <DeviceScreen state={state} onOpenSettings={() => setScreen('settings')} />
-        ) : screen === 'diagnostics' ? (
-          <DiagnosticsScreen
-            daemon={state?.daemon ?? null}
-            connection={state?.connection ?? { state: 'disconnected' }}
-            errors={errors}
-            onClearErrors={() => window.pulse?.clearErrorLog()}
-          />
-        ) : (
-          <SettingsScreen state={state} />
-        )}
+        <ContentArea>
+          {page === 'overview' && (
+            <OverviewPage
+              quota={quota}
+              loading={loading}
+              refreshing={refreshing}
+              onRefresh={refresh}
+              bandDeviceName={band.device?.name ?? null}
+              bandConnected={band.state === 'connected'}
+              bandBusy={band.busy}
+              bandCanConnect={band.canConnect}
+              onConnect={() => void band.connect()}
+              onDisconnect={() => void band.disconnect()}
+            />
+          )}
+
+          {page === 'band' && (
+            <BandManagementPage
+              onStartSetup={() => {
+                setSetupStartIndex(0);
+                setShowSetup(true);
+              }}
+            />
+          )}
+
+          {page === 'watchface' && <WatchFacePage onNavigate={handleNavigate} />}
+
+          {page === 'settings' && (
+            <SettingsPage
+              theme={theme}
+              onThemeChange={handleThemeChange}
+              onOpenDiagnostics={() => handleNavigate('diagnostics')}
+            />
+          )}
+
+          {page === 'diagnostics' && (
+            <DiagnosticsScreen
+              daemon={state?.daemon ?? null}
+              connection={state?.connection ?? { state: 'disconnected' }}
+              errors={errors}
+              onClearErrors={clearErrors}
+              updatedAt={updatedAt}
+              onRefresh={refresh}
+            />
+          )}
+        </ContentArea>
+        <StatusBar state={quota} updatedAt={updatedAt} lastError={lastError} />
       </div>
+
+      {/* 配置手环向导 (默认隐藏，仅在触发「配置手环」时展示) */}
+      {showSetup && (
+        <SetupWizard
+          initialStepIndex={setupStartIndex}
+          onClose={() => setShowSetup(false)}
+          onFinish={() => setShowSetup(false)}
+        />
+      )}
     </div>
   );
 };

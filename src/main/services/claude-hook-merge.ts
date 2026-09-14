@@ -3,8 +3,8 @@
  * 这段逻辑会改用户自己的 ~/.claude/settings.json，写坏了会连带毁掉他们别的 hook，所以单独拆出来测。
  */
 
-/** 装这 4 个事件：会话开始 / 工具前后 / 会话结束，与手环上的状态一一对应 */
-export const HOOK_EVENTS = ['SessionStart', 'PreToolUse', 'PostToolUse', 'Stop'] as const;
+/** 装这 5 个事件：会话开始 / 用户提交（t=0，thinking 起点）/ 工具前后 / 会话结束，与手环上的状态一一对应 */
+export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'] as const;
 /** PreToolUse / PostToolUse 按 Claude Code 的惯例要带 matcher */
 const NEEDS_MATCHER = new Set<string>(['PreToolUse', 'PostToolUse']);
 

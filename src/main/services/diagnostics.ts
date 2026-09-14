@@ -41,9 +41,6 @@ export interface DiagnosticObservation {
   hookService: ProbeResult;
   daemonConnected: boolean;
   daemonDegraded: boolean;
-  bridgeMode: 'plugin' | 'direct';
-  bridgeInstalled: boolean;
-  bridgeRunning: boolean;
   bandConnected: boolean;
   bundledRpkExists: boolean;
   usableQuotaCount: number;
@@ -96,12 +93,12 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
   );
   checks.push(
     input.daemonConnected
-      ? pass('daemon', 'OronBox 后台', 'OronBox daemon 与 Pulse 通信正常。')
+      ? pass('daemon', '设备守护进程', 'pulse-core 与 Pulse 桌面端通信正常。')
       : {
           id: 'daemon',
-          label: 'OronBox 后台',
+          label: '设备守护进程',
           status: 'warn',
-          summary: 'OronBox daemon 尚未启动或未连接。',
+          summary: '设备守护进程 (pulse-core) 尚未启动或未连接。',
           nextStep: '这是纯手动模式的正常状态；需要使用手环时，请回到设备管理页点击连接。',
         },
   );
@@ -109,20 +106,20 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
     !input.daemonConnected
       ? {
           id: 'protocol',
-          label: 'OronBox 协议',
+          label: '守护进程协议',
           status: 'warn',
           summary: 'daemon 未连接，暂时无法确认协议版本。',
-          nextStep: '请先恢复 OronBox 后台连接。',
+          nextStep: '请先恢复设备守护进程连接。',
         }
       : input.daemonDegraded
       ? {
           id: 'protocol',
-          label: 'OronBox 协议',
+          label: '守护进程协议',
           status: 'warn',
           summary: '当前正在使用兼容模式，部分功能可能不稳定。',
-          nextStep: '请更新 OronBox；若功能正常，也可以暂时继续使用。',
+          nextStep: '请更新 Pulse；若功能正常，也可以暂时继续使用。',
         }
-      : pass('protocol', 'OronBox 协议', '协议版本兼容。'),
+      : pass('protocol', '守护进程协议', '协议版本兼容。'),
   );
 
   if (!input.daemonConnected) {
@@ -131,33 +128,15 @@ export function buildDiagnosticReport(input: DiagnosticObservation): DiagnosticR
       label: '手环联网桥接',
       status: 'warn',
       summary: 'daemon 未连接，暂时无法确认桥接状态。',
-      nextStep: '请先恢复 OronBox 后台连接。',
-    });
-  } else if (input.bridgeMode === 'direct') {
-    checks.push(pass('bridge', '手环联网桥接', 'Pulse 直连模式已启用。'));
-  } else if (!input.bridgeInstalled) {
-    checks.push({
-      id: 'bridge',
-      label: '手环联网桥接',
-      status: 'fail',
-      summary: '没有找到 FetchBridge 插件。',
-      nextStep: '请在 OronBox 插件市场安装 FetchBridge，或切换到 Pulse 直连模式。',
-    });
-  } else if (!input.bridgeRunning) {
-    checks.push({
-      id: 'bridge',
-      label: '手环联网桥接',
-      status: 'fail',
-      summary: 'FetchBridge 插件未运行。',
-      nextStep: '请启动 FetchBridge，或在 Pulse 中重新开启桥接。',
+      nextStep: '请先恢复设备守护进程连接。',
     });
   } else {
-    checks.push(pass('bridge', '手环联网桥接', 'FetchBridge 插件正在运行。'));
+    checks.push(pass('bridge', '手环联网桥接', 'Pulse 直连服务已启用。'));
   }
 
   checks.push(
     input.bandConnected
-      ? pass('band', '手环连接', '手环已通过 OronBox 连接。')
+      ? pass('band', '手环连接', '手环已连接。')
       : {
           id: 'band',
           label: '手环连接',

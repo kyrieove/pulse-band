@@ -13,9 +13,9 @@
  *   失败：{ok:false, status:0, statusText:<错误>, headers:{}, body:"", raw:false}。
  * - 只实现 v1 单帧：/api/status/compact 报文 ~531 字节，远小于 16KB 单帧上限，
  *   分片与累计 ACK 不会触发；caps 仍照抄插件（含 chunk/ack 声明）以保证手环侧兼容。
- * - ❌ 禁止调用任何 device.sync* 方法（OronBox syncTime 有 +4h 硬编码 bug，issue #6）。
+ * - ❌ 禁止调用任何 device.sync* 方法（Pulse Core syncTime 有 +4h 硬编码 bug，issue #6）。
  */
-import { OronBoxClient } from './oronbox-client';
+import { PulseCoreClient } from './pulse-core-client';
 import { pushError } from './error-log';
 
 export const BAND_PACKAGE = 'com.codeisland.band';
@@ -41,7 +41,7 @@ export class DirectFetchBridge {
   private handler: ((data: any) => void) | null = null;
 
   constructor(
-    private client: OronBoxClient,
+    private client: PulseCoreClient,
     private metrics: DirectBridgeMetrics,
   ) {}
 

@@ -2,13 +2,14 @@
  * 三家 AI 编程助手的额度卡片 —— 推送给手环显示的数据源。
  *
  * 数据来自本进程内的 status-server（127.0.0.1:8765），经主进程转发，10s 轮询；
- * 不触碰 OronBox，也不会引起手环连接。
+ * 不触碰 Pulse Core，也不会引起手环连接。
  *
  * authoritative:false 必须视觉强区分（双层虚线边框 + 斜纹底 + 琥珀徽章 + ~EST + 数值带 *）。
  */
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Layers } from 'lucide-react';
 import { fmtTime } from './ui';
+import { AgentLogo } from './AgentLogo';
 
 interface QuotaView {
   pct5h: number | null;
@@ -25,7 +26,7 @@ interface QuotaMeta {
 
 const AGENTS: Array<{ key: string; label: string; color: string; glow: string }> = [
   { key: 'claude', label: 'Claude Code', color: '#D97757', glow: 'rgba(217, 119, 87, 0.4)' },
-  { key: 'codex', label: 'Codex (CLI)', color: '#10A37F', glow: 'rgba(16, 163, 127, 0.4)' },
+  { key: 'codex', label: 'Codex', color: '#10A37F', glow: 'rgba(16, 163, 127, 0.4)' },
   { key: 'antigravity', label: 'Antigravity', color: '#4285F4', glow: 'rgba(66, 133, 244, 0.4)' },
 ];
 
@@ -102,7 +103,7 @@ export const QuotaCards: React.FC = () => {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: agent.color, boxShadow: `0 0 8px ${agent.glow}` }} />
+                  <AgentLogo agent={agent.key} size={16} color={agent.color} />
                   <span className="text-xs font-semibold text-zinc-100">{agent.label}</span>
                 </div>
                 {authoritative ? (

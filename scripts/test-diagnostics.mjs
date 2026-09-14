@@ -8,9 +8,6 @@ const healthy = (patch = {}) => ({
   hookService: { ok: true },
   daemonConnected: true,
   daemonDegraded: false,
-  bridgeMode: 'direct',
-  bridgeInstalled: false,
-  bridgeRunning: false,
   bandConnected: true,
   bundledRpkExists: true,
   usableQuotaCount: 3,
@@ -58,16 +55,6 @@ test('a manually disconnected band is a neutral warning, not a failure', () => {
   const check = find(buildDiagnosticReport(healthy({ bandConnected: false })), 'band');
   assert.equal(check.status, 'warn');
   assert.match(check.summary, /未连接/);
-});
-
-test('requires FetchBridge only in plugin mode', () => {
-  const pluginCheck = find(
-    buildDiagnosticReport(healthy({ bridgeMode: 'plugin', bridgeInstalled: false })),
-    'bridge',
-  );
-  const directCheck = find(buildDiagnosticReport(healthy()), 'bridge');
-  assert.equal(pluginCheck.status, 'fail');
-  assert.equal(directCheck.status, 'pass');
 });
 
 test('reports a missing bundled RPK', () => {

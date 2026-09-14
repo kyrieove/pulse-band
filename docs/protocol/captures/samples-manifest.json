@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-09-10T08:00:00Z",
+  "samples": [
+    {
+      "id": "SAMPLE-TEMPLATE-001",
+      "file_name": "sample-rpk-exchange-template.json",
+      "capture_source": "synthetic_template",
+      "capture_date": "2026-09-10",
+      "target_device": "Xiaomi Smart Band 10 (Mock/Template)",
+      "target_firmware": "v1.2.x",
+      "app_package_id": "com.codeisland.band.sample",
+      "description": "标准 RPK 安装传输双向帧交换模板样本，用于验证 Replay 与报告生成管线",
+      "total_frames": 4,
+      "analysis_status": "replayed",
+      "falsification_notes": "合成基准样本；真实硬件报文待真机 btsnoop 捕获注入后实证对账"
+    }
+  ]
+}

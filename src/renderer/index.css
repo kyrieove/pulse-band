@@ -3,73 +3,161 @@
 @config "../../tailwind.config.js";
 
 /* ==========================================================================
-   Pulse 2.0 设计令牌
+   Pulse 2.0 设计令牌 (Semantic Design Tokens)
    ========================================================================== */
 :root {
-  --pulse-bg-base: #0d0f14;
-  --pulse-bg-sidebar: #090b0e;
-  --pulse-bg-surface: #13161f;
-  --pulse-bg-elevated: #1a1e2b;
-  --pulse-bg-subtle: #222738;
-  --pulse-bg-input: #0a0c10;
-  --pulse-bg-overlay: rgba(13, 15, 20, 0.85);
+  /* 基础画布与表面色 (Light Theme 默认) */
+  --bg-canvas: #e9ece9;           /* 窗口底 */
+  --bg-app: var(--bg-canvas);     /* 历史别名，指向 --bg-canvas */
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-subtle: #f5f8f6;           /* 卡中卡 */
 
-  --pulse-border-subtle: rgba(255, 255, 255, 0.08);
-  --pulse-border-default: rgba(255, 255, 255, 0.12);
-  --pulse-border-hover: rgba(255, 255, 255, 0.22);
-  --pulse-border-focus: #38bdf8;
+  /* 文字系统（已按 WCAG 2.1 AA 4.5:1 对比度校准） */
+  --text-primary: #26312c;
+  --text-secondary: #5a6862;
+  --text-muted: #6f7d76;
 
-  --pulse-font-sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --pulse-font-mono: "Cascadia Code", "Consolas", "Fira Code", monospace;
+  /* 边框与轮廓 */
+  --border-default: rgba(38, 49, 44, 0.055);
+  --border-strong: rgba(38, 49, 44, 0.10);
 
-  --pulse-text-primary: #f8fafc;
-  --pulse-text-secondary: #94a3b8;
-  --pulse-text-muted: #64748b;
-  --pulse-text-dim: #475569;
+  /* 品牌重点色 */
+  --accent-primary: #4f7d63;
+  --accent-soft: #7aa590;
+  --accent-wash: #e4eee8;
+  --accent-hover: #3d6450;
+  --anchor-wash: #dfeae3;         /* 锚点卡底 */
+  --anchor-text: #2f5344;         /* 锚点卡文字 */
 
-  --pulse-status-success: #10b981;
-  --pulse-status-success-bg: rgba(16, 185, 129, 0.12);
-  --pulse-status-success-border: rgba(16, 185, 129, 0.32);
+  /* 状态与额度色谱 */
+  --status-success: #4f7d63;
+  --status-working: #7aa590;
+  --status-warning: #b07d3c;
+  --status-error: #a8675f;
+  --status-idle: #93a099;
 
-  --pulse-status-warning: #f59e0b;
-  --pulse-status-warning-bg: rgba(245, 158, 11, 0.14);
-  --pulse-status-warning-border: rgba(245, 158, 11, 0.38);
+  --quota-normal: #4f7d63;
+  --quota-warning: #b07d3c;
+  --quota-warning-wash: #f0e4d2;
+  --quota-warning-text: #9c6f30;
+  --quota-critical: #a8675f;
+  --quota-critical-wash: #f2e2e0;
+  --quota-critical-text: #8f4f47;
+  --data-secondary: #cbdbd2;      /* 7 天柱 */
+  --hatch: repeating-linear-gradient(45deg, #d3dcd7 0 3px, #eaefec 3px 6px);
 
-  --pulse-status-danger: #ef4444;
-  --pulse-status-danger-bg: rgba(239, 68, 68, 0.12);
-  --pulse-status-danger-border: rgba(239, 68, 68, 0.35);
+  /* 几何与阴影令牌 */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 9999px;
 
-  --pulse-status-neutral: #64748b;
-  --pulse-status-neutral-bg: rgba(100, 116, 139, 0.12);
-  --pulse-status-neutral-border: rgba(100, 116, 139, 0.25);
+  --shadow-sm: 0 1px 2px 0 rgba(38, 49, 44, 0.04);
+  --shadow-card: 0 1px 2px 0 rgba(38, 49, 44, 0.04);
+  --shadow-elevated: 0 10px 24px -6px rgba(38, 49, 44, 0.12);
+  --shadow-minibar: 0 8px 24px -4px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 
-  --pulse-brand-claude: #D97757;
-  --pulse-brand-claude-bg: rgba(217, 119, 87, 0.14);
-  --pulse-brand-claude-border: rgba(217, 119, 87, 0.35);
+  /* 字体：拉丁字母与数字走 Noto Sans，汉字走思源宋体 Light
+     （本机装的是 Google 孪生版 Noto Serif SC Light）。
+     浏览器按字符逐个回退：Noto Sans 不含汉字，所以中文自动落到后面的宋体。
+     两者同属 Noto 超级家族，垂直度量与笔形逻辑天然对齐；
+     Noto Sans 带真正的等宽数字，界面里 8 处 tabular-nums 才能生效。
+     变量名沿用 --pulse-font-sans 以免改动所有引用方。
 
-  --pulse-brand-codex: #10A37F;
-  --pulse-brand-codex-bg: rgba(16, 163, 127, 0.14);
-  --pulse-brand-codex-border: rgba(16, 163, 127, 0.35);
+     2026-09-12 定稿：UI 审查第 7 项曾建议「保留宋体就提高小字字重」，
+     经确认不采纳——汉字保持 Light 是本设计的既定取向。
+     关键小字的可读性改由字号承担（10px → 12px，见 AgentCard / OverviewPage），
+     不要为此调整本字体栈的顺序，也不要放开 font-synthesis-weight。 */
+  --pulse-font-sans: "Noto Sans", "Segoe UI Variable Text", "Segoe UI",
+    "Noto Serif SC Light", "Noto Serif SC", "Source Han Serif SC", "思源宋体", serif;
 
-  --pulse-brand-antigravity: #4285F4;
-  --pulse-brand-antigravity-bg: rgba(66, 133, 244, 0.14);
-  --pulse-brand-antigravity-border: rgba(66, 133, 244, 0.35);
+  /* 品牌 logo 降饱和色（只用于 logo 图标） */
+  --claude: #c08a6c;
+  --codex: #6a9d8a;
+  --antigravity: #a48bc4;
 
-  --pulse-accent: #38bdf8;
-  --pulse-accent-hover: #0ea5e9;
-  --pulse-accent-subtle: rgba(56, 189, 248, 0.12);
-  --pulse-accent-border: rgba(56, 189, 248, 0.3);
+  /* 历史兼容变量 (向后兼容原有组件) */
+  --pulse-bg-base: var(--bg-app);
+  --pulse-bg-sidebar: var(--bg-surface);
+  --pulse-bg-surface: var(--bg-surface);
+  --pulse-bg-elevated: var(--bg-elevated);
+  --pulse-border-default: var(--border-default);
+  --pulse-border-hover: var(--border-strong);
+  --pulse-text-primary: var(--text-primary);
+  --pulse-text-secondary: var(--text-secondary);
+  --pulse-text-muted: var(--text-muted);
+}
 
-  --pulse-radius-xs: 4px;
-  --pulse-radius-sm: 6px;
-  --pulse-radius-md: 10px;
-  --pulse-radius-lg: 14px;
-  --pulse-radius-xl: 18px;
-  --pulse-radius-full: 9999px;
+.dark {
+  /* 基础画布与表面色 (Dark Midnight) */
+  --bg-canvas: #121614;
+  --bg-app: var(--bg-canvas);
+  --bg-surface: #1e2421;
+  --bg-elevated: #1e2421;
+  --bg-subtle: #222925;
 
-  --pulse-shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--pulse-border-default);
-  --pulse-shadow-elevated: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--pulse-border-hover);
-  --pulse-shadow-glow: 0 0 20px rgba(56, 189, 248, 0.2);
+  /* 文字系统 */
+  --text-primary: #e6ece8;
+  --text-secondary: #a9b5ae;
+  --text-muted: #8b9a93;
+
+  /* 边框与轮廓 */
+  --border-default: rgba(230, 236, 232, 0.055);
+  --border-strong: rgba(230, 236, 232, 0.12);
+
+  /* 品牌重点色 */
+  --accent-primary: #7aa590;
+  --accent-soft: #5d8a72;
+  --accent-wash: rgba(122, 165, 144, 0.14);
+  --accent-hover: #8fb8a3;
+  --anchor-wash: #26352d;
+  --anchor-text: #a8cbb8;
+
+  /* 状态与额度色谱 */
+  --status-success: #7aa590;
+  --status-working: #a8cbb8;
+  --status-warning: #d9b579;
+  --status-error: #d19e96;
+  --status-idle: #7a8781;
+
+  --quota-normal: #7aa590;
+  --quota-warning: #d9b579;
+  --quota-warning-wash: rgba(203, 162, 99, 0.16);
+  --quota-warning-text: #d9b579;
+  --quota-critical: #d19e96;
+  --quota-critical-wash: rgba(192, 136, 128, 0.16);
+  --quota-critical-text: #d19e96;
+  --data-secondary: #3a4a42;
+  --hatch: repeating-linear-gradient(45deg, rgba(230, 236, 232, 0.16) 0 3px, rgba(230, 236, 232, 0.045) 3px 6px);
+
+  --claude: #cf9b7d;
+  --codex: #7db09a;
+  --antigravity: #ad95cd;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 12px 28px -8px rgba(0, 0, 0, 0.6);
+  --shadow-minibar: 0 16px 36px -10px rgba(0, 0, 0, 0.7), inset 0 1px 0.5px rgba(255, 255, 255, 0.2);
+
+  /* 历史兼容变量 */
+  --pulse-bg-base: var(--bg-app);
+  --pulse-bg-sidebar: var(--bg-surface);
+  --pulse-bg-surface: var(--bg-surface);
+  --pulse-bg-elevated: var(--bg-elevated);
+  --pulse-border-default: var(--border-default);
+  --pulse-border-hover: var(--border-strong);
+  --pulse-text-primary: var(--text-primary);
+  --pulse-text-secondary: var(--text-secondary);
+  --pulse-text-muted: var(--text-muted);
+}
+
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: inherit;
 }
 
 .tabular-nums {
@@ -79,7 +167,8 @@
 }
 
 .drag-region {
-  -webkit-app-region: drag;
+  /* 已改为渲染进程手动拖拽：去掉原生 -webkit-app-region: drag，
+     否则该区域会吞掉右键与所有指针事件（导致整条侧栏无法右键呼出菜单）。 */
   user-select: none;
 }
 
@@ -87,15 +176,21 @@
   -webkit-app-region: no-drag;
 }
 
-/* 非权威本地估算警示斜纹（diagnostics 卡片用） */
-.stripe-pattern-warning {
-  background-image: repeating-linear-gradient(
-    -45deg,
-    rgba(245, 158, 11, 0.03),
-    rgba(245, 158, 11, 0.03) 8px,
-    rgba(245, 158, 11, 0.08) 8px,
-    rgba(245, 158, 11, 0.08) 16px
-  );
+/* 主窗口自绘标题栏：交还给系统原生拖拽。
+   跨双屏（主屏 100% / 副屏 125%）时由 Windows 负责 DPI 过渡，
+   手动 setPosition 跟随做不到这一点，会在跨屏瞬间把界面整体放大。
+   只加在 44px 的顶栏上，不加在 .drag-region（侧栏与 MiniBar 仍用手动拖拽，
+   否则原生 drag 会吞掉右键菜单）。 */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+/* 主操作按钮：sage 底上浅色字在暗色下对比不足，暗色用 --bg-canvas 深色字覆盖 */
+.btn-primary {
+  color: var(--bg-surface);
+}
+.dark .btn-primary {
+  color: var(--bg-canvas);
 }
 
 html, body, #root {
@@ -104,7 +199,8 @@ html, body, #root {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: var(--pulse-bg-base);
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
 }
 
 body {
@@ -112,6 +208,10 @@ body {
   -webkit-user-select: text;
   color: var(--pulse-text-primary);
   font-family: var(--pulse-font-sans);
+  /* 汉字要 Light(300)。Noto Sans 在 300 下于 10px 偏虚，
+     用 font-synthesis-weight: none 禁止合成字重，让拉丁部分落回它自己最接近的真实字重。 */
+  font-weight: 300;
+  font-synthesis-weight: none;
 }
 
 button,
@@ -124,16 +224,37 @@ label,
 
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--border-strong);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--text-muted);
+}
+
+/* 自定义细滚动条（跨主题语义 token 适配） */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 /* 迷你悬浮窗（MiniBar）：全透明穿透，防止默认深黑底色遮挡圆角与透明度 */
@@ -144,47 +265,139 @@ html.screen-minibar #root {
   background-color: transparent !important;
 }
 
-/* Apple 磨砂玻璃透明质感 (Glassmorphism & Specular Highlights) */
+/* Apple 磨砂玻璃透明质感 (Glassmorphism & Specular Highlights - Light / Dark 自适应) */
 .apple-glass-pill {
-  background: rgba(18, 22, 32, 0.65);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(28px) saturate(190%);
   -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-minibar);
+}
+
+.dark .apple-glass-pill {
+  background: rgba(18, 22, 32, 0.65);
   border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 
-    0 16px 36px -10px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0.5px rgba(255, 255, 255, 0.35),
-    inset 0 -1px 0.5px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-minibar);
 }
 
 .apple-glass-card {
-  background: rgba(18, 22, 32, 0.72);
+  background: rgba(255, 255, 255, 0.90);
   backdrop-filter: blur(32px) saturate(190%);
   -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-minibar);
+}
+
+.dark .apple-glass-card {
+  background: rgba(18, 22, 32, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 
-    0 24px 50px -12px rgba(0, 0, 0, 0.65),
-    inset 0 1px 0.5px rgba(255, 255, 255, 0.35),
-    inset 0 -1px 0.5px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-minibar);
 }
 
 .apple-glass-subcard {
+  background: rgba(15, 23, 42, 0.03);
+  border: 1px solid var(--border-default);
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.5);
+}
+
+.dark .apple-glass-subcard {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.10);
   box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.15);
 }
 
 .apple-glass-subcard:hover {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: var(--border-strong);
+}
+
+.dark .apple-glass-subcard:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.16);
 }
 
 .apple-glass-badge {
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--border-default);
+  box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.6);
+}
+
+.dark .apple-glass-badge {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: inset 0 0.5px 0.5px rgba(255, 255, 255, 0.25);
 }
 
 .apple-glass-badge:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.dark .apple-glass-badge:hover {
   background: rgba(255, 255, 255, 0.14);
+}
+
+/* ==========================================================================
+   新版 MiniBar 竖向悬浮侧栏与向左展开详情卡专用样式（限定在悬浮窗作用域）
+   ========================================================================== */
+.minibar-sidebar-container {
+  background-color: transparent !important;
+  font-family: var(--pulse-font-sans) !important;
+  font-weight: 300;
+}
+
+.minibar-card-shadow {
+  background-color: #080808;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+/* 悬浮窗深色滑块精细轨 */
+.minibar-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+  border-radius: 9999px;
+  height: 4px;
+}
+.minibar-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  border: none;
+  transition: transform 100ms ease;
+}
+.minibar-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+/* 平滑淡入位移动画（支持减弱动态效果配置） */
+.minibar-card-anim {
+  transition: opacity 160ms cubic-bezier(0.16, 1, 0.3, 1), transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+/* 减弱动态（审查第 13 项）：系统开启后全局压掉持续的呼吸/旋转/ping 与过渡。
+   动画默认 fill-mode 为 none，结束后回到元素基础样式——
+   animate-pulse/ping 的圆点停在原色不消失，Loader2 停止旋转但图标仍在，
+   「思考中/执行中/已完成」等文字状态全部保留。 */
+@media (prefers-reduced-motion: reduce) {
+  .minibar-card-anim {
+    transition: opacity 160ms ease-in-out !important;
+    transform: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 

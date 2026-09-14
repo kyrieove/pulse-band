@@ -17,9 +17,9 @@ export default {
           input: '#0a0c10',
           border: 'rgba(255, 255, 255, 0.12)',
           accent: '#38bdf8',
-          claude: '#D97757',
-          codex: '#10A37F',
-          antigravity: '#4285F4',
+          claude: '#c08a6c',
+          codex: '#6a9d8a',
+          antigravity: '#a48bc4',
           card: 'rgba(24, 27, 36, 0.75)'
         }
       },

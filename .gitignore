@@ -4,6 +4,7 @@ dist-electron/
 release/
 .vite/
 .cache/
+.zcode/
 *.log
 
 # 手环端构建产物与签名密钥 —— 签名密钥绝不入库
@@ -17,3 +18,33 @@ band-app/sign/
 
 # PULSE_SCREEN 调试截图
 debug-window-*.png
+
+# v2 native core
+core/target/
+device.json
+/STATUS.md
+core/tests/fixtures/
+*.pcapng
+*.pcap
+# 阶段 2/2B 临时分析脚本（不入库）
+tools/__pycache__/
+tools/analyze_step1.py
+tools/audit_mismatches.py
+tools/audit_session2.py
+tools/audit_session2_part2.py
+tools/check_all_seqs.py
+tools/compare_type02.py
+tools/export_test_vector.py
+tools/inspect_208_216.py
+tools/inspect_timeline.py
+
+# Agent 技能与各 runtime 的本地配置（npx skills add 写入的 symlink 目录）
+# 与上面 .zcode/ 同一类：工具产物，不入库
+.agents/
+.claude/
+.codex/
+skills-lock.json
+
+# 表盘真机测试样本（版权内容，禁止入库）
+watch-face/
+watch-face-retry/

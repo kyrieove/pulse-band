@@ -1,18 +1,17 @@
 /**
  * 「把日志拖进来，给我 authkey」——接受 .zip / 文件夹 / .log 三种输入。
  *
- * 边界：**只解析、只显示**。不写 OronBox 的配置文件、不代替配对。
- * 用户拿到 key 之后仍然在 OronBox 里输入并连接（那是唯一验证过的配对路径）。
+ * 边界：**只解析、只显示**。不写 Pulse Core 的配置文件、不代替配对。
+ * 用户拿到 key 之后仍然在 Pulse Core 里输入并连接（那是唯一验证过的配对路径）。
  *
  * 解压走 PowerShell 的 Expand-Archive，不引第三方依赖，打包后照样能跑。
  * 日志里是 authkey 明文，临时解压目录用完必须删，不能留在用户的 %TEMP% 里。
  */
-import { ipcMain } from 'electron';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractKeys, type ExtractedKeys } from './band-key-parse';
+import { extractKeys, type ExtractedKeys } from './band-key-parse.ts';
 
 /** 单个日志读取上限：日志目录里偶尔有几百 MB 的文件，整个读进内存会卡死主进程 */
 const MAX_LOG_BYTES = 64 * 1024 * 1024;
@@ -92,8 +91,12 @@ export function extractFromPath(input: string): ExtractResult {
   }
 }
 
-export function registerBandKeyExtract() {
-  ipcMain.handle('band:extract-key', (_e, payload: { path?: string }) =>
+export interface IpcMainLike {
+  handle: (channel: string, listener: (event: any, ...args: any[]) => any) => void;
+}
+
+export function registerBandKeyExtract(ipc?: IpcMainLike) {
+  ipc?.handle('band:extract-key', (_e, payload: { path?: string }) =>
     extractFromPath(typeof payload?.path === 'string' ? payload.path : '')
   );
 }

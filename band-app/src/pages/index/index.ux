@@ -26,7 +26,7 @@
         </div>
         <text class="tool-name">{{a0Tool}}</text>
         <div class="card card-a0">
-          <text class="card-title tt-a0">5h</text>
+          <text class="card-title tt-a0">5h 剩余</text>
           <text class="card-reset">{{claudeReset5h}}</text>
           <text class="card-val" style="color: {{claudeValC5h}};">{{claudeVal5h}}</text>
           <div class="bar-bg">
@@ -34,7 +34,7 @@
           </div>
         </div>
         <div class="card card-b">
-          <text class="card-title tt-b">7d</text>
+          <text class="card-title tt-b">7d 剩余</text>
           <text class="card-reset">{{claudeReset7d}}</text>
           <text class="card-val" style="color: {{claudeValC7d}};">{{claudeVal7d}}</text>
           <div class="bar-bg">
@@ -68,7 +68,7 @@
         </div>
         <text class="tool-name">{{a1Tool}}</text>
         <div class="card card-a1">
-          <text class="card-title tt-a1">5h</text>
+          <text class="card-title tt-a1">5h 剩余</text>
           <text class="card-reset">{{codexReset5h}}</text>
           <text class="card-val" style="color: {{codexValC5h}};">{{codexVal5h}}</text>
           <div class="bar-bg">
@@ -76,7 +76,7 @@
           </div>
         </div>
         <div class="card card-b">
-          <text class="card-title tt-b">7d</text>
+          <text class="card-title tt-b">7d 剩余</text>
           <text class="card-reset">{{codexReset7d}}</text>
           <text class="card-val" style="color: {{codexValC7d}};">{{codexVal7d}}</text>
           <div class="bar-bg">
@@ -110,7 +110,7 @@
         </div>
         <text class="tool-name">{{a2Tool}}</text>
         <div class="card card-a2">
-          <text class="card-title tt-a2">5h</text>
+          <text class="card-title tt-a2">5h 剩余</text>
           <text class="card-reset">{{antigravityReset5h}}</text>
           <text class="card-val" style="color: {{antigravityValC5h}};">{{antigravityVal5h}}</text>
           <div class="bar-bg">
@@ -118,7 +118,7 @@
           </div>
         </div>
         <div class="card card-b">
-          <text class="card-title tt-b">7d</text>
+          <text class="card-title tt-b">7d 剩余</text>
           <text class="card-reset">{{antigravityReset7d}}</text>
           <text class="card-val" style="color: {{antigravityValC7d}};">{{antigravityVal7d}}</text>
           <div class="bar-bg">
@@ -926,10 +926,7 @@ export default {
 
         // 若底层蓝牙发包直接返回错误码 (如 send_fail)，说明 BLE 通道异常，标记 retry 并尝试重新检查链路
         if (respLocal && respLocal.statusText && respLocal.statusText.indexOf('send_fail') !== -1) {
-          if (!this.hasLoadedData) {
-            this['light' + this.curIdx + 'Class'] = 'lt-err';
-            this.setStatusText(respLocal.statusText.slice(0, 18));
-          }
+          this.handleDisconnect(respLocal.statusText.slice(0, 18));
           icMode = 'retry';
           finish();
           return;
@@ -947,20 +944,14 @@ export default {
           }
 
           if (respLan && respLan.statusText && respLan.statusText.indexOf('send_fail') !== -1) {
-            if (!this.hasLoadedData) {
-              this['light' + this.curIdx + 'Class'] = 'lt-err';
-              this.setStatusText(respLan.statusText.slice(0, 18));
-            }
+            this.handleDisconnect(respLan.statusText.slice(0, 18));
             icMode = 'retry';
             finish();
             return;
           }
 
-          const errTxt = (respLocal && respLocal.statusText) || (respLan && respLan.statusText) || 'no_resp';
-          if (!this.hasLoadedData) {
-            this['light' + this.curIdx + 'Class'] = 'lt-err';
-            this.setStatusText(errTxt.slice(0, 20));
-          }
+          const errTxt = (respLocal && respLocal.statusText) || (respLan && respLan.statusText) || '连接中断';
+          this.handleDisconnect(errTxt.slice(0, 20));
           console.log('[CodeIsland] fetch fail both local and lan: ' + errTxt);
           finish();
         });
@@ -981,10 +972,7 @@ export default {
         }
       },
       fail: (err) => {
-        if (!this.hasLoadedData) {
-          this['light' + this.curIdx + 'Class'] = 'lt-err';
-          this.setStatusText('Direct fetch err');
-        }
+        this.handleDisconnect('连接中断');
         console.log('[CodeIsland] fetch fail: ' + err);
       }
     });
@@ -1082,7 +1070,7 @@ export default {
   //   骨架/缺数  → '--' + 条宽 0（不造数）
   //   不可信估算 → '~n%' 数字置灰 #8e8e93 + 条置灰 #48484a + 倒计时 '--'（剥夺彩色）
   //   正常       → 'n%' 白 + 条平涂屏专属色 + 倒计时
-  // 条宽 = Math.round(140 * pct / 100)
+  // 条宽 = Math.round(140 * remaining / 100)（统一展示剩余额度）
   applyCards(a, l) {
     const FILL_1 = { claude: '#ff9f0a', codex: '#30d158', antigravity: '#9d4edd' };
     const FILL_7D = '#0a84ff';
@@ -1091,22 +1079,25 @@ export default {
     const wins = [['5h', 'pct5h', 'resetText'], ['7d', 'pct7d', 'reset7dText']];
     for (let w = 0; w < wins.length; w++) {
       const tag = wins[w][0];
-      const pct = l ? l[wins[w][1]] : null;
+      const rawPct = l ? l[wins[w][1]] : null;
       const stale = l ? l.authoritative === false : true;
+      const remaining = (rawPct !== null && rawPct !== undefined && !isNaN(rawPct))
+        ? Math.max(0, Math.min(100, Math.round(100 - rawPct)))
+        : null;
       let val = '--';
       let valC = '#ffffff';
       let fillW = 0;
       let fillC = tag === '7d' ? FILL_7D : FILL_1[a];
       let reset = '--';
-      if (l && pct !== null && pct !== undefined && !stale) {
-        val = pct + '%';
-        fillW = Math.round(140 * pct / 100);
+      if (l && remaining !== null && !stale) {
+        val = remaining + '%';
+        fillW = Math.round(140 * remaining / 100);
         reset = l[wins[w][2]] || (tag === '5h' ? 'ready' : '--');
-      } else if (l && pct !== null && pct !== undefined && stale) {
-        val = '~' + pct + '%';
+      } else if (l && remaining !== null && stale) {
+        val = '~' + remaining + '%';
         valC = EST_VAL;
         fillC = EST_FILL;
-        fillW = Math.round(140 * pct / 100);
+        fillW = Math.round(140 * remaining / 100);
       }
       this[a + 'Val' + tag] = val;
       this[a + 'ValC' + tag] = valC;
@@ -1117,6 +1108,20 @@ export default {
   },
 
 
+
+  // 连接中断/传输异常处理：持续可见提示，并彻底覆盖可能残留的 Running 动词与光效
+  handleDisconnect(msg) {
+    const tip = msg || '连接中断';
+    this['light' + this.curIdx + 'Class'] = 'lt-err';
+    this.setStatusText(tip);
+    for (let i = 0; i < AGENTS.length; i++) {
+      if (this['light' + i + 'Class'] === 'lt-run') {
+        this['light' + i + 'Class'] = 'lt-err';
+        this.setVerbSegs(i, '连接中断');
+        this['a' + i + 'VerbColor'] = '#ff453a';
+      }
+    }
+  },
 
   // 传输层错误等一次性文字：写到当前可见屏的工具名行（灰字，不占用动词行）
   setStatusText(str) {

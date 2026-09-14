@@ -1,13 +1,13 @@
 {
   "name": "pulse-band",
-  "version": "1.1.2",
+  "version": "2.0.0",
   "description": "Real-time AI Coding Agent Status Island for Windows",
   "type": "module",
   "main": "dist-electron/main/index.js",
   "scripts": {
     "start": "electron .",
     "dev": "vite",
-    "test": "node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node --test scripts/test-diagnostics.mjs scripts/test-pc-v1.1.mjs",
+    "test": "node scripts/test-pulse-core-pid.mjs && node scripts/test-hook-install.mjs && node scripts/test-band-key-extract.mjs && node scripts/test-device-config.mjs && node --test scripts/test-diagnostics.mjs scripts/test-pulse-core-client.mjs scripts/test-agent-quota.mjs scripts/test-app-install.mjs scripts/test-rpk-inspector.mjs scripts/test-rpk-install-pipeline.mjs scripts/test-rpk-ui-pipeline.mjs scripts/test-app-install-lifecycle.mjs scripts/test-core-app-install-bridge.mjs scripts/test-minibar-layout.mjs scripts/test-watchface-utils.mjs scripts/test-watchface-preview-store.mjs scripts/test-watchface-preview-decoder.mjs scripts/test-watchface-preview-auto.mjs scripts/test-watchface-install-preview.mjs",
     "build": "tsc && vite build",
     "dist": "npm run build && electron-builder --publish never",
     "preview": "vite preview"
@@ -19,6 +19,12 @@
     "directories": {
       "output": "release"
     },
+    "extraResources": [
+      {
+        "from": "core/target/release/pulse-core.exe",
+        "to": "pulse-core.exe"
+      }
+    ],
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -47,6 +53,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@remotion/cli": "^4.0.523",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
@@ -59,11 +66,15 @@
     "postcss": "^8.5.28",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "remotion": "^4.0.523",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vite-plugin-electron": "^1.1.2",
     "vite-plugin-electron-renderer": "^1.0.0"
+  },
+  "dependencies": {
+    "@remotion/player": "^4.0.523"
   }
 }
