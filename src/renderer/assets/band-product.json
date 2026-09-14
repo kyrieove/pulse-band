@@ -1,0 +1,16 @@
+{
+  "source": "mi.com 官网产品图（miband.webp），白底已抠除",
+  "image": {
+    "width": 378,
+    "height": 480
+  },
+  "screen": {
+    "left": 3.27,
+    "top": 16.64,
+    "width": 27.12,
+    "height": 65.51,
+    "radiusX": 50,
+    "radiusY": 23.1
+  },
+  "note": "百分比相对图片宽高；圆角用 CSS border-radius: radiusX% / radiusY%"
+}

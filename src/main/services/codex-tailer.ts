@@ -15,6 +15,8 @@ export class CodexSessionTailer {
   private contexts: Map<string, CodexContext> = new Map();
   private watcher: fs.FSWatcher | null = null;
   private pollInterval: NodeJS.Timeout | null = null;
+  /** fs.watch 是否成功建立并存活；false = 退化为 500ms 兜底轮询 */
+  private watchActive = false;
   private isProcessing = false;
 
   constructor(sessionManager: SessionManager, customDir?: string) {
@@ -38,7 +40,12 @@ export class CodexSessionTailer {
         const fullPath = path.join(this.rootDir, filename);
         this.readNewLines(fullPath);
       });
+      this.watcher.on('error', () => {
+        this.watchActive = false;
+      });
+      this.watchActive = true;
     } catch (err) {
+      this.watchActive = false;
       console.error('[CodexTailer] fs.watch recursive failed, falling back to polling:', err);
     }
 
@@ -46,6 +53,11 @@ export class CodexSessionTailer {
     this.pollInterval = setInterval(() => {
       this.checkActiveFiles();
     }, 500);
+  }
+
+  /** 会话检测是否为事件驱动（fs.watch 主通路存活）；false = 只剩 500ms 兜底轮询 */
+  public get isEventDriven(): boolean {
+    return this.watchActive;
   }
 
   private scanInitialFiles() {

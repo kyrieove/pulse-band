@@ -4,22 +4,22 @@
 import React from 'react';
 
 export const Card: React.FC<{ className?: string; children: React.ReactNode }> = ({ className = '', children }) => (
-  <div className={`rounded-xl bg-island-surface border border-white/[0.08] ${className}`}>{children}</div>
+  <div className={`rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)] ${className}`}>{children}</div>
 );
 
 /** 双编码状态徽章：颜色 + 圆点 + 文字（main.html 的 statusBadge） */
 export function StatusBadge(props: { tone: 'success' | 'warning' | 'danger' | 'neutral'; text: string; pulse?: boolean }) {
   const tone = {
-    success: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400',
-    warning: 'bg-amber-500/15 border-amber-500/30 text-amber-400',
-    danger: 'bg-rose-500/15 border-rose-500/30 text-rose-400',
-    neutral: 'bg-zinc-800 border-zinc-700 text-zinc-400',
+    success: 'bg-[var(--accent-wash)] border-[var(--accent-wash)] text-[var(--status-success)]',
+    warning: 'bg-[var(--quota-warning-wash)] border-[var(--quota-warning-wash)] text-[var(--quota-warning)]',
+    danger: 'bg-[var(--quota-critical-wash)] border-[var(--quota-critical-wash)] text-[var(--quota-critical)]',
+    neutral: 'bg-[var(--bg-subtle)] border-[var(--border-default)] text-[var(--text-muted)]',
   }[props.tone];
   const dot = {
-    success: 'bg-emerald-500 shadow-[0_0_8px_#10b981]',
-    warning: 'bg-amber-500 animate-ping',
-    danger: 'bg-rose-500',
-    neutral: 'bg-zinc-500',
+    success: 'bg-[var(--status-success)]',
+    warning: 'bg-[var(--status-warning)] animate-ping',
+    danger: 'bg-[var(--status-error)]',
+    neutral: 'bg-[var(--text-muted)]',
   }[props.tone];
   return (
     <span className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full border font-medium text-xs transition-all duration-300 ${tone}`}>
@@ -30,17 +30,18 @@ export function StatusBadge(props: { tone: 'success' | 'warning' | 'danger' | 'n
 }
 
 /** 开关（main.html 的 toggle-label/dot 结构） */
-export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
   return (
     <label className={`relative inline-flex items-center ${props.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
       <input
         type="checkbox"
-        className="sr-only"
+        className="sr-only peer"
         checked={props.checked}
         disabled={props.disabled}
+        aria-label={props.label}
         onChange={(e) => props.onChange(e.target.checked)}
       />
-      <div className={`w-8 h-4 rounded-full transition-colors ${props.checked ? 'bg-island-accent' : 'bg-zinc-700'}`}>
+      <div className={`w-8 h-4 rounded-full transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-[var(--accent-primary)] peer-focus-visible:outline-offset-2 ${props.checked ? 'bg-[var(--accent-primary)]' : 'bg-[var(--border-strong)]'}`}>
         <div
           className={`w-4 h-4 bg-white rounded-full shadow transition-transform ${props.checked ? 'translate-x-4' : 'translate-x-0'}`}
         />

@@ -1,19 +1,29 @@
 import { app, BrowserWindow, ipcMain, shell, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import type { AgentKind, SessionDetectionMode } from '../common/types';
 import { SessionManager } from './services/session-manager';
 import { CodexSessionTailer } from './services/codex-tailer';
 import { ClaudeDesktopTailer } from './services/claude-desktop-tailer';
 import { AntigravitySessionPoller } from './services/antigravity-session';
 import { ClaudeHookServer } from './services/claude-hook-server';
-import { registerClaudeHookInstall } from './services/claude-hook-install';
+import { registerClaudeHookInstall, getHookStatus } from './services/claude-hook-install';
 import { registerBandKeyExtract } from './services/band-key-extract';
 import { StatusServer } from './services/status-server';
-import { OronBoxClient, ORONBOX_EXE } from './services/oronbox-client';
-import { OronBoxBridge } from './services/oronbox-bridge';
+import { PulseCoreClient } from './services/pulse-core-client';
+import { PulseCoreBridge } from './services/pulse-core-bridge';
 import { createTray } from './tray';
 import { createMiniBarWindow, disposeMiniBar, toggleMiniBar, isMiniBarVisible } from './minibar-window';
 import { isVersionNewer } from './services/version-check';
+import { AppInstallService, registerAppInstallIpc } from './services/app-install-service';
+import { CoreAppInstallBridge } from './services/core-app-install-bridge';
+import { WatchfaceService, registerWatchfaceIpc } from './services/watchface-service';
+import { WatchfacePreviewStore, WATCHFACE_PREVIEW_DIR_NAME } from './services/watchface-preview-store';
+import {
+  WatchfacePreviewService,
+  registerWatchfacePreviewIpc,
+} from './services/watchface-preview-service';
+import { deviceConfigService } from './services/device-config-service';
 
 // Ensure single instance
 const gotLock = app.requestSingleInstanceLock();
@@ -41,25 +51,49 @@ const claudeDesktopTailer = new ClaudeDesktopTailer(sessionManager);
 const antigravityPoller = new AntigravitySessionPoller(sessionManager);
 const claudeServer = new ClaudeHookServer(sessionManager, 41789);
 
+// 各 agent 会话检测方式的唯一判定点（随 MinibarState 下发给渲染层）：
+// Claude=hook 是否安装（未装时 transcript 思考期不落盘，只能轮询且测不到 thinking）；
+// Codex=fs.watch 主通路是否存活（失败时降级为 500ms 轮询）；
+// Antigravity=固定 5 秒 RPC 轮询，非事件驱动。
+const resolveSessionDetection = (): Record<AgentKind, SessionDetectionMode> => {
+  let claude: SessionDetectionMode = 'polling';
+  try {
+    claude = getHookStatus().installed ? 'event' : 'polling';
+  } catch {
+    // 读不到 hook 状态时保守按轮询报，不谎报实时
+  }
+  return {
+    claude,
+    codex: codexTailer.isEventDriven ? 'event' : 'polling',
+    antigravity: 'polling',
+  };
+};
+
 const statusServer = new StatusServer(sessionManager, 8765);
 statusServer.start();
 
-// OronBox 客户端只在显式手环操作时按需启动 daemon；打开 Pulse 本身不碰蓝牙。
-const oronbox = new OronBoxClient();
-const oronboxBridge = new OronBoxBridge(
-  oronbox,
-  path.join(app.getPath('userData'), 'pulse-bridge-mode.json'),
+// pulse-core 只在显式手环操作时按需启动；打开 Pulse 本身不碰蓝牙。
+const coreClient = new PulseCoreClient();
+const coreBridge = new PulseCoreBridge(coreClient);
+const coreAppInstallBridge = new CoreAppInstallBridge(coreClient);
+const appInstallService = new AppInstallService(coreAppInstallBridge);
+// 用户自己关联的表盘预览图缓存：只落本机 userData，不进仓库、不上传、不碰协议
+const watchfacePreviewService = new WatchfacePreviewService(
+  new WatchfacePreviewStore(path.join(app.getPath('userData'), WATCHFACE_PREVIEW_DIR_NAME)),
 );
-oronbox.on('daemon-spawned', (pid) => console.log('[OronBox] daemon 已拉起 pid=' + pid));
-oronbox.on('degraded', (info) =>
-  console.warn('[OronBox] protocolVersion 不匹配，进入降级（继续用旧链路）:', JSON.stringify(info))
+const watchfaceService = new WatchfaceService(coreClient, watchfacePreviewService);
+coreClient.on('daemon-spawned', (pid) => console.log('[PulseCore] daemon 已拉起 pid=' + pid));
+coreClient.on('degraded', (info) =>
+  console.warn('[PulseCore] protocolVersion 不匹配，进入降级（继续用旧链路）:', JSON.stringify(info))
 );
-oronbox.on('connected', () => console.log('[OronBox] RPC 已连接'));
-oronbox.on('disconnected', () => console.warn('[OronBox] RPC 断开，等待重连'));
+coreClient.on('connected', () => console.log('[PulseCore] RPC 已连接'));
+coreClient.on('disconnected', () => console.warn('[PulseCore] RPC 断开，等待重连'));
 
 // 初始屏（截图/调试用）：PULSE_SCREEN=diagnostics 时直接打开次屏
 const INITIAL_SCREEN =
-  process.env.PULSE_SCREEN === 'diagnostics' || process.env.PULSE_SCREEN === 'settings'
+  process.env.PULSE_SCREEN === 'diagnostics' ||
+  process.env.PULSE_SCREEN === 'settings' ||
+  process.env.PULSE_SCREEN === 'watchface'
     ? process.env.PULSE_SCREEN
     : 'main';
 
@@ -81,7 +115,8 @@ function createWindow() {
     minHeight: 520,
     center: true,
     frame: false,
-    backgroundColor: '#0d0f14',
+    // 必须和 index.css 的 --bg-canvas 浅色值保持一致（#e9ece9），避免冷启动先刷一帧旧深色残留
+    backgroundColor: '#e9ece9',
     show: false,
     webPreferences: {
       preload: preloadPath,
@@ -140,7 +175,8 @@ function createWindow() {
     }
   });
 
-  oronboxBridge.attach(win);
+  coreBridge.attach(win);
+  appInstallService.attach(win);
 
   tray = createTray(
     win,
@@ -153,8 +189,24 @@ function createWindow() {
       }
     },
     () => {
-      // 彻底退出：先断开手环（让它回去找手机）、再让 daemon 自行退出，最后退 Pulse
-      oronbox.stopDaemonIfRunning().finally(() => app.quit());
+      // 彻底退出：视觉反馈要快——窗口和托盘图标立刻消失；
+      // 礼让序列（断开手环归还给手机 → 停 daemon）放后台走完，
+      // 总预算 5s，到点强制退出。手环断开最坏 3s（等真蓝牙断链），
+      // daemon 是按设计常驻的，停不掉就留给下次启动复用，不拿它卡用户。
+      isQuitting = true;
+      win?.hide();
+      const budget = setTimeout(() => {
+        runAppCleanup();
+        app.exit(0);
+      }, 5_000);
+      coreClient
+        .stopDaemonIfRunning()
+        .catch(() => {})
+        .finally(() => {
+          clearTimeout(budget);
+          runAppCleanup();
+          app.exit(0);
+        });
     },
     toggleMiniBar,
     isMiniBarVisible
@@ -171,7 +223,6 @@ ipcMain.handle('get-initial-sessions', () => {
 });
 
 ipcMain.handle('pulse:get-app-version', () => app.getVersion());
-ipcMain.handle('pulse:is-oronbox-installed', () => fs.existsSync(ORONBOX_EXE));
 ipcMain.handle('pulse:check-update', async () => {
   const currentVersion = app.getVersion();
   try {
@@ -214,9 +265,26 @@ ipcMain.on('window-maximize', () => {
 
 app.whenReady().then(async () => {
   createWindow();
-  createMiniBarWindow(sessionManager, statusServer);
+  createMiniBarWindow(sessionManager, statusServer, resolveSessionDetection);
   registerClaudeHookInstall();
-  registerBandKeyExtract();
+  registerBandKeyExtract(ipcMain);
+  registerAppInstallIpc(appInstallService, ipcMain, () => win);
+  registerWatchfaceIpc(watchfaceService, ipcMain);
+  registerWatchfacePreviewIpc(watchfacePreviewService, ipcMain);
+  watchfacePreviewService.startBackgroundPreparation([
+    path.resolve(import.meta.dirname, '../../watch-face'),
+  ]);
+
+  // 设备配置与已配对手环管理 IPC
+  ipcMain.handle('pulse:device-config:status', () => {
+    return deviceConfigService.getDeviceConfigStatus();
+  });
+  ipcMain.handle('pulse:device-config:paired-devices', () => {
+    return deviceConfigService.getPairedBandDevices();
+  });
+  ipcMain.handle('pulse:device-config:save', async (_e, payload) => {
+    return deviceConfigService.saveDeviceConfig(payload);
+  });
 
   // Start background monitoring services
   codexTailer.start();
@@ -231,8 +299,12 @@ app.on('window-all-closed', () => {
   // Keep app running in tray
 });
 
-app.on('before-quit', () => {
-  isQuitting = true;
+// 退出清理（幂等）：托盘「彻底退出」的预算强制路径走 app.exit（不触发
+// before-quit），所以两边的收尾都汇到这里，谁先到谁执行。
+let appCleanupDone = false;
+function runAppCleanup(): void {
+  if (appCleanupDone) return;
+  appCleanupDone = true;
   disposeMiniBar();
   if (tray) {
     tray.destroy();
@@ -243,6 +315,11 @@ app.on('before-quit', () => {
   antigravityPoller.stop();
   claudeServer.stop();
   sessionManager.dispose();
-  oronboxBridge.detach();
-  oronbox.dispose();
+  coreBridge.detach();
+  coreClient.dispose();
+}
+
+app.on('before-quit', () => {
+  isQuitting = true;
+  runAppCleanup();
 });

@@ -1,0 +1,36 @@
+SESSION baseline-2026-09-08-01.pcapng sha256=PASS
+  direction=0 preamble_bytes=11
+  direction=1 preamble_bytes=14
+  complete_frames_crc=PASS count=304
+  step=1 packet=116 direction=0 stream_offset=41 payload_bytes=29
+  step=2 packet=120 direction=1 stream_offset=52 payload_bytes=63
+  step=3 packet=122 direction=0 stream_offset=86 payload_bytes=68
+  step=4 packet=125 direction=1 stream_offset=131 payload_bytes=22
+  step2_hmac=PASS bytes=32
+  step3_app_sign=PASS bytes=32
+  step3_ccm_tag=PASS plaintext_bytes=17 tag_bytes=4
+  step3_public_companion_rebuild=PASS platform_input=capture
+  step3_full_payload=PASS bytes=68
+  negative_control_modified_ccm_tag=REJECTED
+  step4_confirm_result=true capability_fields=2,3
+  business direction=0 envelope_pass=73 failed=0 skipped=0
+  business direction=1 envelope_pass=73 failed=0 skipped=0
+  RESULT=PASS (business envelope/wire validation, not full nested semantics)
+SESSION baseline-2026-09-08-02.pcapng sha256=PASS
+  direction=0 preamble_bytes=11
+  direction=1 preamble_bytes=14
+  complete_frames_crc=PASS count=116
+  step=1 packet=112 direction=0 stream_offset=41 payload_bytes=29
+  step=2 packet=115 direction=1 stream_offset=52 payload_bytes=63
+  step=3 packet=117 direction=0 stream_offset=86 payload_bytes=68
+  step=4 packet=120 direction=1 stream_offset=131 payload_bytes=22
+  step2_hmac=PASS bytes=32
+  step3_app_sign=PASS bytes=32
+  step3_ccm_tag=PASS plaintext_bytes=17 tag_bytes=4
+  step3_public_companion_rebuild=PASS platform_input=capture
+  step3_full_payload=PASS bytes=68
+  negative_control_modified_ccm_tag=REJECTED
+  step4_confirm_result=true capability_fields=2,3
+  business direction=0 envelope_pass=27 failed=0 skipped=0
+  business direction=1 envelope_pass=26 failed=0 skipped=0
+  RESULT=PASS (business envelope/wire validation, not full nested semantics)

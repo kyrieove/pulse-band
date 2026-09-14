@@ -41,9 +41,9 @@ export const Sidebar: React.FC<{
   };
 
   return (
-    <aside className="w-48 shrink-0 bg-island-sidebar border-r border-white/[0.08] flex flex-col justify-between p-3">
+    <aside className="w-48 shrink-0 bg-island-sidebar border-r border-[var(--border-default)] flex flex-col justify-between p-3">
       <div className="space-y-1">
-        <div className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 px-2 py-1.5">功能导航</div>
+        <div className="text-[10px] uppercase font-bold tracking-wider text-[var(--text-muted)] px-2 py-1.5">功能导航</div>
         {NAV.map((item) => {
           const active = screen === item.id;
           const Icon = item.id === 'main' ? Smartphone : item.id === 'diagnostics' ? Activity : Settings;
@@ -53,14 +53,14 @@ export const Sidebar: React.FC<{
               onClick={() => onNavigate(item.id)}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition ${
                 active
-                  ? 'bg-white/[0.08] text-island-accent font-medium border border-sky-500/20 shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] border border-transparent'
+                  ? 'bg-white/[0.08] text-[var(--accent-primary)] font-medium border border-sky-500/20 shadow-sm'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/[0.04] border border-transparent'
               }`}
             >
               <Icon className="w-4 h-4" />
               <span>{item.label}</span>
-              <span className="ml-auto text-[10px] text-zinc-500 font-mono">
-                {active ? <span className="inline-block w-1.5 h-1.5 rounded-full bg-island-accent" /> : item.hint}
+              <span className="ml-auto text-[10px] text-[var(--text-muted)] font-mono">
+                {active ? <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)]" /> : item.hint}
               </span>
             </button>
           );
@@ -69,19 +69,19 @@ export const Sidebar: React.FC<{
 
       <div className="space-y-2">
         {/* 桌面迷你悬浮窗 (MiniBar) 显明控制开关 */}
-        <div className="p-2.5 rounded-lg bg-[#12151c] border border-white/[0.06] space-y-2">
+        <div className="p-2.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)] space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] text-zinc-300 font-medium flex items-center gap-1.5">
+            <span className="text-[11px] text-[var(--text-secondary)] font-medium flex items-center gap-1.5">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  minibarVisible ? 'bg-sky-400 shadow-[0_0_6px_#38bdf8]' : 'bg-zinc-600'
+                  minibarVisible ? 'bg-[var(--status-working)] shadow-[0_0_6px_]' : 'bg-[var(--text-muted)]'
                 }`}
               />
               桌面迷你悬浮窗
             </span>
             <Toggle checked={minibarVisible} onChange={handleToggleMiniBar} />
           </div>
-          <div className="text-[10px] text-zinc-500">
+          <div className="text-[10px] text-[var(--text-muted)]">
             {minibarVisible ? '已置顶显示 · 磨砂玻璃透明风格' : '未开启 · 点击开关开启悬浮'}
           </div>
         </div>

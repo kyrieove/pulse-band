@@ -1,0 +1,645 @@
+/**
+ * 表盘预览图主进程服务（层 2：用户自己补图）
+ *
+ * 职责：把用户选定的本地图片用 Electron nativeImage 归一化成固定宽度的 PNG，
+ * 交给 WatchfacePreviewStore 落到 `<userData>/watchface-previews/`，再把结果以
+ * data URL 回给渲染层。不联网、不碰 core、不碰设备协议。
+ *
+ * 与层 3 的关系：将来若从 .bin 提取出缩略图，写的是同一套 store，source='auto'；
+ * 读取侧 manual 优先，因此自动图永远不会覆盖用户自己指定的图。
+ *
+ * 解码能力边界：nativeImage.createFromBuffer 只可靠解码 PNG / JPEG，
+ * 所以 UI 侧也只接受这两种后缀，不做"看起来支持其实解不开"的承诺。
+ */
+
+import * as electron from 'electron';
+import { createHash } from 'node:crypto';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
+import {
+  decodeWatchfacePreview,
+  inspectWatchfaceHeader,
+  shouldPrepareAutoPreview,
+  type DecodedWatchfacePreview,
+} from './watchface-preview-decoder.ts';
+import {
+  WatchfacePreviewStore,
+  isValidWatchfacePreviewId,
+  type WatchfacePreviewSource,
+} from './watchface-preview-store.ts';
+
+export { shouldPrepareAutoPreview, inspectWatchfaceHeader } from './watchface-preview-decoder.ts';
+
+/** 严格表盘名称归一化：仅 trim() + normalize('NFC')，禁止模糊/子串/大小写变换 */
+export function normalizeWatchfaceName(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  return name.trim().normalize('NFC');
+}
+
+/** 检查 embeddedId 是否为全零占位 ID（如 000000000） */
+export function isAllZerosId(id: unknown): boolean {
+  if (typeof id !== 'string') return false;
+  const trimmed = id.trim();
+  return trimmed.length > 0 && /^0+$/.test(trimmed);
+}
+
+/** 归一化目标宽度 = 手环屏宽度；卡片最宽约 100 DIP，192 已够 2x */
+export const WATCHFACE_PREVIEW_TARGET_WIDTH = 192;
+/** 源图上限：超过这个体积基本是选错了文件 */
+export const WATCHFACE_PREVIEW_MAX_SOURCE_BYTES = 20 * 1024 * 1024;
+
+export interface WatchfacePreviewView {
+  id: string;
+  dataUrl: string;
+  source: WatchfacePreviewSource;
+  addedAt: string;
+  width: number;
+  height: number;
+}
+
+export type WatchfacePreviewResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; code: string; message: string };
+
+export type WatchfaceDecoderFn = (file: Uint8Array) => DecodedWatchfacePreview;
+export type WatchfacePngEncoderFn = (bgra: Uint8Array, width: number, height: number) => Buffer;
+
+export interface WatchfacePreviewServiceOptions {
+  decoder?: WatchfaceDecoderFn;
+  pngEncoder?: WatchfacePngEncoderFn;
+}
+
+function defaultPngEncoder(bgra: Uint8Array, width: number, height: number): Buffer {
+  const nImage = (electron as any)?.nativeImage ?? (electron as any)?.default?.nativeImage;
+  if (!nImage?.createFromBitmap) {
+    throw new Error('Electron nativeImage is not available in this environment');
+  }
+  const image = nImage.createFromBitmap(Buffer.isBuffer(bgra) ? bgra : Buffer.from(bgra), {
+    width,
+    height,
+  });
+  if (image.isEmpty()) {
+    throw new Error('nativeImage.createFromBitmap produced empty image');
+  }
+  const png = image.toPNG();
+  if (!png || png.length === 0) {
+    throw new Error('toPNG produced empty buffer');
+  }
+  return png;
+}
+
+export class WatchfacePreviewService {
+  /** data URL 缓存，按文件 mtime 失效；避免每次进表盘页都重新 base64 编码 */
+  private dataUrlCache = new Map<string, { mtimeMs: number; dataUrl: string }>();
+
+  private readonly store: WatchfacePreviewStore;
+  private readonly decoder: WatchfaceDecoderFn;
+  private readonly pngEncoder: WatchfacePngEncoderFn;
+  private preparationPromise: Promise<void> | null = null;
+  private reconciliationPromise: Promise<unknown> | null = null;
+  /** 全零 embeddedId 待关联内存候选（不直接落盘为公开条目） */
+  private pendingZeroCandidates: Array<{
+    embeddedId: string;
+    name: string;
+    sourceHash: string;
+    png: Buffer;
+    width: number;
+    height: number;
+  }> = [];
+
+  // 不用 TS 参数属性：与 store 保持一致的写法，方便将来单独测这个类
+  constructor(store: WatchfacePreviewStore, options?: WatchfacePreviewServiceOptions) {
+    this.store = store;
+    this.decoder = options?.decoder ?? decodeWatchfacePreview;
+    this.pngEncoder = options?.pngEncoder ?? defaultPngEncoder;
+  }
+
+  private async toView(id: string): Promise<WatchfacePreviewView | null> {
+    const entry = this.store.getEntry(id);
+    const filePath = this.store.resolve(id);
+    if (!entry || !filePath) {
+      this.dataUrlCache.delete(id);
+      return null;
+    }
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await stat(filePath)).mtimeMs;
+    } catch {
+      this.dataUrlCache.delete(id);
+      return null;
+    }
+    const cached = this.dataUrlCache.get(id);
+    let dataUrl: string;
+    if (cached && cached.mtimeMs === mtimeMs) {
+      dataUrl = cached.dataUrl;
+    } else {
+      const bytes = await readFile(filePath);
+      dataUrl = `data:image/png;base64,${bytes.toString('base64')}`;
+      this.dataUrlCache.set(id, { mtimeMs, dataUrl });
+    }
+    return {
+      id,
+      dataUrl,
+      source: entry.source,
+      addedAt: entry.addedAt,
+      width: entry.width,
+      height: entry.height,
+    };
+  }
+
+  /** 全部本地预览图（只含文件仍存在的条目） */
+  async list(): Promise<WatchfacePreviewResult<{ previews: Record<string, WatchfacePreviewView> }>> {
+    if (this.preparationPromise) {
+      try {
+        await this.preparationPromise;
+      } catch (err) {
+        console.warn(
+          '[WatchfacePreview] 启动准备未正常完成:',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    if (this.reconciliationPromise) {
+      try {
+        await this.reconciliationPromise;
+      } catch (err) {
+        console.warn(
+          '[WatchfacePreview] 设备表盘关联未正常完成:',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    const previews: Record<string, WatchfacePreviewView> = {};
+    for (const id of Object.keys(this.store.list())) {
+      const view = await this.toView(id);
+      if (view) previews[id] = view;
+    }
+    return { ok: true, data: { previews } };
+  }
+
+  /** 关联 / 替换某个表盘的本地预览图 */
+  async setFromFile(
+    id: string,
+    filePath: string,
+  ): Promise<WatchfacePreviewResult<{ preview: WatchfacePreviewView }>> {
+    if (!isValidWatchfacePreviewId(id)) {
+      return { ok: false, code: 'invalid_params', message: '缺少表盘 id' };
+    }
+    if (!filePath || typeof filePath !== 'string') {
+      return { ok: false, code: 'invalid_params', message: '缺少图片路径' };
+    }
+
+    let size: number;
+    try {
+      const info = await stat(filePath);
+      if (!info.isFile()) {
+        return { ok: false, code: 'file_read_failed', message: '所选路径不是文件' };
+      }
+      size = info.size;
+    } catch (err) {
+      const code = (err as any)?.code;
+      return {
+        ok: false,
+        code: 'file_read_failed',
+        message: code === 'ENOENT' ? '图片文件不存在' : '无法访问该图片文件',
+      };
+    }
+    if (size === 0) {
+      return { ok: false, code: 'invalid_params', message: '图片文件为空' };
+    }
+    if (size > WATCHFACE_PREVIEW_MAX_SOURCE_BYTES) {
+      return {
+        ok: false,
+        code: 'file_too_large',
+        message: `图片超过 ${Math.round(WATCHFACE_PREVIEW_MAX_SOURCE_BYTES / 1024 / 1024)} MB`,
+      };
+    }
+
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(filePath);
+    } catch {
+      return { ok: false, code: 'file_read_failed', message: '读取图片文件失败' };
+    }
+
+    const nImage = (electron as any)?.nativeImage ?? (electron as any)?.default?.nativeImage;
+    if (!nImage?.createFromBuffer) {
+      return { ok: false, code: 'image_decode_failed', message: 'Electron nativeImage is not available in this environment' };
+    }
+    const decoded = nImage.createFromBuffer(bytes);
+    if (decoded.isEmpty()) {
+      return { ok: false, code: 'image_decode_failed', message: '这个文件不是能识别的图片（支持 PNG / JPEG）' };
+    }
+    const original = decoded.getSize();
+    if (!original.width || !original.height) {
+      return { ok: false, code: 'image_decode_failed', message: '图片尺寸无效' };
+    }
+    const normalized =
+      original.width > WATCHFACE_PREVIEW_TARGET_WIDTH
+        ? decoded.resize({ width: WATCHFACE_PREVIEW_TARGET_WIDTH, quality: 'best' })
+        : decoded;
+    const png = normalized.toPNG();
+    if (!png || png.length === 0) {
+      return { ok: false, code: 'image_encode_failed', message: '图片转码失败' };
+    }
+
+    const finalSize = normalized.getSize();
+    try {
+      this.store.set(id, {
+        bytes: png,
+        source: 'manual',
+        width: finalSize.width,
+        height: finalSize.height,
+      });
+    } catch {
+      return { ok: false, code: 'preview_write_failed', message: '写入本地预览缓存失败' };
+    }
+
+    this.dataUrlCache.delete(id);
+    const view = await this.toView(id);
+    if (!view) {
+      return { ok: false, code: 'preview_write_failed', message: '写入本地预览缓存失败' };
+    }
+    return { ok: true, data: { preview: view } };
+  }
+
+  /** 清除本地预览图。幂等：本来就没有也算成功，UI 不需要区分 */
+  async clear(id: string): Promise<WatchfacePreviewResult<{ id: string }>> {
+    if (!isValidWatchfacePreviewId(id)) {
+      return { ok: false, code: 'invalid_params', message: '缺少表盘 id' };
+    }
+    this.dataUrlCache.delete(id);
+    this.store.clear(id);
+    return { ok: true, data: { id } };
+  }
+
+  /**
+   * 启动后台种子目录解析（幂等，整个进程只执行一次）
+   */
+  startBackgroundPreparation(seedDirectories: string[]): void {
+    if (this.preparationPromise) return;
+    this.preparationPromise = this.runBackgroundPreparation(seedDirectories);
+  }
+
+  private async runBackgroundPreparation(seedDirectories: string[]): Promise<void> {
+    for (const dir of seedDirectories) {
+      let entries: import('node:fs').Dirent[];
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        // 种子目录不存在或无法读取时静默忽略
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.bin')) continue;
+        const fullPath = path.join(dir, entry.name);
+        try {
+          const info = await stat(fullPath);
+          if (!info.isFile() || info.size === 0 || info.size > WATCHFACE_PREVIEW_MAX_SOURCE_BYTES) {
+            continue;
+          }
+
+          const fileBytes = await readFile(fullPath);
+          const md5 = createHash('md5').update(fileBytes).digest('hex');
+
+          // 只解析主头取得 embeddedId 与 embeddedName，不执行完整图像解码
+          const { id: rawId, name: rawName } = inspectWatchfaceHeader(fileBytes);
+          const embeddedId = rawId ? rawId.trim() : '';
+          if (!embeddedId || !isValidWatchfacePreviewId(embeddedId)) {
+            continue;
+          }
+
+          // 全零 embedded ID 只能作为内部待关联候选，不能出现在 preview.list() 或公开 store 索引中
+          if (isAllZerosId(embeddedId)) {
+            // 防御：若旧版本曾将全零条目写入 store，主动清理
+            if (this.store.getEntry(embeddedId)) {
+              this.store.clear(embeddedId);
+            }
+
+            // 检查 store 中是否已存在由此 bin 关联出的有效设备预览
+            const allStoreEntries = this.store.list();
+            const alreadyCached = Object.values(allStoreEntries).some(
+              (e) => e.source === 'auto' && e.sourceHash === md5,
+            );
+            if (alreadyCached) {
+              // 目标设备 ID 已有有效缓存，启动不重复解码
+              continue;
+            }
+
+            // 尚未关联到目标设备 ID：作为内部待关联候选解码并保存在内存中
+            const decoded = this.decoder(fileBytes);
+            let png: Buffer;
+            try {
+              png = this.pngEncoder(decoded.bgra, decoded.width, decoded.height);
+            } catch (encodeErr) {
+              console.warn(`[WatchfacePreview] 候选表盘转 PNG 失败: ${entry.name}`, encodeErr);
+              continue;
+            }
+
+            this.pendingZeroCandidates.push({
+              embeddedId,
+              name: (rawName || decoded.name)?.trim() || '',
+              sourceHash: md5,
+              png,
+              width: decoded.width,
+              height: decoded.height,
+            });
+            continue;
+          }
+
+          // 常规非全零 embeddedId：检查 manual 或相同 sourceHash 的现有缓存，命中则完全跳过图像解码
+          const existing = this.store.getEntry(embeddedId);
+          if (!shouldPrepareAutoPreview(existing, md5)) {
+            // 若缓存已有效但索引缺少 name 字段，补充持久化 name（无需重新解码图像）
+            if (existing && !existing.name && rawName?.trim()) {
+              this.store.updateName(embeddedId, rawName.trim());
+            }
+            continue;
+          }
+
+          // 仅在缺失或内容变化时才调用 decodeWatchfacePreview
+          const decoded = this.decoder(fileBytes);
+          let png: Buffer;
+          try {
+            png = this.pngEncoder(decoded.bgra, decoded.width, decoded.height);
+          } catch (encodeErr) {
+            console.warn(`[WatchfacePreview] 自动预览转 PNG 失败: ${entry.name}`, encodeErr);
+            continue;
+          }
+
+          this.store.set(embeddedId, {
+            bytes: png,
+            source: 'auto',
+            sourceHash: md5,
+            name: (rawName || decoded.name)?.trim() || undefined,
+            width: decoded.width,
+            height: decoded.height,
+          });
+          this.dataUrlCache.delete(embeddedId);
+        } catch (err) {
+          console.warn(
+            `[WatchfacePreview] 种子表盘解析跳过 [${entry.name}]:`,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * 从指定 .bin 文件为目标 id 准备预览图（用于安装后自动提取或种子构建）
+   */
+  async prepareFromBin(
+    id: string,
+    filePath: string,
+    sourceHash?: string,
+  ): Promise<{ status: 'written' | 'cached' | 'manual-preserved' | 'skipped'; id: string }> {
+    if (!isValidWatchfacePreviewId(id)) {
+      return { status: 'skipped', id };
+    }
+
+    const existing = this.store.getEntry(id);
+    if (existing?.source === 'manual') {
+      return { status: 'manual-preserved', id };
+    }
+
+    if (sourceHash && existing && !shouldPrepareAutoPreview(existing, sourceHash)) {
+      return { status: 'cached', id };
+    }
+
+    let info;
+    try {
+      info = await stat(filePath);
+    } catch (err) {
+      console.warn(
+        `[WatchfacePreview] 无法读取表盘文件 [${filePath}]:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      return { status: 'skipped', id };
+    }
+
+    if (!info.isFile() || info.size === 0 || info.size > WATCHFACE_PREVIEW_MAX_SOURCE_BYTES) {
+      return { status: 'skipped', id };
+    }
+
+    const fileBytes = await readFile(filePath);
+    const hash = sourceHash || createHash('md5').update(fileBytes).digest('hex');
+
+    if (existing && !shouldPrepareAutoPreview(existing, hash)) {
+      return { status: 'cached', id };
+    }
+
+    const decoded = this.decoder(fileBytes);
+    let png: Buffer;
+    try {
+      png = this.pngEncoder(decoded.bgra, decoded.width, decoded.height);
+    } catch (encodeErr) {
+      console.warn(`[WatchfacePreview] prepareFromBin 转 PNG 失败 [${id}]:`, encodeErr);
+      return { status: 'skipped', id };
+    }
+
+    this.store.set(id, {
+      bytes: png,
+      source: 'auto',
+      sourceHash: hash,
+      name: decoded.name ? decoded.name.trim() : undefined,
+      width: decoded.width,
+      height: decoded.height,
+    });
+    this.dataUrlCache.delete(id);
+    return { status: 'written', id };
+  }
+
+  /**
+   * 将手环实际已安装表盘 ID 与本地解码的表盘预览图对齐（条件 B：名称严格且唯一匹配）。
+   *
+   * 规则：
+   * 1. 只处理 source='auto' 的本地候选预览；
+   * 2. 目标 device ID 已有任何预览（manual 或 auto）时不覆盖；
+   * 3. 严格归一化：仅 trim() + normalize('NFC')，禁止模糊/子串匹配；
+   * 4. 本地候选或设备列表中出现同名歧义时一律跳过；
+   * 5. 文件复用/拷贝，decoder 调用次数为 0；
+   * 6. 持久化到 store 中；
+   * 7. 幂等：多次调用无副作用。
+   */
+  async reconcileInstalledWatchfaces(
+    deviceItems: Array<{ id: string; name: string }>,
+  ): Promise<{ reconciled: string[]; skipped: string[] }> {
+    if (!Array.isArray(deviceItems) || deviceItems.length === 0) {
+      return { reconciled: [], skipped: [] };
+    }
+
+    const task = async () => {
+      // 1. 确保启动准备已就绪（如果有正在进行的启动扫描）
+      if (this.preparationPromise) {
+        try {
+          await this.preparationPromise;
+        } catch {
+          // 忽略启动扫描单个错误，继续对齐
+        }
+      }
+
+      const allEntries = this.store.list();
+      const reconciled: string[] = [];
+      const skipped: string[] = [];
+
+      // 2. 收集设备端条目并按规范化名称分组，检测设备端歧义
+      const deviceByName = new Map<string, Array<{ id: string; name: string }>>();
+      for (const item of deviceItems) {
+        if (!item || !isValidWatchfacePreviewId(item.id)) continue;
+        const norm = normalizeWatchfaceName(item.name);
+        if (!norm) continue;
+        const list = deviceByName.get(norm) ?? [];
+        list.push(item);
+        deviceByName.set(norm, list);
+      }
+
+      // 3. 收集本地可用的 auto 候选并按规范化名称分组，检测本地候选歧义
+      interface ReconcileCandidate {
+        id: string;
+        name: string;
+        sourceHash?: string;
+        isPendingZero: boolean;
+        pendingData?: { png: Buffer; width: number; height: number };
+      }
+
+      const localByName = new Map<string, ReconcileCandidate[]>();
+
+      // (A) Store 中的非全零 auto 条目（排除全零条目，因为全零不作为公共条目）
+      for (const [id, entry] of Object.entries(allEntries)) {
+        if (entry.source !== 'auto' || !entry.name || isAllZerosId(id)) continue;
+        const norm = normalizeWatchfaceName(entry.name);
+        if (!norm) continue;
+        const list = localByName.get(norm) ?? [];
+        list.push({
+          id,
+          name: entry.name,
+          sourceHash: entry.sourceHash,
+          isPendingZero: false,
+        });
+        localByName.set(norm, list);
+      }
+
+      // (B) 内存中的全零待关联候选（若已有关联条目存在于 store，则不再作为待关联候选）
+      for (const cand of this.pendingZeroCandidates) {
+        if (!cand.name) continue;
+        if (Object.values(allEntries).some((e) => e.source === 'auto' && e.sourceHash === cand.sourceHash)) {
+          continue;
+        }
+        const norm = normalizeWatchfaceName(cand.name);
+        if (!norm) continue;
+        const list = localByName.get(norm) ?? [];
+        list.push({
+          id: cand.embeddedId,
+          name: cand.name,
+          sourceHash: cand.sourceHash,
+          isPendingZero: true,
+          pendingData: { png: cand.png, width: cand.width, height: cand.height },
+        });
+        localByName.set(norm, list);
+      }
+
+      // 4. 遍历设备条目进行 1-对-1 严格匹配与安全关联
+      for (const item of deviceItems) {
+        if (!item || !isValidWatchfacePreviewId(item.id)) continue;
+
+        // 如果设备 ID 已经在 store 中存在（无论是 manual 还是已生成的 auto），绝不覆盖
+        if (this.store.getEntry(item.id)) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        const norm = normalizeWatchfaceName(item.name);
+        if (!norm) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        // 设备端同名歧义检测：多个设备表盘叫同一个名字，跳过
+        const deviceMatches = deviceByName.get(norm);
+        if (!deviceMatches || deviceMatches.length !== 1) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        // 本地候选同名歧义检测：多个本地候选叫同一个名字，跳过
+        const localMatches = localByName.get(norm);
+        if (!localMatches || localMatches.length !== 1) {
+          skipped.push(item.id);
+          continue;
+        }
+
+        const candidate = localMatches[0];
+
+        if (candidate.isPendingZero && candidate.pendingData) {
+          // 全零候选匹配唯一真实设备 ID：直接将 PNG 写入目标设备 ID（decoder 调用 0 次）
+          try {
+            this.store.set(item.id, {
+              bytes: candidate.pendingData.png,
+              source: 'auto',
+              sourceHash: candidate.sourceHash,
+              name: item.name,
+              width: candidate.pendingData.width,
+              height: candidate.pendingData.height,
+            });
+            this.dataUrlCache.delete(item.id);
+            reconciled.push(item.id);
+          } catch (writeErr) {
+            console.warn(`[WatchfacePreview] 全零候选关联写入失败 [${item.id}]:`, writeErr);
+            skipped.push(item.id);
+          }
+        } else {
+          // 若 ID 已经完全相同，无需复制
+          if (candidate.id === item.id) {
+            skipped.push(item.id);
+            continue;
+          }
+
+          // 执行文件安全拷贝与索引关联，decoder 调用 0 次
+          try {
+            this.store.copyEntry(candidate.id, item.id, {
+              name: item.name,
+              source: 'auto',
+            });
+            this.dataUrlCache.delete(item.id);
+            reconciled.push(item.id);
+          } catch (copyErr) {
+            console.warn(`[WatchfacePreview] 对齐拷贝失败 [${candidate.id} -> ${item.id}]:`, copyErr);
+            skipped.push(item.id);
+          }
+        }
+      }
+
+      return { reconciled, skipped };
+    };
+
+    const currentPromise = task();
+    this.reconciliationPromise = currentPromise;
+    try {
+      return await currentPromise;
+    } finally {
+      if (this.reconciliationPromise === currentPromise) {
+        this.reconciliationPromise = null;
+      }
+    }
+  }
+}
+
+export function registerWatchfacePreviewIpc(
+  service: WatchfacePreviewService,
+  ipc: { handle: (channel: string, listener: (event: any, ...args: any[]) => any) => void },
+): void {
+  ipc.handle('pulse:watchface:preview:list', () => service.list());
+
+  ipc.handle('pulse:watchface:preview:set', (_e, req: { id?: unknown; filePath?: unknown }) => {
+    const id = typeof req?.id === 'string' ? req.id : '';
+    const filePath = typeof req?.filePath === 'string' ? req.filePath : '';
+    return service.setFromFile(id, filePath);
+  });
+
+  ipc.handle('pulse:watchface:preview:clear', (_e, req: { id?: unknown }) => {
+    const id = typeof req?.id === 'string' ? req.id : '';
+    return service.clear(id);
+  });
+}
