@@ -3,7 +3,7 @@
 Pulse 是一个 Windows 桌面应用，用于把 Claude Code、Codex、Antigravity 的会话状态和额度显示在小米手环 10 上，同时提供桌面额度悬浮窗。
 
 <p align="center">
-  <img src="docs/images/pulse-band-live.jpg" alt="Pulse 在小米手环 10 上显示 Agent 状态与额度" width="420">
+  <img src="docs/images/pulse-band-pages.jpg" alt="手环上的 Pulse 快应用：Claude、Codex、Antigravity、ZCode 的状态与额度" width="720">
 </p>
 
 > 本项目为个人项目，按现状提供，不承诺 issue 响应和长期维护。
@@ -40,6 +40,8 @@ Pulse 启动时不会自动连接手环，需要在「手环」页点击「连�
 
 ## 功能
 
+![Pulse 额度总览](docs/images/pulse-overview.png)
+
 - **会话状态**：Claude Code 通过 hook 上报会话和工具调用；Codex 通过监听会话文件识别；Antigravity 通过轮询本地服务识别。各自的更新延迟见[故障排查](docs/故障排查.md#会话状态的更新延迟)。
 - **额度**：显示 Claude / Codex / Antigravity 的 5 小时与 7 天用量窗口，电脑和手环上均可查看。
 - **手环显示**：`pulse-core` 通过蓝牙连接手环，将状态和额度发送到手环上的 Pulse 快应用。
@@ -53,7 +55,9 @@ Pulse 启动时不会自动连接手环，需要在「手环」页点击「连�
 
 悬浮窗（MiniBar）停靠在屏幕边缘，显示各 Agent 的当前状态和剩余额度，可拖动到任意边缘，点击后展开详情。在「设置」中可以开关悬浮窗，并设置启动时停靠在左侧、右侧或上次的位置。悬浮窗不依赖手环。
 
-![Pulse 桌面悬浮窗](docs/images/pulse-minibar.png)
+<p align="center">
+  <img src="docs/images/pulse-minibar.png" alt="Pulse 桌面悬浮窗：侧边栏显示各 Agent 剩余额度，展开 Codex 详情" width="420">
+</p>
 
 ---
 
