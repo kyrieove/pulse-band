@@ -98,6 +98,12 @@ pub fn install_watchface(
         .map_err(|e| format!("发送表盘安装准备失败: {e}"))?;
 
     let status = wait_prepare_status(transport, Duration::from_millis(PREPARE_TIMEOUT_MS))?;
+    if status == 7 {
+        // 2026-09-16 真机（Band 10）实测：已装 17 个表盘时任何文件都回 7，手环上删掉一个后同一文件立即装上
+        return Err(format!(
+            "手环上的表盘已满，请先在手环上删除一个不用的表盘再安装 (prepare_status={status})"
+        ));
+    }
     if status != 0 {
         return Err(format!(
             "表盘安装准备被设备拒绝 (prepare_status={status}，0=READY)"
