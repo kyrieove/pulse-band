@@ -104,6 +104,10 @@ export class CodexSessionTailer {
       for (const filePath of Array.from(this.filePositions.keys())) {
         if (fs.existsSync(filePath)) {
           this.readNewLines(filePath);
+        } else {
+          // 会话文件被删/轮转：不再每 500ms 对它空转，也不让 map 无限增长
+          this.filePositions.delete(filePath);
+          this.contexts.delete(filePath);
         }
       }
 
