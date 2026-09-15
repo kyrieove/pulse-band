@@ -149,7 +149,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       .then((s) => {
         if (alive && s) setHookStatus(s);
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        // settings.json 坏掉时主进程会抛错：按未安装处理并把原因显示出来，
+        // 否则 hookStatus 一直是 null，「修复」按钮永远灰着且没有任何提示
+        if (!alive) return;
+        setHookStatus({ installed: false, settingsPath: '', command: null });
+        const msg = String(err?.message ?? err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+        setHookNotice({ ok: false, text: `读取 hook 状态失败：${msg}` });
+      });
     const refreshDetection = () => {
       window.codeisland
         ?.getMinibarState?.()
