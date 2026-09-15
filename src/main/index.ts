@@ -24,7 +24,7 @@ import {
   WatchfacePreviewService,
   registerWatchfacePreviewIpc,
 } from './services/watchface-preview-service';
-import { deviceConfigService } from './services/device-config-service';
+import { deviceConfigService, type PairedBandDevice } from './services/device-config-service';
 
 // Ensure single instance
 const gotLock = app.requestSingleInstanceLock();
@@ -288,11 +288,19 @@ app.whenReady().then(async () => {
   ipcMain.handle('pulse:device-config:status', () => {
     return deviceConfigService.getDeviceConfigStatus();
   });
-  ipcMain.handle('pulse:device-config:paired-devices', () => {
-    return deviceConfigService.getPairedBandDevices();
+  // rawMac 只在主进程内部用（saveDeviceConfig 从 scannedDevices 缓存里取），
+  // 跨进程一律剥掉，渲染层拿到的只有脱敏地址。
+  const toRendererDevice = ({ id, name, maskedMac, isXiaomiBand }: PairedBandDevice) => ({
+    id,
+    name,
+    maskedMac,
+    isXiaomiBand,
   });
-  ipcMain.handle('pulse:device-config:scan-devices', () => {
-    return deviceConfigService.scanBandDevices();
+  ipcMain.handle('pulse:device-config:paired-devices', async () => {
+    return (await deviceConfigService.getPairedBandDevices()).map(toRendererDevice);
+  });
+  ipcMain.handle('pulse:device-config:scan-devices', async () => {
+    return (await deviceConfigService.scanBandDevices()).map(toRendererDevice);
   });
   ipcMain.handle('pulse:device-config:save', async (_e, payload) => {
     return deviceConfigService.saveDeviceConfig(payload);
