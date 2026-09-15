@@ -31,11 +31,13 @@ function writeWrapper(): string {
   fs.writeFileSync(dest, fs.readFileSync(src, 'utf8'), 'utf8');
 
   const cmd = wrapperPath();
-  fs.writeFileSync(
-    cmd,
-    ['@echo off', 'set "ELECTRON_RUN_AS_NODE=1"', `"${process.execPath}" "${dest}" %1`, ''].join('\r\n'),
-    'utf8'
-  );
+  // cmd.exe 按控制台代码页（中文系统是 936）解析 .cmd，UTF-8 写进去的中文路径会被读错、hook 静默失效：
+  // 脚本与包装器同目录，用 %~dp0 就不用写 userData 路径（中文用户名）；
+  // exe 路径本身含非 ASCII（装在中文目录）时先切到 65001 再读后面的行。
+  const lines = ['@echo off'];
+  if (/[^\x00-\x7f]/.test(process.execPath)) lines.push('chcp 65001 >nul');
+  lines.push('set "ELECTRON_RUN_AS_NODE=1"', `"${process.execPath}" "%~dp0${path.basename(dest)}" %1`, '');
+  fs.writeFileSync(cmd, lines.join('\r\n'), 'utf8');
   return cmd;
 }
 
