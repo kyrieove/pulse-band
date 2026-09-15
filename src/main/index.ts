@@ -350,6 +350,7 @@ function runAppCleanup(): void {
   claudeDesktopTailer.stop();
   antigravityPoller.stop();
   claudeServer.stop();
+  statusServer.stop();
   sessionManager.dispose();
   coreBridge.detach();
   coreClient.dispose();
