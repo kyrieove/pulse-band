@@ -79,3 +79,63 @@ test('downloadInstaller: 哈希一致时落盘并报告进度；不一致时删�
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('downloadInstaller: body 永不结束时按空闲超时 reject，不会永远卡住', async () => {
+  const good = createHash('sha256').update(Buffer.from('x')).digest('hex');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-update-idle-'));
+  // 真的 fetch 会把 signal 接到 body 上；这里照做，否则 abort() 对假 body 没有任何效果。
+  const hangingFetch = (url, init) => {
+    if (String(url).endsWith('.sha256')) {
+      return Promise.resolve({ ok: true, text: async () => `${good}  Pulse-Setup-2.0.2.exe\n` });
+    }
+    // 只吐一个 chunk，然后既不结束也不关闭 —— 模拟连接半开
+    const body = new ReadableStream({
+      start(c) {
+        c.enqueue(new Uint8Array(1024));
+        init.signal.addEventListener('abort', () => c.error(new Error('aborted')));
+      },
+    });
+    return Promise.resolve({ ok: true, body, headers: { get: () => null } });
+  };
+
+  try {
+    const started = Date.now();
+    await assert.rejects(
+      downloadInstaller(
+        { name: 'Pulse-Setup-2.0.2.exe', url: 'https://example.invalid/a.exe', size: 999999, checksumUrl: 'https://example.invalid/a.exe.sha256' },
+        dir,
+        () => {},
+        hangingFetch,
+        200
+      ),
+      /下载超时/
+    );
+    assert.ok(Date.now() - started < 5000, '应该在空闲超时后很快返回，而不是一直挂着');
+    assert.equal(fs.existsSync(path.join(dir, 'Pulse-Setup-2.0.2.exe.part')), false, '超时后不能留下 .part');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('downloadInstaller: 写入流出错时 reject，不崩进程', async () => {
+  const exe = Buffer.alloc(128 * 1024, 3);
+  const good = createHash('sha256').update(exe).digest('hex');
+  const server = await serve({ '/a.exe': exe, '/a.exe.sha256': `${good}  Pulse-Setup-2.0.2.exe\n` });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-update-werr-'));
+  try {
+    // name 里带一层不存在的目录 → createWriteStream 打开 .part 时必定 ENOENT。
+    // 没有 'error' 监听的话这就是未捕获异常，整个进程直接没了。
+    await assert.rejects(
+      downloadInstaller(
+        { name: 'missing-dir/x.exe', url: `${base}/a.exe`, size: exe.length, checksumUrl: `${base}/a.exe.sha256` },
+        dir,
+        () => {}
+      ),
+      (err) => err?.code === 'ENOENT'
+    );
+  } finally {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
