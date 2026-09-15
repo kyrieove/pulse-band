@@ -61,6 +61,8 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
   const aliveRef = useRef(true);
   const busyRef = useRef(false);
   const lastInstallRef = useRef<{ filePath: string; fileName: string } | null>(null);
+  /** 最新的 items。异步回调里要同步判断「这个表盘在不在列表里」，不能用 state */
+  const itemsRef = useRef<WatchfaceItem[]>([]);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -68,6 +70,10 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
       aliveRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
   const loadPreviews = useCallback(() => {
     window.pulse
@@ -170,23 +176,21 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
     if (!id) return { ok: false, message: '缺少表盘 id' };
     busyRef.current = true;
     setSettingId(id);
+    let needsRefresh = false;
     try {
       const res = await window.pulse?.watchface?.set?.(id);
       if (!aliveRef.current) return { ok: false, message: '页面已关闭' };
       if (res?.ok) {
         const current = res.data?.watchface;
-        let merged = false;
+        // 同步判断，不能用 setItems 的 updater 里赋值：updater 不是同步执行的，
+        // 判断时那个标志还是 false。列表里没有这个表盘 = 列表已过期。
+        needsRefresh = !current || !itemsRef.current.some((it) => it.id === current.id);
         setItems((prev) =>
           prev.map((it) => {
-            if (current && it.id === current.id) {
-              merged = true;
-              return current;
-            }
+            if (current && it.id === current.id) return current;
             return { ...it, is_current: false };
           }),
         );
-        // 返回的表盘不在本地列表里（列表已过期）时，重新拉一次
-        if (!merged) refresh();
         return { ok: true };
       }
       return { ok: false, message: res?.message ?? '切换表盘失败' };
@@ -195,6 +199,9 @@ export function useWatchFace(connected: boolean): UseWatchFaceResult {
     } finally {
       busyRef.current = false;
       if (aliveRef.current) setSettingId(null);
+      // 必须等 busyRef 释放之后再拉：refresh() 第一行就是 if (busyRef.current) return，
+      // 在这里之前调用等于什么都没做。
+      if (needsRefresh && aliveRef.current) refresh();
     }
   }, [refresh]);
 
