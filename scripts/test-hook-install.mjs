@@ -4,7 +4,11 @@
  * 这段逻辑会改用户自己的 ~/.claude/settings.json —— 摘错了会毁掉他们别的 hook，所以必须有这个检查。
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { mergeHooks, removeHooks, HOOK_EVENTS } from '../src/main/services/claude-hook-merge.ts';
+import { readSettings, writeSettings } from '../src/main/services/claude-hook-settings.ts';
 
 const cmd = (event) => `"C:/Users/x/AppData/Roaming/Pulse/hook/pulse-hook.cmd" ${event}`;
 
@@ -44,4 +48,37 @@ assert.equal(removed.PostToolUse, undefined);
 // 6. 装了再卸，回到原样
 assert.deepEqual(removeHooks(mergeHooks(existing, cmd)), existing);
 
-console.log('✅ hook 合并/摘除自检通过（6 项）');
+// 7. 坏 JSON 必须报错，且不能碰用户的文件（旧实现吞掉解析错误 → 无条件覆盖 → 配置全丢）
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-hook-test-'));
+const p = path.join(tmpDir, 'settings.json');
+const broken = '{ "hooks": {';
+fs.writeFileSync(p, broken, 'utf8');
+
+assert.throws(() => readSettings(p), /不是合法 JSON/, '坏 JSON 必须抛出，不能返回 {}');
+
+let installedOk = false;
+try {
+  const settings = readSettings(p);
+  settings.hooks = mergeHooks(settings.hooks ?? {}, cmd);
+  writeSettings(p, settings);
+  installedOk = true;
+} catch {
+  /* 预期路径：读失败 → 在写之前中止 */
+}
+assert.equal(installedOk, false, '坏 JSON 时安装必须失败');
+assert.equal(fs.readFileSync(p, 'utf8'), broken, '坏 JSON 时文件内容必须逐字节保持不变');
+assert.equal(fs.existsSync(`${p}.pulse-backup`), false, '读失败时不应留下备份');
+assert.equal(fs.existsSync(`${p}.tmp`), false, '读失败时不应留下临时文件');
+
+// 8. 备份只在第一次写，第二次安装不能冲掉原始配置
+const original = JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] } }, null, 2);
+fs.writeFileSync(p, original, 'utf8');
+writeSettings(p, { hooks: {} });
+writeSettings(p, { hooks: {}, touched: true });
+assert.equal(fs.readFileSync(`${p}.pulse-backup`, 'utf8'), original, '备份必须保留第一次安装前的原始内容');
+assert.equal(fs.existsSync(`${p}.tmp`), false, '原子写不能把 .tmp 留在磁盘上');
+assert.deepEqual(JSON.parse(fs.readFileSync(p, 'utf8')), { hooks: {}, touched: true }, '第二次写入应正常生效');
+
+fs.rmSync(tmpDir, { recursive: true, force: true });
+
+console.log('✅ hook 合并/摘除自检通过（8 项）');

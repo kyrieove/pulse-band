@@ -15,26 +15,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { HOOK_EVENTS, isOurs, mergeHooks, removeHooks } from './claude-hook-merge';
+import { readSettings, writeSettings } from './claude-hook-settings';
 
 const settingsPath = () => path.join(os.homedir(), '.claude', 'settings.json');
 const hookDir = () => path.join(app.getPath('userData'), 'hook');
 const wrapperPath = () => path.join(hookDir(), 'pulse-hook.cmd');
-
-function readSettings(): Record<string, any> {
-  try {
-    return JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-function writeSettings(settings: Record<string, any>) {
-  const p = settingsPath();
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  // 先备份再落盘：这个文件里有用户自己的 hook 和权限配置，写坏了很难恢复
-  if (fs.existsSync(p)) fs.copyFileSync(p, `${p}.pulse-backup`);
-  fs.writeFileSync(p, JSON.stringify(settings, null, 2), 'utf8');
-}
 
 /** 把转发脚本和 .cmd 包装器落到 userData，返回包装器绝对路径 */
 function writeWrapper(): string {
@@ -57,7 +42,7 @@ function writeWrapper(): string {
 export type HookStatus = { installed: boolean; settingsPath: string; command: string | null };
 
 export function getHookStatus(): HookStatus {
-  const hooks = readSettings().hooks ?? {};
+  const hooks = readSettings(settingsPath()).hooks ?? {};
   const ours = HOOK_EVENTS.map((e) => (hooks[e] ?? []).find(isOurs)).filter(Boolean);
   const script = path.join(hookDir(), 'claude-hook.cjs');
   return {
@@ -75,10 +60,11 @@ export function registerClaudeHookInstall() {
 
   ipcMain.handle('hook:install', () => {
     try {
+      // 先读后写：settings.json 坏掉时在这里就抛出来，绝不进入覆盖流程
+      const settings = readSettings(settingsPath());
       const cmd = writeWrapper();
-      const settings = readSettings();
       settings.hooks = mergeHooks(settings.hooks ?? {}, (event) => `"${cmd}" ${event}`);
-      writeSettings(settings);
+      writeSettings(settingsPath(), settings);
       return { ok: true, ...getHookStatus() };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
@@ -87,9 +73,9 @@ export function registerClaudeHookInstall() {
 
   ipcMain.handle('hook:uninstall', () => {
     try {
-      const settings = readSettings();
+      const settings = readSettings(settingsPath());
       settings.hooks = removeHooks(settings.hooks ?? {});
-      writeSettings(settings);
+      writeSettings(settingsPath(), settings);
       return { ok: true, ...getHookStatus() };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
