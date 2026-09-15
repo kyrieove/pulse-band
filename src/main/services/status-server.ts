@@ -46,10 +46,9 @@ export class StatusServer {
 
   /** 实际请求处理；异常由 start() 里的 try/catch 兜底成 500 */
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
-    // Add CORS headers for QuickApp / local fetch
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    // 不设 CORS 头：手环走 pulse-core 的 Node fetch，渲染进程走主进程转发，
+    // 没有浏览器同源场景。放开通配头等于让用户浏览器里任意页面都能读 /api/status
+    // （里面有会话 cwd 和 lastMessage）。
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
