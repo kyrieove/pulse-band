@@ -119,7 +119,13 @@ export function readChunk(
 
   const fd = fs.openSync(filePath, 'r');
   try {
-    const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, offset);
+    // readSync 允许短读：读满 bytesToRead 或遇到 EOF 才停，否则会交出残缺分片
+    let bytesRead = 0;
+    while (bytesRead < bytesToRead) {
+      const n = fs.readSync(fd, buffer, bytesRead, bytesToRead - bytesRead, offset + bytesRead);
+      if (n === 0) break;
+      bytesRead += n;
+    }
     if (bytesRead < bytesToRead) {
       return buffer.subarray(0, bytesRead);
     }

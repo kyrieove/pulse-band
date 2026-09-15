@@ -278,6 +278,10 @@ export class DeviceConfigService {
         if (!selectedDevice) {
           selectedDevice = (await getPaired()).find((d) => d.id === payload.selectedDeviceId);
         }
+        // 用户明确选了设备却找不到（多半是扫描结果过期），不能悄悄换成日志里的 MAC 或别的手环
+        if (!selectedDevice) {
+          return { ok: false, error: '选中的手环已不在列表里，请重新扫描后再选择。' };
+        }
       }
       if (!selectedDevice && extractResult.mac) {
         rawMac = extractResult.mac;

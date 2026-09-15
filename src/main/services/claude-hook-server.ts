@@ -3,6 +3,9 @@ import path from 'node:path';
 import type { SessionManager } from './session-manager';
 import type { ClaudeHookPayload } from '../../common/types';
 
+/** /events 单次请求体上限：hook 载荷只有几 KB，1MB 足够，超出直接 413 */
+const MAX_BODY_BYTES = 1024 * 1024;
+
 export class ClaudeHookServer {
   private server: http.Server | null = null;
   private port: number;
@@ -16,10 +19,9 @@ export class ClaudeHookServer {
   public start(): Promise<number> {
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
-        // Set CORS headers for local tools
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        // 不设 CORS 头：真正的调用方是 Node（scripts/claude-hook.cjs 的 http.request
+        // 和主进程转发），都不是浏览器。放开通配头只会让用户浏览器里的任意页面
+        // 能读 /health、能伪造 /events。
 
         if (req.method === 'OPTIONS') {
           res.writeHead(204);
@@ -34,11 +36,36 @@ export class ClaudeHookServer {
         }
 
         if (req.method === 'POST' && req.url === '/events') {
+          // 只收 application/json：浏览器用 text/plain 发的简单请求不触发预检，
+          // 是唯一能绕过上面「没有 CORS 头」的路径，这里把它挡在门外。
+          const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
+          if (!contentType.startsWith('application/json')) {
+            res.writeHead(415, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Unsupported Media Type' }));
+            return;
+          }
+
           let body = '';
-          req.on('data', (chunk) => {
+          let received = 0;
+          let aborted = false;
+          req.on('data', (chunk: Buffer) => {
+            if (aborted) return;
+            received += chunk.length;
+            if (received > MAX_BODY_BYTES) {
+              aborted = true;
+              res.writeHead(413, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Payload Too Large' }));
+              req.destroy();
+              return;
+            }
             body += chunk;
           });
+          req.on('error', (err) => {
+            // 客户端半路断开是常态（hook 有 500ms 超时），记一笔即可，不要往外抛
+            console.error('[ClaudeHookServer] request error:', err);
+          });
           req.on('end', () => {
+            if (aborted) return;
             try {
               const payload: ClaudeHookPayload = JSON.parse(body);
               this.handleClaudeEvent(payload);

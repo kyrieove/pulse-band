@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Watch,
   Loader2,
@@ -48,12 +48,26 @@ export const ConnectBandStep: React.FC<ConnectBandStepProps> = ({ onSuccess }) =
   const isRpcReady = state?.daemon?.rpcConnected === true;
   const isFullyReady = isConnected && isRpcReady;
 
-  // 连接就绪自动回调通知父级
+  // 连接就绪自动回调通知父级。
+  //
+  // onSuccess 不能进依赖：SetupWizard 每次渲染都传新函数，父级 setStepExecution
+  // 又返回新对象 → 重渲染 → 新 onSuccess → effect 再跑，无限循环。
+  // 这里用 ref 读最新值，并保证「false → true」只通知一次。
+  const onSuccessRef = useRef(onSuccess);
   useEffect(() => {
-    if (isFullyReady) {
-      onSuccess?.();
+    onSuccessRef.current = onSuccess;
+  }, [onSuccess]);
+
+  const notifiedRef = useRef(false);
+  useEffect(() => {
+    if (!isFullyReady) {
+      notifiedRef.current = false;
+      return;
     }
-  }, [isFullyReady, onSuccess]);
+    if (notifiedRef.current) return;
+    notifiedRef.current = true;
+    onSuccessRef.current?.();
+  }, [isFullyReady]);
 
   const handleConnect = useCallback(async () => {
     setConnecting(true);

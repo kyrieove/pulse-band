@@ -96,7 +96,13 @@ export interface IpcMainLike {
 }
 
 export function registerBandKeyExtract(ipc?: IpcMainLike) {
-  ipc?.handle('band:extract-key', (_e, payload: { path?: string }) =>
-    extractFromPath(typeof payload?.path === 'string' ? payload.path : '')
-  );
+  ipc?.handle('band:extract-key', (_e, payload: { path?: string }) => {
+    const result = extractFromPath(typeof payload?.path === 'string' ? payload.path : '');
+    if (!result.ok) return result;
+    // authkey 永不出主进程（见文件头）。渲染层只需要「解析成功 / 来自哪个文件 / 两个 key 是否一致」，
+    // deviceKey / deviceKeyRaw / encryptKey 一律不带 —— extractFromPath 的返回类型不动，
+    // 主进程内部调用方（saveDeviceConfig）照常拿完整字段。
+    const { ok, logFile, agree } = result;
+    return { ok, logFile, agree };
+  });
 }

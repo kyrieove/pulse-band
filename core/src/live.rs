@@ -414,9 +414,24 @@ fn connect_rfcomm(mac_u64: u64) -> Result<usize, String> {
 }
 
 pub(crate) fn send_all(sock: usize, data: &[u8]) -> Result<(), String> {
-    let n = unsafe { rfcomm::send(sock, data.as_ptr(), data.len() as i32, 0) };
-    if n != data.len() as i32 {
-        return Err(format!("send 失败 sent={n}"));
+    // send 会部分写入：返回值小于 data.len() 时既不能当成功，也不能直接报错 ——
+    // 报错会把已经发出去的半帧留在链路上，手环端随后收到的是长度/CRC 错乱的帧。
+    // 循环发到发完为止；返回 <= 0 才是真失败。
+    let mut sent = 0usize;
+    while sent < data.len() {
+        let n = unsafe {
+            rfcomm::send(
+                sock,
+                data[sent..].as_ptr(),
+                (data.len() - sent) as i32,
+                0,
+            )
+        };
+        if n <= 0 {
+            let err = unsafe { rfcomm::WSAGetLastError() };
+            return Err(format!("send 失败 sent={sent}/{} err={err}", data.len()));
+        }
+        sent += n as usize;
     }
     Ok(())
 }
