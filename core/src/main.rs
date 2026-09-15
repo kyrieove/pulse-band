@@ -134,12 +134,17 @@ fn already_running(run_dir: &PathBuf) -> bool {
         return false;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let probe = serde_json::json!({
-        "id": "probe", "method": "daemon.info", "params": {}, "token": token
-    });
+    // 必须带结尾换行：服务端用 BufReader::lines() 按行读（rpc.rs），
+    // 少这个 \n 服务端会一直等，客户端 500ms 读超时后误判成「没有实例在跑」。
+    let probe = format!(
+        "{}\n",
+        serde_json::json!({
+            "id": "probe", "method": "daemon.info", "params": {}, "token": token
+        })
+    );
     let mut line = String::new();
     use std::io::BufRead as _;
-    if stream.write_all(probe.to_string().as_bytes()).is_err()
+    if stream.write_all(probe.as_bytes()).is_err()
         || std::io::BufReader::new(stream)
             .read_line(&mut line)
             .is_err()
