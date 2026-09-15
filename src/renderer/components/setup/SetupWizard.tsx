@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Watch,
   FileText,
@@ -167,40 +167,48 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onClose, onFinish, ini
   const currentExec = stepExecution[currentStep.id] || 'pending';
   const isCurrentSuccess = currentExec === 'success';
 
-  const handleFinish = (outcome?: QuotaVerifyOutcome) => {
-    onFinish?.(outcome);
-    onClose();
-  };
+  // 这几个回调会作为 prop 交给子步骤。不包 useCallback 的话每次渲染都是新函数，
+  // 子步骤里把它放进 effect 依赖就会跟着无限重渲染（见 ConnectBandStep 的说明）。
+  const handleFinish = useCallback(
+    (outcome?: QuotaVerifyOutcome) => {
+      onFinish?.(outcome);
+      onClose();
+    },
+    [onFinish, onClose]
+  );
 
-  const handleImportLogSuccess = () => {
+  const handleImportLogSuccess = useCallback(() => {
     setStepExecution((prev) => ({ ...prev, import_log: 'success' }));
     setCurrentIndex(1);
     setStepExecution((prev) => ({
       ...prev,
       connect_band: prev.connect_band === 'pending' ? 'visited' : prev.connect_band,
     }));
-  };
+  }, []);
 
-  const handleConnectBandSuccess = () => {
+  const handleConnectBandSuccess = useCallback(() => {
     setStepExecution((prev) => ({ ...prev, connect_band: 'success' }));
-  };
+  }, []);
 
-  const handleInstallAppSuccess = () => {
+  const handleInstallAppSuccess = useCallback(() => {
     setStepExecution((prev) => ({ ...prev, install_app: 'success' }));
-  };
+  }, []);
 
-  const handleVerifyQuotaComplete = (outcome: QuotaVerifyOutcome) => {
-    if (outcome === 'confirmed') {
-      setStepExecution((prev) => ({ ...prev, verify_quota: 'success' }));
-      handleFinish('confirmed');
-    } else {
-      setStepExecution((prev) => ({
-        ...prev,
-        verify_quota: prev.verify_quota === 'success' ? 'success' : 'skipped',
-      }));
-      handleFinish('deferred');
-    }
-  };
+  const handleVerifyQuotaComplete = useCallback(
+    (outcome: QuotaVerifyOutcome) => {
+      if (outcome === 'confirmed') {
+        setStepExecution((prev) => ({ ...prev, verify_quota: 'success' }));
+        handleFinish('confirmed');
+      } else {
+        setStepExecution((prev) => ({
+          ...prev,
+          verify_quota: prev.verify_quota === 'success' ? 'success' : 'skipped',
+        }));
+        handleFinish('deferred');
+      }
+    },
+    [handleFinish]
+  );
 
   const handleNext = () => {
     setStepError(null);

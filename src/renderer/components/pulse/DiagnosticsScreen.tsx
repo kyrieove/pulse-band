@@ -19,6 +19,9 @@ const STATUS_ICON: Record<DiagnosticStatus, string> = {
   fail: 'bg-[var(--quota-critical-wash)] text-[var(--quota-critical)]',
 };
 
+/** 时间戳 → HH:MM。复用 ui.tsx 的 fmtTime（HH:MM:SS），只截到分钟，不另造一套格式化 */
+const fmtClock = (ts: number | null): string => (ts ? fmtTime(ts).slice(0, 5) : '--:--');
+
 export interface DiagnosticsScreenProps {
   daemon: PulseCoreState['daemon'] | null;
   connection: PulseCoreState['connection'];
@@ -39,6 +42,7 @@ export const DiagnosticsScreen: React.FC<DiagnosticsScreenProps> = ({
   onRefresh,
 }) => {
   const [report, setReport] = useState<DiagnosticReport | null>(null);
+  const [reportAt, setReportAt] = useState<number | null>(null);
   const [runningDiagnostics, setRunningDiagnostics] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
@@ -51,6 +55,8 @@ export const DiagnosticsScreen: React.FC<DiagnosticsScreenProps> = ({
       const next = await window.pulse?.runDiagnostics();
       if (!next) throw new Error('诊断接口不可用');
       setReport(next);
+      // 报告生成时刻：状态行显示的是「这次诊断是什么时候跑的」，不是占位文字
+      setReportAt(Date.now());
     } catch (err: any) {
       setReportError(String(err?.message ?? err));
     } finally {
@@ -112,7 +118,7 @@ export const DiagnosticsScreen: React.FC<DiagnosticsScreenProps> = ({
             <span>·</span>
             <span className="text-[var(--quota-warning)]">{reportCounts.warn} 项警告</span>
             <span>·</span>
-            <span className="tabular-nums">HH:MM 检测</span>
+            <span className="tabular-nums">{fmtClock(reportAt)} 检测</span>
           </>
         ) : (
           <span>尚未运行完整诊断 · 最近额度更新 {timeText}</span>

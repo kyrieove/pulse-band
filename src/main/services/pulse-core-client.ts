@@ -212,11 +212,21 @@ export class PulseCoreClient extends EventEmitter {
       stdio: 'ignore',
       windowsHide: true,
     });
+    // exe 被安全软件拦下、刚好被删掉、或没有执行权限时，spawn 会在 ChildProcess 上
+    // emit 'error'；没人监听就是未捕获异常（主进程直接没了）。同时下面的 20 秒轮询
+    // 还在白等一个永远不会出现的端点文件，所以这里记下来，循环里立刻抛。
+    const spawnState: { error: Error | null } = { error: null };
+    child.on('error', (err) => {
+      spawnState.error = err;
+    });
     child.unref();
     this.emit('daemon-spawned', child.pid);
     const deadline = Date.now() + SPAWN_WAIT_MS;
     for (;;) {
       await sleep(400);
+      if (spawnState.error) {
+        throw new Error(`启动 pulse-core 失败：${spawnState.error.message}`);
+      }
       if (Date.now() > deadline) {
         throw new Error('spawn daemon 后 20 秒内端点文件没有出现新内容（daemon 没起来？）');
       }
@@ -307,7 +317,9 @@ export class PulseCoreClient extends EventEmitter {
         }
       };
       socket.setTimeout(10_000, () => done(new Error('连接 daemon 超时（10 秒）')));
-      socket.once('error', (err) => done(err));
+      // 用 on 而不是 once：连接建立之后再出错（第一次错误已被 once 消费掉）就会变成
+      // 未捕获异常。done 自己有 settled 保护，重复调用是安全的。
+      socket.on('error', (err) => done(err));
       socket.once('close', () => {
         // 只有成功建立过的 socket 才算「断线」；连接失败的 close 不触发重连调度
         if (this.socket === socket) {

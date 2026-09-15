@@ -184,7 +184,14 @@ try {
   assert.equal(readAddr(), '11:22:33:44:BE:EF');
   assert.equal(n5.deviceName, 'Xiaomi Smart Band 10 BEEF');
 
-  console.log('✅ DeviceConfigService 单元测试全部通过（19 组）');
+  // 20. 选中的设备已不在列表里（扫描结果过期）：报错，不回退到日志 MAC，也不改写 device.json
+  service.scannedDevices = [];
+  const n6 = await service.saveDeviceConfig({ logPath: logWithMac, selectedDeviceId: 'scan_0000deadbeef' });
+  assert.equal(n6.ok, false);
+  assert.match(n6.error, /重新扫描/);
+  assert.equal(readAddr(), '11:22:33:44:BE:EF');
+
+  console.log('✅ DeviceConfigService 单元测试全部通过（20 组）');
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }

@@ -1,6 +1,7 @@
 import http from 'node:http';
 import type { SessionManager } from './session-manager';
 import { QuotaCollector } from './quota-collector';
+import { pushError } from './error-log';
 
 export class StatusServer {
   private server: http.Server | null = null;
@@ -21,175 +22,193 @@ export class StatusServer {
 
   public start() {
     this.server = http.createServer((req, res) => {
-      // Add CORS headers for QuickApp / local fetch
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-      if (req.method === 'OPTIONS') {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-
-      if (/^\/(api\/)?status\/compact(\?|$)/.test(req.url || '')) {
-        const params = new URLSearchParams((req.url || '').split('?')[1] || '');
-
-        // 3.0 三屏：?all=1 一次回三份 session + limits（B-lean）。
-        // 砍掉 serverIp / session.agent / active（手环侧要么本来知道、要么一眼可见），
-        // currentTool.name 拍平成 tool 并截 24 字符。旧的 ?agent= 路径一个字节不动，
-        // 设备上还跑着 1.2.4，随时要能回退。
-        if (params.get('all') === '1') {
-          const allSessions = this.sessionManager.getAllSessions();
-          const allQuotas = this.quotaCollector.getQuotas();
-          const leanSession = (agent: string) => {
-            const s = allSessions.find((x) => x.agent === agent);
-            if (!s) return { status: null, tool: null };
-            const toolName =
-              s.currentTool && s.currentTool.name
-                ? String(s.currentTool.name).slice(0, 24)
-                : null;
-            return { status: s.status || null, tool: toolName };
-          };
-          // 手环卡片右上角只有 80px 宽（V4 装机反馈：'1h 22min · 16:40' 会被屏幕裁掉
-          // 「· 具体时间」部分），只保留时长段；网页仪表盘 /api/status 仍用完整格式
-          const shortReset = (t: string | null) => (t ? String(t).split(' · ')[0] : null);
-          const leanLimit = (q: any) =>
-            q
-              ? {
-                  pct5h: q.pct5h,
-                  pct7d: q.pct7d,
-                  level5h: q.level5h,
-                  level7d: q.level7d,
-                  resetText: shortReset(q.resetText),
-                  reset7dText: shortReset(q.reset7dText),
-                  authoritative: q.authoritative,
-                }
-              : null;
-          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(
-            JSON.stringify({
-              ts: Date.now(),
-              sessions: {
-                claude: leanSession('claude'),
-                codex: leanSession('codex'),
-                antigravity: leanSession('antigravity'),
-              },
-              limits: {
-                claude: leanLimit(allQuotas.claude),
-                codex: leanLimit(allQuotas.codex),
-                antigravity: leanLimit(allQuotas.antigravity),
-              },
-            })
-          );
-          return;
+      try {
+        this.handleRequest(req, res);
+      } catch (err: any) {
+        pushError('status-server', `处理 ${req.method} ${req.url} 时出错：${err?.message ?? err}`, 'warn');
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
         }
+        res.end(JSON.stringify({ error: 'internal error' }));
+      }
+    });
 
-        // 手环点名要哪个 agent（?agent=claude）。不点名时沿用「谁在跑显示谁」。
-        // 点名的好处：报文不用塞三份 session（会撑爆 768 字节单帧上限），
-        // 而且 hero 不再随 running_tool 在 Claude/Codex 之间来回跳。
-        const wantAgent = params.get('agent');
-        const sessions = this.sessionManager.getAllSessions();
-        const active = wantAgent
-          ? sessions.find((s) => s.agent === wantAgent)
-          : sessions.find((s) => s.status === 'running_tool') ||
-            sessions.find((s) => s.status === 'thinking') ||
-            sessions[0];
-        const quotas = this.quotaCollector.getQuotas();
+    // 端口被别的程序占住时 http.Server 会 emit 'error'；没有监听者就是整个 Electron 主进程崩掉
+    this.server.on('error', (err: any) => {
+      pushError('status-server', `本地状态服务异常（端口 ${this.port}）：${err?.message ?? err}`);
+      console.error('[StatusServer] error:', err);
+    });
 
-        const compactLimit = (q: any) => {
-          if (!q) return null;
-          const res: any = {
-            pct5h: q.pct5h,
-            pct7d: q.pct7d,
-            level5h: q.level5h,
-            level7d: q.level7d,
-            resetText: q.resetText,
-            authoritative: q.authoritative,
-          };
-          if (q.needsAuth) {
-            res.needsAuth = true;
-          }
-          return res;
+    this.server.listen(this.port, '127.0.0.1', () => {
+      console.log(`[StatusServer] Local band API listening on http://127.0.0.1:${this.port}/status`);
+    });
+  }
+
+  /** 实际请求处理；异常由 start() 里的 try/catch 兜底成 500 */
+  private handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
+    // 不设 CORS 头：手环走 pulse-core 的 Node fetch，渲染进程走主进程转发，
+    // 没有浏览器同源场景。放开通配头等于让用户浏览器里任意页面都能读 /api/status
+    // （里面有会话 cwd 和 lastMessage）。
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (/^\/(api\/)?status\/compact(\?|$)/.test(req.url || '')) {
+      const params = new URLSearchParams((req.url || '').split('?')[1] || '');
+
+      // 3.0 三屏：?all=1 一次回三份 session + limits（B-lean）。
+      // 砍掉 serverIp / session.agent / active（手环侧要么本来知道、要么一眼可见），
+      // currentTool.name 拍平成 tool 并截 24 字符。旧的 ?agent= 路径一个字节不动，
+      // 设备上还跑着 1.2.4，随时要能回退。
+      if (params.get('all') === '1') {
+        const allSessions = this.sessionManager.getAllSessions();
+        const allQuotas = this.quotaCollector.getQuotas();
+        const leanSession = (agent: string) => {
+          const s = allSessions.find((x) => x.agent === agent);
+          if (!s) return { status: null, tool: null };
+          const toolName =
+            s.currentTool && s.currentTool.name
+              ? String(s.currentTool.name).slice(0, 24)
+              : null;
+          return { status: s.status || null, tool: toolName };
         };
-
-        const compactSession = active
-          ? {
-              agent: active.agent,
-              status: active.status,
-              currentTool: active.currentTool ? { name: active.currentTool.name } : null,
-              // lastMessage 不再下发：手环上显示的是「动词 · 对象」，
-              // 由 status + currentTool 派生。lastMessage 是英文工具日志，
-              // 给我自己看的，在 192px 屏上读不完也记不住。省 ~60 字节。
-            }
-          : null;
-
+        // 手环卡片右上角只有 80px 宽（V4 装机反馈：'1h 22min · 16:40' 会被屏幕裁掉
+        // 「· 具体时间」部分），只保留时长段；网页仪表盘 /api/status 仍用完整格式
+        const shortReset = (t: string | null) => (t ? String(t).split(' · ')[0] : null);
+        const leanLimit = (q: any) =>
+          q
+            ? {
+                pct5h: q.pct5h,
+                pct7d: q.pct7d,
+                level5h: q.level5h,
+                level7d: q.level7d,
+                resetText: shortReset(q.resetText),
+                reset7dText: shortReset(q.reset7dText),
+                authoritative: q.authoritative,
+              }
+            : null;
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(
           JSON.stringify({
-            active: !!active,
-            // 手环的 Date.now() 不是真 UTC（实测偏 +5h29m），墙上时间只能由这里给
             ts: Date.now(),
-            session: compactSession,
+            sessions: {
+              claude: leanSession('claude'),
+              codex: leanSession('codex'),
+              antigravity: leanSession('antigravity'),
+            },
             limits: {
-              claude: compactLimit(quotas.claude),
-              codex: compactLimit(quotas.codex),
-              antigravity: compactLimit(quotas.antigravity),
+              claude: leanLimit(allQuotas.claude),
+              codex: leanLimit(allQuotas.codex),
+              antigravity: leanLimit(allQuotas.antigravity),
             },
           })
         );
         return;
       }
 
-      if (req.url === '/status' || req.url === '/api/status') {
-        const sessions = this.sessionManager.getAllSessions();
-        const active =
-          sessions.find((s) => s.status === 'running_tool') ||
+      // 手环点名要哪个 agent（?agent=claude）。不点名时沿用「谁在跑显示谁」。
+      // 点名的好处：报文不用塞三份 session（会撑爆 768 字节单帧上限），
+      // 而且 hero 不再随 running_tool 在 Claude/Codex 之间来回跳。
+      const wantAgent = params.get('agent');
+      const sessions = this.sessionManager.getAllSessions();
+      const active = wantAgent
+        ? sessions.find((s) => s.agent === wantAgent)
+        : sessions.find((s) => s.status === 'running_tool') ||
           sessions.find((s) => s.status === 'thinking') ||
           sessions[0];
-        const quotas = this.quotaCollector.getQuotas();
+      const quotas = this.quotaCollector.getQuotas();
 
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(
-          JSON.stringify({
-            active: !!active,
-            serverIp: '127.0.0.1',
-            serverPort: this.port,
-            timestamp: Date.now(),
-            session: active
-              ? {
-                  id: active.id,
-                  agent: active.agent,
-                  title: active.title,
-                  cwd: active.cwd,
-                  status: active.status,
-                  durationSeconds: active.durationSeconds,
-                  lastMessage: active.lastMessage,
-                  currentTool: active.currentTool,
-                  error: active.error,
-                }
-              : null,
-            limits: quotas,
-            // 阶段 5 诊断屏：每源最后成功拉取时间 + 429 退避到期时间（手环走的 /compact 不带，报文不加重）
-            quotaMeta: this.quotaCollector.getQuotaMeta(),
-          })
-        );
-        return;
-      }
+      const compactLimit = (q: any) => {
+        if (!q) return null;
+        const res: any = {
+          pct5h: q.pct5h,
+          pct7d: q.pct7d,
+          level5h: q.level5h,
+          level7d: q.level7d,
+          resetText: q.resetText,
+          authoritative: q.authoritative,
+        };
+        if (q.needsAuth) {
+          res.needsAuth = true;
+        }
+        return res;
+      };
 
-      if (req.url === '/preview' || req.url === '/') {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(this.getPreviewHtml());
-        return;
-      }
+      const compactSession = active
+        ? {
+            agent: active.agent,
+            status: active.status,
+            currentTool: active.currentTool ? { name: active.currentTool.name } : null,
+            // lastMessage 不再下发：手环上显示的是「动词 · 对象」，
+            // 由 status + currentTool 派生。lastMessage 是英文工具日志，
+            // 给我自己看的，在 192px 屏上读不完也记不住。省 ~60 字节。
+          }
+        : null;
 
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Not Found');
-    });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(
+        JSON.stringify({
+          active: !!active,
+          // 手环的 Date.now() 不是真 UTC（实测偏 +5h29m），墙上时间只能由这里给
+          ts: Date.now(),
+          session: compactSession,
+          limits: {
+            claude: compactLimit(quotas.claude),
+            codex: compactLimit(quotas.codex),
+            antigravity: compactLimit(quotas.antigravity),
+          },
+        })
+      );
+      return;
+    }
 
-    this.server.listen(this.port, '127.0.0.1', () => {
-      console.log(`[StatusServer] Local band API listening on http://127.0.0.1:${this.port}/status`);
-    });
+    if (req.url === '/status' || req.url === '/api/status') {
+      const sessions = this.sessionManager.getAllSessions();
+      const active =
+        sessions.find((s) => s.status === 'running_tool') ||
+        sessions.find((s) => s.status === 'thinking') ||
+        sessions[0];
+      const quotas = this.quotaCollector.getQuotas();
+
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(
+        JSON.stringify({
+          active: !!active,
+          serverIp: '127.0.0.1',
+          serverPort: this.port,
+          timestamp: Date.now(),
+          session: active
+            ? {
+                id: active.id,
+                agent: active.agent,
+                title: active.title,
+                cwd: active.cwd,
+                status: active.status,
+                durationSeconds: active.durationSeconds,
+                lastMessage: active.lastMessage,
+                currentTool: active.currentTool,
+                error: active.error,
+              }
+            : null,
+          limits: quotas,
+          // 阶段 5 诊断屏：每源最后成功拉取时间 + 429 退避到期时间（手环走的 /compact 不带，报文不加重）
+          quotaMeta: this.quotaCollector.getQuotaMeta(),
+        })
+      );
+      return;
+    }
+
+    if (req.url === '/preview' || req.url === '/') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(this.getPreviewHtml());
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not Found');
   }
 
   public stop() {

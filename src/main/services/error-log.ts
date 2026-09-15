@@ -20,7 +20,9 @@ export function pushError(
   message: string,
   level: PulseErrorEntry['level'] = 'error',
 ): void {
-  const entry: PulseErrorEntry = { ts: Date.now(), source, message, level };
+  // authkey 是 32 位 hex；错误信息可能原样带出 core / 日志里的内容，入库前统一打码（红线见文件头）
+  const safe = message.replace(/\b[0-9a-fA-F]{32,}\b/g, (m) => `${m.slice(0, 4)}…(已隐藏)`);
+  const entry: PulseErrorEntry = { ts: Date.now(), source, message: safe, level };
   ring.unshift(entry);
   if (ring.length > MAX_ENTRIES) ring.length = MAX_ENTRIES;
   for (const cb of listeners) {

@@ -98,6 +98,12 @@ pub fn install_watchface(
         .map_err(|e| format!("发送表盘安装准备失败: {e}"))?;
 
     let status = wait_prepare_status(transport, Duration::from_millis(PREPARE_TIMEOUT_MS))?;
+    if status == 7 {
+        // 2026-09-16 真机（Band 10）实测：已装 17 个表盘时任何文件都回 7，手环上删掉一个后同一文件立即装上
+        return Err(format!(
+            "手环上的表盘已满，请先在手环上删除一个不用的表盘再安装 (prepare_status={status})"
+        ));
+    }
     if status != 0 {
         return Err(format!(
             "表盘安装准备被设备拒绝 (prepare_status={status}，0=READY)"
@@ -145,6 +151,18 @@ pub fn install_watchface(
             }
         }
         break;
+    }
+
+    // 设备没下发 expected_slice_length（proto 里是 optional），或给的值 ≤ 6
+    // （fragment 上限 = slice_len - 6，连片头都放不下）时，跟 RPK 路径
+    // （protocol.rs 的 unwrap_or(244)）保持一致回退到 244。
+    // 保持初值 0 会让 transfer_mass_body 直接报「非法的 expected_slice_length: 0」，
+    // 传输必然失败。
+    if expected_slice_length <= 6 {
+        install_log(
+            "watchface: 设备未下发可用的 expected_slice_length，按 RPK 路径回退到 244",
+        );
+        expected_slice_length = 244;
     }
 
     // 4. Mass 分片传输 + 累积 ACK

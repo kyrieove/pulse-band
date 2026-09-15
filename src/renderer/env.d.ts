@@ -120,14 +120,12 @@ export interface CodeislandBridge {
 }
 
 /** Pulse 2.0 主进程桥（阶段 4） */
+/** authkey 永不出主进程：渲染层只拿得到「解析成功 / 来自哪个文件 / 两个 key 是否一致」 */
 export type BandKeyResult =
   | {
       ok: true;
       logFile: string;
       agree: boolean;
-      deviceKey: string | null;
-      deviceKeyRaw: string | null;
-      encryptKey: string | null;
     }
   | { ok: false; error: string };
 

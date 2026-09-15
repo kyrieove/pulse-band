@@ -28,7 +28,7 @@ Pulse 是一个 Windows 桌面应用，用于把 Claude Code、Codex、Antigravi
 
 ## 快速上手
 
-1. 从 [Releases](../../releases/latest) 下载 `Pulse-Setup-2.0.4.exe`（如有更新版本，下载最新版本）并安装。
+1. 从 [Releases](../../releases/latest) 下载 `Pulse-Setup-2.0.5.exe`（如有更新版本，下载最新版本）并安装。
 2. 打开 Pulse，进入「设置」→「检测 Agent 接入」，在 Claude Code 一行点击「修复」安装 hook，然后重新打开 Claude Code 会话。
 3. 按照 [docs/手环配对指南.md](docs/手环配对指南.md) 完成手环配置。
 
