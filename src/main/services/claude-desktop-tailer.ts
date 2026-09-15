@@ -103,12 +103,22 @@ export class ClaudeDesktopTailer {
       const bytesToRead = stat.size - this.filePosition;
       const buffer = Buffer.alloc(bytesToRead);
       const fd = fs.openSync(filePath, 'r');
-      fs.readSync(fd, buffer, 0, bytesToRead, this.filePosition);
-      fs.closeSync(fd);
+      try {
+        fs.readSync(fd, buffer, 0, bytesToRead, this.filePosition);
+      } finally {
+        fs.closeSync(fd);
+      }
 
-      this.filePosition = stat.size;
+      // 只处理到最后一个换行为止。
+      // 每 500ms 读一次，对方很可能正写到一半：把 filePosition 推到 stat.size 再按换行切分，
+      // 尾部那半行 JSON.parse 必然失败且下一轮不会再读，会话开始/结束事件就这样漏掉；
+      // 多字节 UTF-8 被切在读取边界上还会变成乱码。没找到换行就这一轮什么都不做。
+      const lastNewline = buffer.lastIndexOf(0x0a);
+      if (lastNewline < 0) return;
 
-      const chunk = buffer.toString('utf-8');
+      this.filePosition += lastNewline + 1;
+
+      const chunk = buffer.subarray(0, lastNewline).toString('utf-8');
       const lines = chunk.split(/\r?\n/);
 
       for (const line of lines) {
@@ -134,9 +144,11 @@ export class ClaudeDesktopTailer {
       // 1. Assistant messages (Tools & text)
       if (data.type === 'assistant' && data.message?.content) {
         const content = data.message.content;
+        // content 也可能是纯字符串；直接 for...of 会逐字符迭代出 undefined.type
+        const blocks: any[] = Array.isArray(content) ? content : [];
         let toolFound = false;
 
-        for (const item of content) {
+        for (const item of blocks) {
           if (item.type === 'tool_use') {
             toolFound = true;
             const toolName = item.name || 'Tool';
@@ -173,7 +185,9 @@ export class ClaudeDesktopTailer {
       // 2. User messages (tool results or new prompt)
       if (data.type === 'user' && data.message?.content) {
         const content = data.message.content;
-        const isToolResult = content.some((c: any) => c.type === 'tool_result');
+        // 同上：content 可能是字符串，字符串没有 .some
+        const isToolResult =
+          Array.isArray(content) && content.some((c: any) => c.type === 'tool_result');
 
         if (isToolResult) {
           this.sessionManager.updateSession(sid, 'claude', {

@@ -163,10 +163,18 @@ export class CodexSessionTailer {
       const fd = fs.openSync(filePath, 'r');
       const bytesToRead = stat.size - pos;
       const buffer = Buffer.alloc(bytesToRead);
-      fs.readSync(fd, buffer, 0, bytesToRead, pos);
-      fs.closeSync(fd);
+      try {
+        fs.readSync(fd, buffer, 0, bytesToRead, pos);
+      } finally {
+        fs.closeSync(fd);
+      }
 
-      this.filePositions.set(filePath, stat.size);
+      // 只处理到最后一个换行为止（理由同 claude-desktop-tailer.readNewLines）：
+      // 把位置推到 stat.size 会把尾部那半行永久丢掉，多字节字符还可能被切坏。
+      const lastNewline = buffer.lastIndexOf(0x0a);
+      if (lastNewline < 0) return;
+
+      this.filePositions.set(filePath, pos + lastNewline + 1);
 
       let context = this.contexts.get(filePath);
       if (!context) {
@@ -174,7 +182,7 @@ export class CodexSessionTailer {
         this.contexts.set(filePath, context);
       }
 
-      const chunk = buffer.toString('utf-8');
+      const chunk = buffer.subarray(0, lastNewline).toString('utf-8');
       const lines = chunk.split(/\r?\n/);
       for (const line of lines) {
         if (!line.trim()) continue;
