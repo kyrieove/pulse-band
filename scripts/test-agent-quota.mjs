@@ -53,3 +53,51 @@ test('resolveQuotaStatus: falls back to used percentage thresholds when level is
   assert.equal(resolveQuotaStatus(null, 0), 'idle');
   assert.equal(resolveQuotaStatus(null, null), 'idle');
 });
+
+import { parseAgQuotaSummary, fetchAntigravityUsage } from '../src/main/services/quota-collector.ts';
+
+// ---------------------------------------------------------------------------
+// Antigravity 云端兜底
+// ---------------------------------------------------------------------------
+const agGroups = (rem5h, remWeek) => [
+  { displayName: 'Claude and GPT models', buckets: [{ window: '5h', remainingFraction: 0 }] },
+  {
+    displayName: 'Gemini Models',
+    buckets: [
+      { window: '5h', remainingFraction: rem5h, resetTime: '2026-10-04T05:00:00Z' },
+      { window: 'weekly', remainingFraction: remWeek },
+    ],
+  },
+];
+
+test('parseAgQuotaSummary: 云端顶层 groups 与本地 response.groups 都收，只取 Gemini 组', () => {
+  const want = { primary: { pct: 75, resetMs: Date.parse('2026-10-04T05:00:00Z') }, secondary: { pct: 10, resetMs: 0 } };
+  assert.deepEqual(parseAgQuotaSummary({ groups: agGroups(0.25, 0.9) }), want);
+  assert.deepEqual(parseAgQuotaSummary({ response: { groups: agGroups(0.25, 0.9) } }), want);
+});
+
+test('parseAgQuotaSummary: 没有 Gemini 组或没有桶 → null', () => {
+  assert.equal(parseAgQuotaSummary({ groups: [{ displayName: 'Claude and GPT models', buckets: [] }] }), null);
+  assert.equal(parseAgQuotaSummary({ groups: [{ displayName: 'Gemini Models', buckets: [] }] }), null);
+  assert.equal(parseAgQuotaSummary({}), null);
+});
+
+test('fetchAntigravityUsage: 本地可用时不打云端', async () => {
+  let cloudCalls = 0;
+  const r = await fetchAntigravityUsage(
+    async () => ({ response: { groups: agGroups(0.5, 0.5) } }),
+    async () => (cloudCalls++, null)
+  );
+  assert.equal(r.primary.pct, 50);
+  assert.equal(cloudCalls, 0);
+});
+
+test('fetchAntigravityUsage: 本地拿不到 → 云端真值；5 分钟内不再打云端，返回上次结果', async () => {
+  const absent = async () => null;
+  const first = await fetchAntigravityUsage(absent, async () => parseAgQuotaSummary({ groups: agGroups(0.6, 0.8) }));
+  assert.equal(first.primary.pct, 40);
+  let cloudCalls = 0;
+  const again = await fetchAntigravityUsage(absent, async () => (cloudCalls++, null));
+  assert.equal(cloudCalls, 0, '节流期内不打云端');
+  assert.deepEqual(again, first);
+});

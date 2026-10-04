@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { pushError } from './error-log';
+import { pushError } from './error-log.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -604,15 +604,17 @@ export async function agRpc(method: string, body: object): Promise<any | null> {
   return agCall(agEndpoint.port, agEndpoint.token, method, body);
 }
 
-async function fetchAntigravityUsage(): Promise<{ primary: WindowState; secondary: WindowState } | null> {
-  const data = await agRpc('RetrieveUserQuotaSummary', {});
-  if (!data) return null;
+type AgUsage = { primary: WindowState; secondary: WindowState };
 
+/**
+ * RetrieveUserQuotaSummary 的响应 → 已用百分比。本地 language_server 包在
+ * response 里，云端 retrieveUserQuotaSummary 放在顶层，两种都收。
+ */
+export function parseAgQuotaSummary(data: any): AgUsage | null {
   // remainingFraction 是剩余比例，转成已用百分比
   const out: Record<string, WindowState> = {};
-  const group = (data.response?.groups ?? []).find((g: any) =>
-    String(g.displayName ?? '').includes(AG_GROUP)
-  );
+  const groups = data?.groups ?? data?.response?.groups ?? [];
+  const group = groups.find((g: any) => String(g.displayName ?? '').includes(AG_GROUP));
   for (const b of group?.buckets ?? []) {
     if (typeof b.remainingFraction !== 'number') continue;
     out[b.window] = {
@@ -623,6 +625,107 @@ async function fetchAntigravityUsage(): Promise<{ primary: WindowState; secondar
   if (!out['5h'] && !out.weekly) return null;
   const zero = { pct: 0, resetMs: 0 };
   return { primary: out['5h'] ?? zero, secondary: out.weekly ?? zero };
+}
+
+/**
+ * Antigravity 没开时的云端兜底。Antigravity 把 Google OAuth token 存在 Windows
+ * 凭据管理器的 `gemini:antigravity`（JSON：{ token: { access_token, refresh_token, expiry } }），
+ * 用它直接问 cloudcode-pa 的 retrieveUserQuotaSummary，返回结构与本地相同。
+ *
+ * 刷新出的 access token 只放内存，不写回凭据管理器（凭据归 Antigravity 管）；
+ * token 一律不进日志。
+ */
+const AG_CRED_PS = `
+Add-Type -TypeDefinition @'
+using System;using System.Runtime.InteropServices;
+public static class PbCred{[StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]public struct C{public int F;public int T;public string N;public string Cm;public System.Runtime.InteropServices.ComTypes.FILETIME W;public int Sz;public IntPtr B;public int P;public int AC;public IntPtr A;public string TA;public string U;}
+[DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern bool CredReadW(string t,int ty,int f,out IntPtr c);[DllImport("advapi32.dll")]static extern void CredFree(IntPtr c);
+public static string Read(string t){IntPtr p;if(!CredReadW(t,1,0,out p))return "";var c=(C)Marshal.PtrToStructure(p,typeof(C));var b=new byte[c.Sz];Marshal.Copy(c.B,b,0,c.Sz);CredFree(p);return Convert.ToBase64String(b);}}
+'@
+[PbCred]::Read('gemini:antigravity')`;
+
+// Antigravity 桌面端的安装型 OAuth 客户端。Google 认定安装型应用的 secret 不保密，
+// 开源额度工具里同样内置（wusimpl/AntigravityQuotaWatcher constants.ts）。
+const AG_CLIENT_ID = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
+const AG_CLIENT_SECRET = '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';
+
+let agCloudToken: { value: string; expiresAt: number } | null = null;
+
+async function agCloudAccessToken(): Promise<string | null> {
+  if (agCloudToken && agCloudToken.expiresAt - Date.now() > 120_000) return agCloudToken.value;
+  // Add-Type 要往 %TEMP% 编译；子进程环境里没有 TEMP 时会落到不可写的 C:\WINDOWS\temp，读不到凭据
+  const root = process.env.SystemRoot ?? 'C:\\Windows';
+  const tmp = process.env.TEMP ?? path.join(os.homedir(), 'AppData', 'Local', 'Temp');
+  const ps = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const { stdout } = await execFileAsync(ps, ['-NoProfile', '-NonInteractive', '-Command', AG_CRED_PS], {
+    env: { ...process.env, SystemRoot: root, TEMP: tmp, TMP: tmp },
+    timeout: 15000,
+    windowsHide: true,
+  });
+  const b64 = stdout.trim();
+  if (!b64) return null; // 没装 / 没登录 Antigravity
+  const { token } = JSON.parse(Buffer.from(b64, 'base64').toString('utf-8'));
+  const expiry = Date.parse(token?.expiry ?? '');
+  if (token?.access_token && expiry - Date.now() > 120_000) {
+    agCloudToken = { value: token.access_token, expiresAt: expiry };
+    return token.access_token;
+  }
+  if (!token?.refresh_token) return null;
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: AG_CLIENT_ID,
+      client_secret: AG_CLIENT_SECRET,
+      refresh_token: token.refresh_token,
+      grant_type: 'refresh_token',
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) return null;
+  const d = (await res.json()) as any;
+  if (!d?.access_token) return null;
+  agCloudToken = { value: d.access_token, expiresAt: Date.now() + (d.expires_in ?? 3600) * 1000 };
+  return d.access_token;
+}
+
+/** 云端额度；任何一步失败返回 null，不抛 */
+export async function fetchAntigravityCloudUsage(): Promise<AgUsage | null> {
+  if (process.platform !== 'win32') return null;
+  try {
+    const access = await agCloudAccessToken();
+    if (!access) return null;
+    const res = await fetch('https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json', 'User-Agent': 'antigravity' },
+      body: JSON.stringify({ project: '' }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.status === 401) agCloudToken = null;
+    return res.ok ? parseAgQuotaSummary(await res.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 云端最多 5 分钟打一次（成败都算一次）。节流期内返回上次的云端结果：
+ * 返回 null 会让 collector 进指数退避（最长 1 小时），Antigravity 再打开也要干等。
+ */
+const AG_CLOUD_MIN_MS = 5 * 60_000;
+let agCloud: { triedAt: number; data: AgUsage | null } = { triedAt: 0, data: null };
+
+/** 先问本地 language_server；拿不到（没开或端点失效）再走云端兜底。参数供测试注入 */
+export async function fetchAntigravityUsage(
+  local: (method: string, body: object) => Promise<any | null> = agRpc,
+  cloud: () => Promise<AgUsage | null> = fetchAntigravityCloudUsage
+): Promise<AgUsage | null> {
+  const data = await local('RetrieveUserQuotaSummary', {});
+  if (data) return parseAgQuotaSummary(data);
+  if (Date.now() - agCloud.triedAt >= AG_CLOUD_MIN_MS) {
+    agCloud = { triedAt: Date.now(), data: await cloud() };
+  }
+  return agCloud.data;
 }
 
 /**
@@ -776,7 +879,7 @@ export class QuotaCollector {
 
     this.refreshLive('codex', now, fetchCodexUsage);
     this.refreshLive('claude', now, fetchClaudeUsage);
-    this.refreshLive('antigravity', now, fetchAntigravityUsage);
+    this.refreshLive('antigravity', now, () => fetchAntigravityUsage());
 
     const claude = this.collectClaudeQuota(now);
     const codex = this.collectCodexQuota(now);
